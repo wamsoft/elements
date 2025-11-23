@@ -12,19 +12,19 @@
    view::view(extent size_)
     : base_view(size_)
     , _main_element(make_scaled_content())
-    , _work(_io)
+    , _work(asio::make_work_guard(_io))
    {}
 
    view::view(host_view_handle h)
     : base_view(h)
     , _main_element(make_scaled_content())
-    , _work(_io)
+    , _work(asio::make_work_guard(_io))
    {}
 
    view::view(window& win)
     : base_view(win.host())
     , _main_element(make_scaled_content())
-    , _work(_io)
+    , _work(asio::make_work_guard(_io))
    {
       on_change_limits = [&win](view_limits limits_)
       {
@@ -142,7 +142,7 @@
    void view::refresh()
    {
       // Allow refresh to be called from another thread
-      _io.post(
+      asio::post(_io,
          [this]()
          {
             base_view::refresh();
@@ -153,7 +153,7 @@
    void view::refresh(rect area)
    {
       // Allow refresh to be called from another thread
-      _io.post(
+      asio::post(_io,
          [this, area]()
          {
             base_view::refresh(area);
@@ -173,7 +173,7 @@
       if (_current_bounds.is_empty())
          return;
 
-      _io.post(
+      asio::post(_io,
          [this, &element, outward]()
          {
             with_context_do(

@@ -33,3 +33,4 @@ xcuserdata/
 /CMakeSettings.json
 /docs/antora/node_modules/
 /docs/antora/build/
+/.cache/
