@@ -109,9 +109,10 @@ namespace cycfi { namespace elements
 
    extent pixmap::size() const
    {
+      // Cairo uses device_scale = 1/scale, and size = pixels / device_scale = pixels * scale
       return {
-         float(_width) / _scale,
-         float(_height) / _scale
+         float(_width) * _scale,
+         float(_height) * _scale
       };
    }
 

@@ -28,6 +28,7 @@
 =============================================================================*/
 #include <elements/base_view.hpp>
 #include <elements/support/canvas.hpp>
+#include <elements/support/font.hpp>
 #include <elements/support/resource_paths.hpp>
 #include <Windowsx.h>
 #include <chrono>
@@ -515,7 +516,18 @@ namespace cycfi::elements
                MessageBoxW(nullptr, L"Could not register class", L"Error", MB_OK);
 
             auto pwd = fs::current_path();
-            add_search_path(pwd / "resources");
+            auto res_dir = pwd / "resources";
+            add_search_path(res_dir);
+
+            // Auto-register fonts from the resources directory
+            // Fonts may be in resources/ directly or in resources/fonts/
+            auto fonts_dir = res_dir / "fonts";
+            if (fs::exists(fonts_dir))
+               load_fonts_from_directory(fonts_dir.string());
+
+            // Also scan resources/ directly (build output puts fonts here)
+            if (fs::exists(res_dir))
+               load_fonts_from_directory(res_dir.string());
          }
       };
    }

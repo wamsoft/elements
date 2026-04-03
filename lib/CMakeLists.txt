@@ -216,8 +216,11 @@ option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
 option(TVG_LOADER_PNG "Enable PNG Loader" ON)
 option(TVG_LOADER_JPG "Enable JPG Loader" ON)
 option(TVG_LOADER_LOTTIE "Enable Lottie Loader" OFF)
-option(TVG_LOADER_TTF "Enable TTF Loader" OFF)
-option(TVG_LOADER_WEBP "Enable WebP Loader" ON)
+option(TVG_LOADER_TTF "Enable TTF Loader" ON)
+option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
+
+option(TVG_LOG "Enable log message" ON)
+option(TVG_FILE_IO "Enable File IO calls" ON)
 
 set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../richtext")
 if(NOT EXISTS "${RICHTEXT_DIR}/CMakeLists.txt")

@@ -10,6 +10,7 @@
 #include <shlobj.h>
 #include <cstring>
 #include <ole2.h>
+#include <thorvg.h>
 
 #ifndef ELEMENTS_HOST_ONLY_WIN7
 #include <shellscalingapi.h>
@@ -26,10 +27,14 @@ namespace cycfi::elements
 #endif
 
       OleInitialize(nullptr);
+
+      // Initialize ThorVG rendering engine
+      tvg::Initializer::init(4);
    }
 
    app::~app()
    {
+      tvg::Initializer::term();
    }
 
    void app::run()

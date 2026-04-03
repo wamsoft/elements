@@ -337,6 +337,11 @@ namespace cycfi { namespace elements
       font_constants::slant_enum        slant   = font_constants::slant_normal,
       font_constants::stretch_enum      stretch = font_constants::stretch_normal
    );
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Scan a directory for TTF/OTF files and auto-register them.
+   // Extracts family name and weight/slant from filename conventions.
+   void load_fonts_from_directory(std::string const& dir);
 }}
 
 #endif

@@ -76,7 +76,10 @@ namespace cycfi { namespace elements
     , _height(h)
     , _scale(scale_)
    {
-      _tvg_canvas = tvg::SwCanvas::gen();
+      // EngineOption::None disables dirty region optimization.
+      // Default mode clears changed regions with 0x00000000 before redraw,
+      // causing black backgrounds around text glyphs.
+      _tvg_canvas = tvg::SwCanvas::gen(tvg::EngineOption::None);
       _tvg_canvas->target(buf, w, w, h, tvg::ColorSpace::ARGB8888);
 
       _initial_matrix = {scale_, 0, 0, 0, scale_, 0, 0, 0, 1};
@@ -689,10 +692,32 @@ namespace cycfi { namespace elements
    ///////////////////////////////////////////////////////////////////////////
    // Font
    ///////////////////////////////////////////////////////////////////////////
+   namespace
+   {
+      // ThorVG internally converts font size from points to pixels
+      // using 96/72 DPI factor. Elements expects metrics in user-space
+      // (like Cairo), so we cancel out ThorVG's DPI conversion.
+      constexpr float tvg_font_scale = 72.0f / 96.0f;
+
+      // Extract filename without extension from a path.
+      // ThorVG uses this as the font name key internally.
+      std::string stem_from_path(std::string const& path)
+      {
+         auto slash = path.find_last_of("/\\");
+         auto start = (slash != std::string::npos) ? slash + 1 : 0;
+         auto dot = path.rfind('.');
+         auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
+         return path.substr(start, end - start);
+      }
+   }
+
    void canvas::font(elements::font const& font_)
    {
-      _state.font_family = font_.family();
       _state.font_file = font_.file();
+      // ThorVG registers fonts by filename stem (no extension)
+      _state.font_family = _state.font_file.empty()
+         ? font_.family()
+         : stem_from_path(_state.font_file);
       _state.font_size = font_.size();
    }
 
@@ -729,7 +754,7 @@ namespace cycfi { namespace elements
          tvg::Text::load(_state.font_file.c_str());
 
       text->font(_state.font_family.c_str());
-      text->size(_state.font_size);
+      text->size(_state.font_size * tvg_font_scale);
       text->text(utf8.c_str());
 
       // Get metrics for alignment
@@ -841,7 +866,7 @@ namespace cycfi { namespace elements
          tvg::Text::load(_state.font_file.c_str());
 
       text->font(_state.font_family.c_str());
-      text->size(_state.font_size);
+      text->size(_state.font_size * tvg_font_scale);
       text->text(utf8.c_str());
 
       tvg::TextMetrics tm;
@@ -877,10 +902,10 @@ namespace cycfi { namespace elements
          tvg::Text::load(_state.font_file.c_str());
 
       text->font(_state.font_family.c_str());
-      text->size(_state.font_size);
+      text->size(_state.font_size * tvg_font_scale);
       text->text(utf8);
 
-      tvg::TextMetrics tm;
+      tvg::TextMetrics tm = {};
       text->metrics(tm);
 
       // Measure text width
@@ -920,7 +945,7 @@ namespace cycfi { namespace elements
          tvg::Text::load(_state.font_file.c_str());
 
       text->font(_state.font_family.c_str());
-      text->size(_state.font_size);
+      text->size(_state.font_size * tvg_font_scale);
       text->text(" "); // need some text to get metrics
 
       tvg::TextMetrics tm;
