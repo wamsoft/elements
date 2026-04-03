@@ -6,6 +6,7 @@
 #include <elements/view.hpp>
 #include <elements/window.hpp>
 #include <elements/support/context.hpp>
+#include <elements/support/detail/scratch_context.hpp>
 
  namespace cycfi::elements
  {
@@ -43,9 +44,9 @@
       if (_content.empty())
          return;
 
-      auto surface_ = cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, nullptr);
-      auto context_ = cairo_create(surface_);
-      canvas cnv{*context_};
+      // Use a scratch context for off-screen measurement
+      static detail::scratch_context scratch;
+      canvas cnv{scratch.buffer(), 4, 4};
 
       // Update the limits and constrain the window size to the limits
       basic_context bctx{*this, cnv};
@@ -56,12 +57,9 @@
          if (on_change_limits)
             on_change_limits(limits_);
       }
-
-      cairo_surface_destroy(surface_);
-      cairo_destroy(context_);
    }
 
-   void view::draw(cairo_t* context_)
+   void view::draw(canvas& cnv)
    {
       if (_content.empty())
          return;
@@ -69,7 +67,6 @@
       // Update the limits and constrain the window size to the limits
       set_limits();
 
-      canvas cnv{*context_};
       auto size_ = size();
       rect subj_bounds = {0, 0, size_.x, size_.y};
       context ctx{*this, cnv, &_main_element, subj_bounds};
@@ -90,15 +87,12 @@
       template <typename F, typename This>
       void with_context_do(F f, This& self, rect _current_bounds)
       {
-         auto surface_ = cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, nullptr);
-         auto context_ = cairo_create(surface_);
-         canvas cnv{*context_};
-         context ctx {self, cnv, &self.main_element(), _current_bounds};
+         // Use a scratch context for off-screen operations
+         static detail::scratch_context scratch;
+         canvas cnv{scratch.buffer(), 4, 4};
+         context ctx{self, cnv, &self.main_element(), _current_bounds};
 
          f(ctx, self.main_element());
-
-         cairo_surface_destroy(surface_);
-         cairo_destroy(context_);
       }
    }
 

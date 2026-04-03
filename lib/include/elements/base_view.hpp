@@ -12,20 +12,18 @@
 #include <vector>
 #include <cstdint>
 #include <functional>
-#include <cairo.h>
-
 #include <infra/support.hpp>
 #include <infra/filesystem.hpp>
 #include <elements/support/point.hpp>
 #include <elements/support/rect.hpp>
 #include <elements/support/payload.hpp>
 
-#if defined(ELEMENTS_HOST_UI_LIBRARY_WIN32)
-# include <windows.h>
-#endif
+#include <windows.h>
 
 namespace cycfi::elements
 {
+   class canvas;
+
    ////////////////////////////////////////////////////////////////////////////
    // Mouse Button
    ////////////////////////////////////////////////////////////////////////////
@@ -307,28 +305,18 @@ namespace cycfi::elements
    // The base view base class
    ////////////////////////////////////////////////////////////////////////////
 
-#if defined(ELEMENTS_HOST_UI_LIBRARY_WIN32)
    using host_view_handle = HWND;
    using host_window_handle = HWND;
-#else
-   struct host_view;
-   using host_view_handle = host_view*;
-   struct host_window;
-   using host_window_handle = host_window*;
-#endif
 
    class base_view : non_copyable
    {
    public:
 
-#if defined(ELEMENTS_HOST_UI_LIBRARY_COCOA) || defined(ELEMENTS_HOST_UI_LIBRARY_GTK)
-                           base_view(host_view_handle h);
-#endif
                            base_view(extent size_);
                            base_view(host_window_handle h);
       virtual              ~base_view();
 
-      virtual void         draw(cairo_t* ctx);
+      virtual void         draw(canvas& cnv);
       virtual void         click(mouse_button btn);
       virtual void         drag(mouse_button btn);
       virtual void         cursor(point p, cursor_tracking status);
@@ -355,7 +343,7 @@ namespace cycfi::elements
    };
 
    ////////////////////////////////////////////////////////////////////////////
-   inline void base_view::draw(cairo_t* /* ctx */) {}
+   inline void base_view::draw(canvas& /* cnv */) {}
    inline void base_view::click(mouse_button /* btn */) {}
    inline void base_view::drag(mouse_button /* btn */) {}
    inline void base_view::cursor(point /* p */, cursor_tracking /* status */) {}

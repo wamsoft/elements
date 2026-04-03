@@ -13,16 +13,15 @@
 #include <elements/support/font.hpp>
 #include <infra/filesystem.hpp>
 
+#include <thorvg.h>
+
 #include <vector>
 #include <functional>
 #include <stack>
 #include <cmath>
 #include <cassert>
-
-extern "C"
-{
-   typedef struct _cairo cairo_t;
-}
+#include <variant>
+#include <memory>
 
 namespace cycfi { namespace elements
 {
@@ -30,13 +29,18 @@ namespace cycfi { namespace elements
    {
    public:
 
-      explicit          canvas(cairo_t& context_);
+      explicit          canvas(uint32_t* buf, uint32_t w, uint32_t h, float scale = 1.0f);
                         canvas(canvas&& rhs);
                         ~canvas();
 
                         canvas(canvas const& rhs) = delete;
       canvas&           operator=(canvas const& rhs) = delete;
-      cairo_t&          cairo_context() const;
+
+      // Access to underlying ThorVG canvas (for advanced use)
+      tvg::Canvas&      tvg_canvas() const;
+
+      // Finalize rendering (must call at end of frame)
+      void              flush();
 
       ///////////////////////////////////////////////////////////////////////////////////
       // Transforms
@@ -44,8 +48,8 @@ namespace cycfi { namespace elements
       void              rotate(float rad);
       void              scale(point p);
       void              skew(float sx, float sy);
-      point             device_to_user(point p);
-      point             user_to_device(point p);
+      point             device_to_user(point p) const;
+      point             user_to_device(point p) const;
 
       ///////////////////////////////////////////////////////////////////////////////////
       // Paths
@@ -220,22 +224,98 @@ namespace cycfi { namespace elements
       void              apply_fill_style();
       void              apply_stroke_style();
 
-      struct canvas_state
-      {
-         std::function<void()>   stroke_style;
-         std::function<void()>   fill_style;
-         int                     align          = 0;
+      // Create a ThorVG Shape from current accumulated path
+      tvg::Shape*       make_shape() const;
 
-         enum pattern_state {none_set, stroke_set, fill_set};
-         pattern_state           pattern_set = none_set;
+      // Create a clip Shape clone from current clip data
+      tvg::Shape*       make_clip_shape() const;
+
+      // Apply current matrix to a paint
+      void              apply_transform(tvg::Paint* paint) const;
+
+      // Flush pending shapes to render
+      void              flush_shapes();
+
+      // Matrix helpers
+      static tvg::Matrix multiply(tvg::Matrix const& a, tvg::Matrix const& b);
+      static tvg::Matrix invert(tvg::Matrix const& m);
+      static point       transform_point(tvg::Matrix const& m, point p);
+      static tvg::Matrix identity();
+
+      ///////////////////////////////////////////////////////////////////////////////////
+      // Fill/stroke style variant
+      struct gradient_data
+      {
+         bool is_linear; // true = linear, false = radial
+         // linear
+         point start, end;
+         // radial
+         point c1, c2;
+         float c1_radius, c2_radius;
+         // color stops
+         std::vector<color_stop> stops;
       };
 
-      using state_stack = std::stack<canvas_state>;
+      using style_variant = std::variant<color, gradient_data>;
 
-      cairo_t&          _context;
-      cairo_matrix_t    _inv_affine;
-      canvas_state      _state;
-      state_stack       _state_stack;
+      // Apply style to shape fill
+      void              apply_fill_to_shape(tvg::Shape* shape) const;
+      // Apply style to shape stroke
+      void              apply_stroke_to_shape(tvg::Shape* shape) const;
+
+      ///////////////////////////////////////////////////////////////////////////////////
+      // Clip data (stored as path so we can create new Shape clones)
+      struct clip_data
+      {
+         std::vector<tvg::PathCommand> cmds;
+         std::vector<tvg::Point>       pts;
+         tvg::Matrix                   transform;
+         tvg::FillRule                 rule = tvg::FillRule::NonZero;
+      };
+
+      ///////////////////////////////////////////////////////////////////////////////////
+      // Canvas state (save/restore)
+      struct canvas_state
+      {
+         style_variant      fill_style_data{colors::black};
+         style_variant      stroke_style_data{colors::black};
+         float              line_width_val = 1.0f;
+         int                align          = 0;
+         tvg::FillRule      fill_rule_val  = tvg::FillRule::NonZero;
+         tvg::Matrix        matrix;
+         std::shared_ptr<clip_data> clip;
+
+         // Font state
+         std::string        font_family;
+         std::string        font_file;
+         float              font_size = 12;
+      };
+
+      // ThorVG canvas and buffer
+      tvg::SwCanvas*                _tvg_canvas = nullptr;
+      uint32_t*                     _buffer;
+      uint32_t                      _width;
+      uint32_t                      _height;
+      float                         _scale;
+
+      // Path accumulation
+      std::vector<tvg::PathCommand> _path_cmds;
+      std::vector<tvg::Point>       _path_pts;
+
+      // Current subpath start (for close_path)
+      tvg::Point                    _subpath_start = {0, 0};
+      tvg::Point                    _current_pt = {0, 0};
+
+      // State
+      canvas_state                  _state;
+      std::stack<canvas_state>      _state_stack;
+
+      // Initial matrix (includes DPI scale)
+      tvg::Matrix                   _initial_matrix;
+      tvg::Matrix                   _inv_initial;
+
+      // Track whether shapes have been added since last flush
+      bool                          _has_pending = false;
    };
 }}
 

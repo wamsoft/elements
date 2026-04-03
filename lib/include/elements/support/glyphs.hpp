@@ -10,13 +10,23 @@
 #include <infra/string_view.hpp>
 #include <elements/support/canvas.hpp>
 #include <elements/support/text_utils.hpp>
-#include <cairo.h>
 #include <vector>
 #include <stdexcept>
 #include <string>
+#include <memory>
 
 namespace cycfi { namespace elements
 {
+   ////////////////////////////////////////////////////////////////////////////
+   // Per-character position data extracted from richtext TextLayout
+   ////////////////////////////////////////////////////////////////////////////
+   struct char_pos
+   {
+      float    x;           // x position relative to layout start
+      float    advance;     // advance width
+      int      num_bytes;   // number of UTF-8 bytes for this character
+   };
+
    ////////////////////////////////////////////////////////////////////////////
    // glyphs: Text drawing and measuring utility
    ////////////////////////////////////////////////////////////////////////////
@@ -27,8 +37,7 @@ namespace cycfi { namespace elements
    public:
                            glyphs(
                               char const* first, char const* last
-                            , int glyph_start, int glyph_end
-                            , int cluster_start, int cluster_end
+                            , int pos_start, int pos_end
                             , master_glyphs const& master
                             , bool strip_leading_spaces
                            );
@@ -57,19 +66,16 @@ namespace cycfi { namespace elements
    protected:
                            glyphs(char const* first, char const* last);
 
-      using scaled_font = cairo_scaled_font_t;
-      using glyph = cairo_glyph_t;
-      using cluster = cairo_text_cluster_t;
-      using cluster_flags = cairo_text_cluster_flags_t;
-
-      char const*          _first;
-      char const*          _last;
-      scaled_font*         _scaled_font   = nullptr;
-      glyph*               _glyphs        = nullptr;
-      int                  _glyph_count   = 0;
-      cluster*             _clusters      = nullptr;
-      int                  _cluster_count = 0;
-      cluster_flags        _clusterflags;
+      char const*                   _first;
+      char const*                   _last;
+      std::vector<char_pos> const*  _positions = nullptr;  // owned by master
+      int                           _pos_start = 0;
+      int                           _pos_count = 0;
+      float                         _ascent = 0;
+      float                         _descent = 0;
+      float                         _leading = 0;
+      font                          _font;
+      float                         _font_size = 12;
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -128,11 +134,16 @@ namespace cycfi { namespace elements
       void                 text(string_view str, point start = {0, 0});
       void                 text(std::string const& str, point start = {0, 0});
 
+      // Access to owned position data (used by glyphs slices)
+      std::vector<char_pos> const& positions() const { return _owned_positions; }
+
    private:
                            master_glyphs(master_glyphs const&) = delete;
       master_glyphs&       operator=(master_glyphs const& rhs) = delete;
 
       void                 build(point start = {0, 0});
+
+      std::vector<char_pos>   _owned_positions;
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -181,31 +192,27 @@ namespace cycfi { namespace elements
    template <typename F>
    inline void glyphs::for_each(F f)
    {
-      CYCFI_ASSERT(_scaled_font, "Precondition failure: _scaled_font must not be null");
-      CYCFI_ASSERT(_glyphs, "Precondition failure: _glyphs must not be null");
-      CYCFI_ASSERT(_clusters, "Precondition failure: _clusters must not be null");
+      CYCFI_ASSERT(_positions, "Precondition failure: _positions must not be null");
 
       if (_first == _last)
          return;
 
-      int   glyph_index = 0;
-      int   byte_index = 0;
-      float start_x = _glyphs->x;
+      float start_x = 0;
+      if (_pos_count > 0)
+         start_x = (*_positions)[_pos_start].x;
 
-      for (int i = 0; i < _cluster_count; i++)
+      for (int i = 0; i < _pos_count; ++i)
       {
-         cairo_text_cluster_t* cluster = _clusters + i;
-         cairo_glyph_t* glyph = _glyphs + glyph_index;
-         cairo_text_extents_t extents;
-         cairo_scaled_font_glyph_extents(_scaled_font, glyph, 1, &extents);
+         auto const& cp = (*_positions)[_pos_start + i];
 
-         float x = glyph->x - start_x;
-         if (!f(_first + byte_index, x, x + extents.x_advance))
+         // Compute byte offset for this character position
+         int byte_offset = 0;
+         for (int j = 0; j < i; ++j)
+            byte_offset += (*_positions)[_pos_start + j].num_bytes;
+
+         float x = cp.x - start_x;
+         if (!f(_first + byte_offset, x, x + cp.advance))
             break;
-
-         // glyph/byte position
-         glyph_index += cluster->num_glyphs;
-         byte_index += cluster->num_bytes;
       }
    }
 }}

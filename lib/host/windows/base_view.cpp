@@ -29,11 +29,10 @@
 #include <elements/base_view.hpp>
 #include <elements/support/canvas.hpp>
 #include <elements/support/resource_paths.hpp>
-#include <cairo.h>
-#include <cairo-win32.h>
 #include <Windowsx.h>
 #include <chrono>
 #include <map>
+#include <algorithm>
 #include "drag_and_drop.hpp"
 #include "utils.hpp"
 
@@ -78,6 +77,7 @@ namespace cycfi::elements
          HDC            hdc = nullptr;
          HDC            offscreen_hdc = nullptr;
          HBITMAP        offscreen_buff = nullptr;
+         uint32_t*      pixel_buffer = nullptr;  // DIB section pixel data
          int            w = 0;
          int            h = 0;
          bool           mouse_in_window = false;
@@ -107,9 +107,21 @@ namespace cycfi::elements
          if (info->offscreen_hdc)
             DeleteDC(info->offscreen_hdc);
 
-         // Create an off-screen DC for double-buffering
+         // Create an off-screen DC with a DIB section for direct pixel access
          info->offscreen_hdc = CreateCompatibleDC(hdc);
-         info->offscreen_buff = CreateCompatibleBitmap(hdc, w, h);
+
+         BITMAPINFO bmi = {};
+         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+         bmi.bmiHeader.biWidth = w;
+         bmi.bmiHeader.biHeight = -h;  // Top-down DIB
+         bmi.bmiHeader.biPlanes = 1;
+         bmi.bmiHeader.biBitCount = 32;
+         bmi.bmiHeader.biCompression = BI_RGB;
+
+         void* bits = nullptr;
+         info->offscreen_buff = CreateDIBSection(
+            hdc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+         info->pixel_buffer = static_cast<uint32_t*>(bits);
       }
 
       LRESULT on_paint(HWND hwnd, view_info* info)
@@ -121,7 +133,6 @@ namespace cycfi::elements
 
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
-            SetBkMode(hdc, TRANSPARENT);
 
             RECT r;
             GetWindowRect(hwnd, &r);
@@ -133,17 +144,16 @@ namespace cycfi::elements
 
             HANDLE hold = SelectObject(info->offscreen_hdc, info->offscreen_buff);
 
-            // Create the cairo surface and context.
-            cairo_surface_t* surface = cairo_win32_surface_create(info->offscreen_hdc);
-            cairo_t* context = cairo_create(surface);
+            // Clear the pixel buffer to opaque white
+            auto total_pixels = win_width * win_height;
+            std::fill_n(info->pixel_buffer, total_pixels, 0xFFFFFFFF);
+
+            // Create the ThorVG canvas and render
             auto scale = get_scale_for_window(hwnd);
-            cairo_scale(context, scale, scale);
-
-            view->draw(context);
-
-            // Cleanup.
-            cairo_destroy(context);
-            cairo_surface_destroy(surface);
+            {
+               canvas cnv{info->pixel_buffer, (uint32_t)win_width, (uint32_t)win_height, scale};
+               view->draw(cnv);
+            }
 
             // Transfer the off-screen DC to the screen
             auto w = dirty.right-dirty.left;

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "elements",
+  "version": "0.1.0",
+  "description": "Elements C++ GUI library",
+  "dependencies": [
+    "libwebp",
+    "zlib",
+    "libpng",
+    "libjpeg-turbo",
+    {
+      "name": "freetype",
+      "features": ["png", "zlib"]
+    }
+  ]
+}

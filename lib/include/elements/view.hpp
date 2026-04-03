@@ -37,7 +37,7 @@ namespace cycfi::elements
                               view(window& win);
                               ~view();
 
-      void                    draw(cairo_t* ctx) override;
+      void                    draw(canvas& cnv) override;
       void                    click(mouse_button btn) override;
       void                    drag(mouse_button btn) override;
       void                    cursor(point p, cursor_tracking status) override;

@@ -7,13 +7,8 @@
 #define ELEMENTS_FONT_X_FEBRUARY_11_2020
 
 #include <infra/string_view.hpp>
-#include <infra/filesystem.hpp>
-#include <vector>
-
-extern "C"
-{
-   using cairo_font_face_t = struct _cairo_font_face;
-}
+#include <string>
+#include <cstdint>
 
 namespace cycfi { namespace elements
 {
@@ -107,11 +102,16 @@ namespace cycfi { namespace elements
       explicit             operator bool() const;
       float                size() const { return _size; }
 
+      // Access to font info for ThorVG/richtext
+      std::string const&   family() const { return _family; }
+      std::string const&   file() const   { return _file; }
+
    private:
 
       friend class canvas;
-      cairo_font_face_t*  _handle   = nullptr;
-      float               _size     = 12;
+      std::string         _family;     // Font family name
+      std::string         _file;       // TTF file path
+      float               _size = 12;
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -309,19 +309,34 @@ namespace cycfi { namespace elements
    }
 
    inline font::font()
-    : _handle(nullptr)
    {}
 
    inline font::operator bool() const
    {
-      return _handle;
+      return !_file.empty();
    }
 
-#if defined(__APPLE__)
-   fs::path get_user_fonts_directory();
-#endif
-
-   std::vector<fs::path>& font_paths();
+   ////////////////////////////////////////////////////////////////////////////
+   // Font registration
+   //
+   // Users must register all fonts they intend to use before creating
+   // font objects. register_font() maps a family name + style attributes
+   // to a TTF/OTF file path.
+   //
+   //    register_font("Noto Sans", "resources/NotoSans-Regular.ttf");
+   //    register_font("Noto Sans", "resources/NotoSans-Bold.ttf",
+   //       font_constants::bold);
+   //    register_font("Noto Sans", "resources/NotoSans-Italic.ttf",
+   //       font_constants::weight_normal, font_constants::italic);
+   //
+   ////////////////////////////////////////////////////////////////////////////
+   void register_font(
+      std::string const&                family,
+      std::string const&                file,
+      font_constants::weight_enum       weight  = font_constants::weight_normal,
+      font_constants::slant_enum        slant   = font_constants::slant_normal,
+      font_constants::stretch_enum      stretch = font_constants::stretch_normal
+   );
 }}
 
 #endif

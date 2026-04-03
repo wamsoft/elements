@@ -15,9 +15,9 @@ namespace cycfi { namespace elements
    ////////////////////////////////////////////////////////////////////////////
    // Inlines
    ////////////////////////////////////////////////////////////////////////////
-   inline cairo_t& canvas::cairo_context() const
+   inline tvg::Canvas& canvas::tvg_canvas() const
    {
-      return _context;
+      return *_tvg_canvas;
    }
 
    inline void canvas::circle(struct circle c)
@@ -109,20 +109,12 @@ namespace cycfi { namespace elements
 
    inline void canvas::apply_fill_style()
    {
-      if (_state.pattern_set != _state.fill_set && _state.fill_style)
-      {
-         _state.fill_style();
-         _state.pattern_set = _state.fill_set;
-      }
+      // No-op: styles are applied when creating shapes
    }
 
    inline void canvas::apply_stroke_style()
    {
-      if (_state.pattern_set != _state.stroke_set && _state.stroke_style)
-      {
-         _state.stroke_style();
-         _state.pattern_set = _state.stroke_set;
-      }
+      // No-op: styles are applied when creating shapes
    }
 
    // Declared in context.hpp

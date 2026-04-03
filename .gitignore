@@ -34,3 +34,5 @@ xcuserdata/
 /docs/antora/node_modules/
 /docs/antora/build/
 /.cache/
+.claude
+build

@@ -8,10 +8,12 @@
 
 #include <vector>
 #include <memory>
-#include <cairo.h>
+#include <cstdint>
 #include <elements/support/point.hpp>
 #include <infra/filesystem.hpp>
 #include <stdexcept>
+
+namespace tvg { struct Picture; struct SwCanvas; }
 
 namespace cycfi { namespace elements
 {
@@ -42,62 +44,85 @@ namespace cycfi { namespace elements
       float             scale() const;
       void              scale(float val);
 
+      int               pixel_width() const  { return _width; }
+      int               pixel_height() const { return _height; }
+
    private:
 
       friend class canvas;
       friend class pixmap_context;
 
-      cairo_surface_t*  _surface;
+      tvg::Picture*     picture() const { return _picture; }
+      void              release_picture();
+      void              set_picture(tvg::Picture* pic);
+
+      tvg::Picture*     _picture = nullptr;
+      int               _width = 0;
+      int               _height = 0;
+      float             _scale = 1.0f;
    };
 
    using pixmap_ptr = std::shared_ptr<pixmap>;
 
    ////////////////////////////////////////////////////////////////////////////
-   // pixmap_context allows drawing into a pixmap
+   // pixmap_context allows drawing into a pixmap using tvg::SwCanvas.
+   // Call flush() to commit changes to the target pixmap.
+   // Destructor automatically calls flush().
    ////////////////////////////////////////////////////////////////////////////
    class pixmap_context
    {
    public:
 
-      explicit          pixmap_context(pixmap& pm)
-                        {
-                           _context = cairo_create(pm._surface);
-                        }
+      explicit          pixmap_context(pixmap& pm);
+                        ~pixmap_context();
+                        pixmap_context(pixmap_context&& rhs) noexcept;
 
-                        ~pixmap_context()
-                        {
-                           if (_context)
-                              cairo_destroy(_context);
-                        }
+      pixmap_context&   operator=(pixmap_context&& rhs) noexcept;
 
-                        pixmap_context(pixmap_context&& rhs) noexcept
-                         : _context(rhs._context)
-                        {
-                           rhs._context = nullptr;
-                        }
+      tvg::SwCanvas*    canvas() const { return _canvas; }
+      uint32_t*         buffer() const { return const_cast<uint32_t*>(_buffer.data()); }
+      int               width() const  { return _width; }
+      int               height() const { return _height; }
 
-      cairo_t*          context() const { return _context; }
+      void              flush();
 
    private:
                         pixmap_context(pixmap_context const&) = delete;
+      pixmap_context&   operator=(pixmap_context const&) = delete;
 
-      cairo_t*          _context;
+      pixmap*              _target = nullptr;
+      std::vector<uint32_t> _buffer;
+      tvg::SwCanvas*       _canvas = nullptr;
+      int                  _width = 0;
+      int                  _height = 0;
    };
 
    ////////////////////////////////////////////////////////////////////////////
    // Inlines
    ////////////////////////////////////////////////////////////////////////////
    inline pixmap::pixmap(pixmap&& rhs)
-    : _surface(rhs._surface)
+    : _picture(rhs._picture)
+    , _width(rhs._width)
+    , _height(rhs._height)
+    , _scale(rhs._scale)
    {
-      rhs._surface = nullptr;
+      rhs._picture = nullptr;
+      rhs._width = 0;
+      rhs._height = 0;
    }
 
    inline pixmap& pixmap::operator=(pixmap&& rhs)
    {
       if (this != &rhs)
       {
-        std::swap(_surface, rhs._surface);
+         release_picture();
+         _picture = rhs._picture;
+         _width = rhs._width;
+         _height = rhs._height;
+         _scale = rhs._scale;
+         rhs._picture = nullptr;
+         rhs._width = 0;
+         rhs._height = 0;
       }
       return *this;
    }

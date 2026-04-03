@@ -7,10 +7,6 @@ cmake_minimum_required(VERSION 3.9.6...3.15.0)
 
 project(elements LANGUAGES C CXX)
 
-if (CMAKE_OSX_DEPLOYMENT_TARGET)
-    message(STATUS "CMAKE_OSX_DEPLOYMENT_TARGET ${CMAKE_OSX_DEPLOYMENT_TARGET}")
-endif()
-
 message(STATUS "CMAKE_C_COMPILER ${CMAKE_C_COMPILER}")
 message(STATUS "CMAKE_C_COMPILER_ID ${CMAKE_C_COMPILER_ID}")
 message(STATUS "CMAKE_C_COMPILER_VERSION ${CMAKE_C_COMPILER_VERSION}")
@@ -42,18 +38,11 @@ else()
 endif()
 
 ###############################################################################
-# UI Libraries
+# UI Libraries (Windows only — 最終的にSDLで統一予定)
 
-if(WIN32)
-    set(ELEMENTS_HOST_UI_LIBRARY "win32" CACHE STRING "gtk, cocoa or win32")
-elseif(UNIX AND NOT APPLE)
-    set(ELEMENTS_HOST_UI_LIBRARY "gtk" CACHE STRING "gtk, cocoa or win32")
-elseif(APPLE)
-    set(ELEMENTS_HOST_UI_LIBRARY "cocoa" CACHE STRING "gtk, cocoa or win32")
-endif()
+set(ELEMENTS_HOST_UI_LIBRARY "win32" CACHE STRING "Host UI library (win32)")
 
 message(STATUS "building elements with ${ELEMENTS_HOST_UI_LIBRARY} host UI library")
 
 ###############################################################################
-
 

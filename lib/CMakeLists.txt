@@ -140,30 +140,15 @@ set(ELEMENTS_HEADERS
    include/elements/window.hpp
 )
 
-if (APPLE)
-   set(ELEMENTS_HOST
-      host/macos/app.mm
-      host/macos/base_view.mm
-      host/macos/key.mm
-      host/macos/window.mm
-   )
-elseif (ELEMENTS_HOST_UI_LIBRARY STREQUAL "gtk")
-   set(ELEMENTS_HOST
-      host/gtk3/app.cpp
-      host/gtk3/base_view.cpp
-      host/gtk3/key.cpp
-      host/gtk3/window.cpp
-   )
-elseif (WIN32)
-   set(ELEMENTS_HOST
-      host/windows/utils.hpp
-      host/windows/app.cpp
-      host/windows/base_view.cpp
-      host/windows/key.cpp
-      host/windows/window.cpp
-      host/windows/drag_and_drop.cpp
-   )
-endif()
+# Windows host (テスト用に残す。最終的にSDLで統一予定)
+set(ELEMENTS_HOST
+   host/windows/utils.hpp
+   host/windows/app.cpp
+   host/windows/base_view.cpp
+   host/windows/key.cpp
+   host/windows/window.cpp
+   host/windows/drag_and_drop.cpp
+)
 
 source_group("Source Files\\elements"
    FILES
@@ -195,28 +180,17 @@ if(ELEMENTS_ENABLE_LTO)
 endif()
 
 ###############################################################################
-# PkgConfig
-
-find_package(PkgConfig REQUIRED)
-
-###############################################################################
 # Get rid of certain warnings, and make msvc support utf-8 without adding bom
 
 target_compile_options(elements PRIVATE
    $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra -Wpedantic -ftemplate-backtrace-limit=0>
    $<$<CXX_COMPILER_ID:Clang>:-Wall -Wpedantic -ftemplate-backtrace-limit=0>
-   $<$<CXX_COMPILER_ID:AppleClang>:-Wall -Wpedantic -ftemplate-backtrace-limit=0>
    $<$<CXX_COMPILER_ID:MSVC>:/W4 /wd4244 /wd4305 /wd4996 /wd4267 /wd4018 /wd4456 /utf-8>
 )
 
 if (MSVC)
    # Kinda silly to have to do this: https://bit.ly/2ZXjzzn
    STRING(REGEX REPLACE "/W3" "/W4" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-endif()
-
-if (APPLE)
-   # Not sure why APPLE is not picking the target_compile_options above
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -ftemplate-backtrace-limit=0")
 endif()
 
 ###############################################################################
@@ -233,37 +207,36 @@ FetchContent_MakeAvailable(cycfi_infra)
 target_link_libraries(elements PUBLIC cycfi::infra)
 
 ###############################################################################
-# Cairo
+# ThorVG + richtext (text rendering, font management, vector graphics)
+#
+# richtext brings in thorvg and minikin as subdirectories.
+# The richtext project is expected at ../../richtext relative to this file.
 
-pkg_check_modules(cairo REQUIRED IMPORTED_TARGET cairo)
-target_link_libraries(elements PUBLIC PkgConfig::cairo)
+option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
+option(TVG_LOADER_PNG "Enable PNG Loader" ON)
+option(TVG_LOADER_JPG "Enable JPG Loader" ON)
+option(TVG_LOADER_LOTTIE "Enable Lottie Loader" OFF)
+option(TVG_LOADER_TTF "Enable TTF Loader" OFF)
+option(TVG_LOADER_WEBP "Enable WebP Loader" ON)
 
-
-###############################################################################
-# Fontconfig
-
-pkg_check_modules(fontconfig REQUIRED IMPORTED_TARGET fontconfig)
-target_link_libraries(elements PUBLIC PkgConfig::fontconfig)
-
-###############################################################################
-# Freetype
-
-pkg_check_modules(freetype2 REQUIRED IMPORTED_TARGET freetype2)
-target_link_libraries(elements PUBLIC PkgConfig::freetype2)
-
-###############################################################################
-# Webp
-
-pkg_check_modules(libwebp REQUIRED IMPORTED_TARGET libwebp)
-target_link_libraries(elements PUBLIC PkgConfig::libwebp)
-
-###############################################################################
-# GTK3
-
-if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "gtk")
-   pkg_check_modules(GTK3 REQUIRED IMPORTED_TARGET gtk+-3.0)
-   target_link_libraries(elements PRIVATE PkgConfig::GTK3)
+set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../richtext")
+if(NOT EXISTS "${RICHTEXT_DIR}/CMakeLists.txt")
+   message(FATAL_ERROR
+      "richtext library not found at ${RICHTEXT_DIR}. "
+      "Please ensure the richtext project is at ../richtext relative to the elements root."
+   )
 endif()
+
+if(NOT TARGET richtext_lib)
+   add_subdirectory("${RICHTEXT_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/richtext")
+endif()
+
+target_link_libraries(elements PUBLIC richtext_lib)
+
+# ThorVG headers needed by canvas.hpp and scratch_context.hpp
+target_include_directories(elements PUBLIC
+   "${RICHTEXT_DIR}/ext/thorvg/inc"
+)
 
 ###############################################################################
 # Asio headers
@@ -279,74 +252,26 @@ FetchContent_MakeAvailable(asio)
 target_include_directories(elements PUBLIC ${asio_SOURCE_DIR}/asio/include)
 
 ###############################################################################
-# Global options
+# Global options (Windows only — GTK/macOS removed, SDL統一予定)
 
-if (APPLE)
-   target_compile_definitions(elements PRIVATE
-      ELEMENTS_CLASS_PREFIX=${ELEMENTS_CLASS_PREFIX}
-   )
-   target_compile_options(elements PUBLIC "-fobjc-arc")
-elseif (WIN32)
-   target_compile_definitions(elements PUBLIC
-      WIN32_LEAN_AND_MEAN
-      NOMINMAX
-      _UNICODE
-      BOOST_DATE_TIME_NO_LIB
-      BOOST_REGEX_NO_LIB
-   )
-
-   if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_C_COMPILER_ID STREQUAL "Clang")
-      set_property(TARGET elements PROPERTY
-         MSVC_RUNTIME_LIBRARY "MultiThreadedDebug"
-      )
-   else()
-      set_property(TARGET elements PROPERTY
-         MSVC_RUNTIME_LIBRARY "MultiThreaded"
-      )
-   endif()
-
-endif()
-
-if(ELEMENTS_HOST_UI_LIBRARY STREQUAL "gtk")
-    target_compile_definitions(elements PUBLIC ELEMENTS_HOST_UI_LIBRARY_GTK)
-elseif(ELEMENTS_HOST_UI_LIBRARY STREQUAL "cocoa")
-    if(NOT APPLE)
-        message(FATAL_ERROR "Only macOS supports ELEMENTS_HOST_UI_LIBRARY=cocoa")
-    endif()
-    target_compile_definitions(elements PUBLIC ELEMENTS_HOST_UI_LIBRARY_COCOA)
-elseif(ELEMENTS_HOST_UI_LIBRARY STREQUAL "win32")
-    if(NOT WIN32)
-        message(FATAL_ERROR "Only Windows supports ELEMENTS_HOST_UI_LIBRARY=win32")
-    endif()
-    target_compile_definitions(elements PUBLIC ELEMENTS_HOST_UI_LIBRARY_WIN32)
-    if(ELEMENTS_HOST_ONLY_WIN7)
-        target_compile_definitions(elements PRIVATE ELEMENTS_HOST_ONLY_WIN7)
-        message(STATUS "Windows 7 compatibility enabled")
-    elseif(MINGW)
-        # Required by MinGW to enable SetProcessDpiAwareness (Windows 8.1+)
-        # and GetDpiForWindow (Windows 10+) API
-        target_compile_definitions(elements PRIVATE _WIN32_WINNT=0x0A00)
-    endif()
-else()
-    message(FATAL_ERROR "Invalid ELEMENTS_HOST_UI_LIBRARY=${ELEMENTS_HOST_UI_LIBRARY}. Set gtk, cocoa or win32.")
-endif()
+target_compile_definitions(elements PUBLIC
+   WIN32_LEAN_AND_MEAN
+   NOMINMAX
+   _UNICODE
+   ELEMENTS_HOST_UI_LIBRARY_WIN32
+   BOOST_DATE_TIME_NO_LIB
+   BOOST_REGEX_NO_LIB
+)
 
 ###############################################################################
 # Libraries and linking
 
-if (UNIX OR (WIN32 AND NOT MSVC))
-   find_package(Threads)
-   target_link_libraries(elements PUBLIC Threads::Threads)
-endif()
-
-# ASIO requires this
 if (WIN32 AND NOT MSVC)
-   target_link_libraries(elements PUBLIC ws2_32)
+   find_package(Threads)
+   target_link_libraries(elements PUBLIC Threads::Threads ws2_32)
 endif()
 
 # Replace missing Shcore library removed by WIN32_LEAN_AND_MEAN
-if (WIN32)
-   target_link_libraries(elements PUBLIC Shcore)
-endif()
+target_link_libraries(elements PUBLIC Shcore)
 
 add_library(cycfi::elements ALIAS elements)
