@@ -55,12 +55,20 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 - **cycfi/infra**: Utility library, fetched via FetchContent.
 - **ASIO**: Async I/O for timers/callbacks, fetched via FetchContent.
 
+### ThorVG-Specific Quirks
+
+- **Font name key**: ThorVG registers loaded fonts by filename stem (e.g., `"OpenSans-Regular"`), not by the font's internal family name. `canvas::font()` converts via `stem_from_path()`.
+- **DPI compensation**: ThorVG internally applies 96/72 DPI factor to font metrics. `tvg_font_scale = 72.0f/96.0f` is applied to all `text->size()` calls to match Cairo's user-space convention.
+- **pixmap scale convention**: Cairo uses `device_scale = 1/scale`, so `pixmap::size() = pixels * scale`, not `pixels / scale`.
+- **Dirty region**: `EngineOption::None` is required to prevent ThorVG from clearing glyph regions with black.
+
 ### Known Porting Issues
 
 - `canvas::draw(pixmap, src, dest)` ignores the `src` rect parameter (no source cropping)
 - Clip operations don't compose — only the last `clip()` is active (Cairo maintained a clip stack)
 - `glyphs::for_each()` has O(n²) byte offset recalculation
-- Font system requires explicit `register_font()` calls; no system font discovery like the original FontConfig-based approach
+- No system font discovery (e.g., "Segoe UI Symbol"); `load_fonts_from_directory()` scans `resources/` at startup
+- Sprite button images render as blue rectangles (pixmap drawing may have issues)
 
 ## Code Conventions
 

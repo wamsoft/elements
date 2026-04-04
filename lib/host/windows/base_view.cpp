@@ -515,8 +515,11 @@ namespace cycfi::elements
             if (!RegisterClassW(&windowClass))
                MessageBoxW(nullptr, L"Could not register class", L"Error", MB_OK);
 
-            auto pwd = fs::current_path();
-            auto res_dir = pwd / "resources";
+            // Get executable directory (not current working directory)
+            wchar_t exe_path[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+            auto exe_dir = fs::path(exe_path).parent_path();
+            auto res_dir = exe_dir / "resources";
             add_search_path(res_dir);
 
             // Auto-register fonts from the resources directory

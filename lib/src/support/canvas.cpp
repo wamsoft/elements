@@ -190,7 +190,8 @@ namespace cycfi { namespace elements
                });
             }
             grad->colorStops(stops.data(), stops.size());
-            grad->transform(_state.matrix);
+            // No grad->transform() — gradient coords are in the same user space
+            // as the shape path; shape->transform() moves both together.
             shape->fill(grad);
          }
          else
@@ -211,7 +212,6 @@ namespace cycfi { namespace elements
                });
             }
             grad->colorStops(stops.data(), stops.size());
-            grad->transform(_state.matrix);
             shape->fill(grad);
          }
       }
@@ -831,11 +831,13 @@ namespace cycfi { namespace elements
       // Apply fill color
       if (auto* c = std::get_if<color>(&_state.fill_style_data))
       {
-         text->fill(
-            uint8_t(c->red * 255),
-            uint8_t(c->green * 255),
-            uint8_t(c->blue * 255)
-         );
+         // Clamp RGB to [0,255] — level() can produce values > 1.0
+         auto clamp8 = [](float v) -> uint8_t {
+            return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
+         };
+         text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
+         // Text::fill() has no alpha parameter; use Paint::opacity() instead
+         text->opacity(clamp8(c->alpha));
       }
 
       // Position: apply current matrix translation + alignment offset
@@ -875,13 +877,15 @@ namespace cycfi { namespace elements
       float dy = -tm.ascent; // baseline alignment default
 
       // Apply stroke
+      auto clamp8 = [](float v) -> uint8_t {
+         return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
+      };
       if (auto* c = std::get_if<color>(&_state.stroke_style_data))
       {
          text->outline(_state.line_width_val,
-            uint8_t(c->red * 255),
-            uint8_t(c->green * 255),
-            uint8_t(c->blue * 255)
+            clamp8(c->red), clamp8(c->green), clamp8(c->blue)
          );
+         text->opacity(clamp8(c->alpha));
       }
       text->fill(0, 0, 0); // transparent fill for stroke-only
 
@@ -969,11 +973,13 @@ namespace cycfi { namespace elements
    ///////////////////////////////////////////////////////////////////////////
    // Pixmaps
    ///////////////////////////////////////////////////////////////////////////
-   void canvas::draw(pixmap const& pm, elements::rect /*src*/, elements::rect dest)
+   void canvas::draw(pixmap const& pm, elements::rect src, elements::rect dest)
    {
       auto state_ = new_state();
-      auto w = dest.width();
-      auto h = dest.height();
+
+      if (src.width() <= 0 || src.height() <= 0 ||
+          dest.width() <= 0 || dest.height() <= 0)
+         return;
 
       auto* base = pm.picture();
       if (!base)
@@ -984,13 +990,31 @@ namespace cycfi { namespace elements
          return;
 
       auto* pic = static_cast<tvg::Picture*>(paint);
-      pic->size(w, h);
 
-      tvg::Matrix offset = {1, 0, dest.left, 0, 1, dest.top, 0, 0, 1};
-      pic->transform(multiply(_state.matrix, offset));
+      // The picture has pixel dimensions (pic_pw × pic_ph).
+      // pixmap::size() returns logical coordinates: pixels * scale.
+      // src is in logical coordinates (a sub-rect of the logical image).
+      // We build a matrix that maps picture pixel-space → screen-space
+      // such that the src region maps exactly onto dest.
+      //
+      // Logical coord → pixel coord: divide by scale
+      // pixel (px,py) → screen: sx*px + tx, sy*py + ty
+      //   where sx = scale * dest.width / src.width
+      //         tx = dest.left - src.left * dest.width / src.width
+      float scale = pm.scale();
+      float sx = scale * dest.width()  / src.width();
+      float sy = scale * dest.height() / src.height();
+      float tx = dest.left - src.left * dest.width()  / src.width();
+      float ty = dest.top  - src.top  * dest.height() / src.height();
 
-      if (auto* clip_shape = make_clip_shape())
-         pic->clip(clip_shape);
+      tvg::Matrix mat = {sx, 0, tx, 0, sy, ty, 0, 0, 1};
+      pic->transform(multiply(_state.matrix, mat));
+
+      // Clip to dest rectangle so portions outside src are hidden
+      auto* clip = tvg::Shape::gen();
+      clip->appendRect(dest.left, dest.top, dest.width(), dest.height());
+      clip->transform(_state.matrix);
+      pic->clip(clip);
 
       _tvg_canvas->add(pic);
       _has_pending = true;

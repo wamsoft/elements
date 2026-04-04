@@ -115,28 +115,61 @@ namespace cycfi::elements
       auto const& theme_ = get_theme();
       auto state = cnv.new_state();
 
-      auto gradient = canvas::linear_gradient{
-            bounds.top_left(),
-            bounds.bottom_left()
-         };
-
       float box_opacity = get_theme().element_background_opacity;
       if (!enabled)
          box_opacity *= theme_.disabled_opacity;
 
+      color body = enabled ? c : c.opacity(c.alpha * theme_.disabled_opacity);
+
+#if 0 // Original two-pass: body color fill + gradient overlay
+      auto gradient = canvas::linear_gradient{
+            bounds.top_left(),
+            bounds.bottom_left()
+         };
       gradient.add_color_stop({0.0, rgb(255, 255, 255).opacity(box_opacity)});
       gradient.add_color_stop({1.0, rgb(0, 0, 0).opacity(box_opacity)});
-      cnv.fill_style(gradient);
 
       auto r = bounds.inset(1, 1);
       cnv.begin_path();
       draw_round_rect(cnv, r, radii -1);
-      cnv.fill_style(enabled? c : c.opacity(c.alpha * theme_.disabled_opacity));
+      cnv.fill_style(body);
       cnv.fill();
       draw_round_rect(cnv, r, radii -1);
 
       cnv.fill_style(gradient);
       cnv.fill();
+#else // Single-pass: pre-blended gradient
+      // Combine body color + white/black overlay into one gradient.
+      // Source-over result:
+      //   top:    body*(1-op) + white*op
+      //   bottom: body*(1-op) + black*op = body*(1-op)
+      float inv = 1.0f - box_opacity;
+      color top_color = {
+         body.red   * inv + box_opacity,
+         body.green * inv + box_opacity,
+         body.blue  * inv + box_opacity,
+         body.alpha
+      };
+      color bot_color = {
+         body.red   * inv,
+         body.green * inv,
+         body.blue  * inv,
+         body.alpha
+      };
+
+      auto gradient = canvas::linear_gradient{
+            bounds.top_left(),
+            bounds.bottom_left()
+         };
+      gradient.add_color_stop({0.0, top_color});
+      gradient.add_color_stop({1.0, bot_color});
+
+      auto r = bounds.inset(1, 1);
+      cnv.begin_path();
+      draw_round_rect(cnv, r, radii -1);
+      cnv.fill_style(gradient);
+      cnv.fill();
+#endif
 
       r = bounds.inset(0.5, 0.5);
       cnv.begin_path();
