@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Elements is a lightweight C++ GUI library originally by Joel de Guzman (cycfi). This fork is being **ported from Cairo to ThorVG + richtext** for rendering. The original (unmodified) source is at `../elemets_orig/` and the richtext library is at `../richtext/`.
+Elements is a lightweight C++ GUI library originally by Joel de Guzman (cycfi). This fork has been **ported from Cairo to ThorVG** for rendering, with pluggable text/glyph backends.
 
-**Current state:** Windows host layer, canvas, font, glyphs, and pixmap have been rewritten for ThorVG. Other platforms (GTK, macOS) are removed; eventual plan is SDL unification.
+**Current state:** Cairo 依存を完全除去。描画は ThorVG、テキスト描画・グリフレイアウトはプラグイン構造（デフォルト: ThorVG + FreeType + HarfBuzz）。ホスト層は Win32 と SDL3 の2系統。richtext (minikin) は ELEMENTS_USE_RICHTEXT=ON でオプション利用可能。
 
 ## Build Commands
 
@@ -20,11 +20,11 @@ make build                       # or: make build BUILD_TYPE=Debug
 # SDL host build
 cmake --preset x64-windows -DELEMENTS_HOST_UI_LIBRARY=sdl
 
+# With richtext support
+cmake --preset x64-windows -DELEMENTS_USE_RICHTEXT=ON
+
 # Clean
 make clean
-
-# Download test fonts
-make fontdata
 ```
 
 The build uses Ninja Multi-Config generator. Build output goes to the path defined in CMakePresets.json.
