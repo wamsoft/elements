@@ -23,7 +23,7 @@ include(ElementsConfigCommon)
 
 option(ELEMENTS_BUILD_EXAMPLES "build Elements library examples" ON)
 option(ELEMENTS_ENABLE_LTO "enable link time optimization for Elements targets" OFF)
-set(ELEMENTS_HOST_UI_LIBRARY "win32" CACHE STRING "Host UI library (win32, SDL予定)")
+set(ELEMENTS_HOST_UI_LIBRARY "sdl" CACHE STRING "Host UI library to use (sdl, win)")
 
 add_subdirectory(lib)
 

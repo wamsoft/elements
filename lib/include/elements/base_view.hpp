@@ -18,7 +18,11 @@
 #include <elements/support/rect.hpp>
 #include <elements/support/payload.hpp>
 
-#include <windows.h>
+#if defined(ELEMENTS_HOST_UI_LIBRARY_WIN32)
+# include <windows.h>
+#elif defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
+# include <SDL3/SDL.h>
+#endif
 
 namespace cycfi::elements
 {
@@ -305,8 +309,13 @@ namespace cycfi::elements
    // The base view base class
    ////////////////////////////////////////////////////////////////////////////
 
+#if defined(ELEMENTS_HOST_UI_LIBRARY_WIN32)
    using host_view_handle = HWND;
    using host_window_handle = HWND;
+#elif defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
+   using host_view_handle = SDL_Window*;
+   using host_window_handle = SDL_Window*;
+#endif
 
    class base_view : non_copyable
    {

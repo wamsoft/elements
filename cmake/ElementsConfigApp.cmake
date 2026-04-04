@@ -90,15 +90,24 @@ elseif (UNIX AND NOT APPLE)
       ${ELEMENTS_APP_RESOURCES}
    )
 elseif (WIN32)
-   add_executable(
-      ${ELEMENTS_APP_PROJECT}
-      WIN32
-      ${ELEMENTS_APP_SOURCES}
-      ${ELEMENTS_RESOURCES}
-      ${ELEMENTS_APP_RESOURCES}
-   )
+   if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+      add_executable(
+         ${ELEMENTS_APP_PROJECT}
+         ${ELEMENTS_APP_SOURCES}
+         ${ELEMENTS_RESOURCES}
+         ${ELEMENTS_APP_RESOURCES}
+      )
+   else()
+      add_executable(
+         ${ELEMENTS_APP_PROJECT}
+         WIN32
+         ${ELEMENTS_APP_SOURCES}
+         ${ELEMENTS_RESOURCES}
+         ${ELEMENTS_APP_RESOURCES}
+      )
+   endif()
 
-   if (MSVC)
+   if (MSVC AND NOT ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
 
       target_link_options(${ELEMENTS_APP_PROJECT} PRIVATE
          /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup shcore.lib
@@ -160,6 +169,18 @@ foreach(FILE ${ELEMENTS_RESOURCES} ${ELEMENTS_APP_RESOURCES})
       COMMAND ${CMAKE_COMMAND} -E copy ${FILE} ${DEST_DIR}/${FILE_NAME}
    )
 endforeach()
+
+###############################################################################
+# Copy SDL3 DLL to output directory (shared library)
+
+if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl" AND TARGET SDL3::SDL3)
+   add_custom_command(
+      TARGET ${ELEMENTS_APP_PROJECT} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+         $<TARGET_FILE:SDL3::SDL3>
+         $<TARGET_FILE_DIR:${ELEMENTS_APP_PROJECT}>
+   )
+endif()
 
 ###############################################################################
 # Resource file properties

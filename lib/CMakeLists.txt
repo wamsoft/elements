@@ -140,15 +140,25 @@ set(ELEMENTS_HEADERS
    include/elements/window.hpp
 )
 
-# Windows host (テスト用に残す。最終的にSDLで統一予定)
-set(ELEMENTS_HOST
-   host/windows/utils.hpp
-   host/windows/app.cpp
-   host/windows/base_view.cpp
-   host/windows/key.cpp
-   host/windows/window.cpp
-   host/windows/drag_and_drop.cpp
-)
+# Host UI library selection: "win32" (default on Windows) or "sdl"
+set(ELEMENTS_HOST_UI_LIBRARY "sdl" CACHE STRING "Host UI library (win32 or sdl)")
+
+if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+   set(ELEMENTS_HOST
+      host/sdl/app.cpp
+      host/sdl/base_view.cpp
+      host/sdl/window.cpp
+   )
+else()
+   set(ELEMENTS_HOST
+      host/windows/utils.hpp
+      host/windows/app.cpp
+      host/windows/base_view.cpp
+      host/windows/key.cpp
+      host/windows/window.cpp
+      host/windows/drag_and_drop.cpp
+   )
+endif()
 
 source_group("Source Files\\elements"
    FILES
@@ -219,7 +229,7 @@ option(TVG_LOADER_LOTTIE "Enable Lottie Loader" OFF)
 option(TVG_LOADER_TTF "Enable TTF Loader" ON)
 option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
 
-option(TVG_LOG "Enable log message" ON)
+option(TVG_LOG "Enable log message" OFF)
 option(TVG_FILE_IO "Enable File IO calls" ON)
 
 set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ext/richtext")
@@ -255,16 +265,13 @@ FetchContent_MakeAvailable(asio)
 target_include_directories(elements PUBLIC ${asio_SOURCE_DIR}/asio/include)
 
 ###############################################################################
-# Global options (Windows only — GTK/macOS removed, SDL統一予定)
+# Global options
 
 # Text backend: "thorvg" (default) or "richtext"
 set(ELEMENTS_TEXT_BACKEND "thorvg" CACHE STRING "Default text rendering backend (thorvg or richtext)")
 
+# Common definitions
 target_compile_definitions(elements PUBLIC
-   WIN32_LEAN_AND_MEAN
-   NOMINMAX
-   _UNICODE
-   ELEMENTS_HOST_UI_LIBRARY_WIN32
    BOOST_DATE_TIME_NO_LIB
    BOOST_REGEX_NO_LIB
 )
@@ -274,14 +281,49 @@ if (ELEMENTS_TEXT_BACKEND STREQUAL "richtext")
 endif()
 
 ###############################################################################
-# Libraries and linking
+# Host-specific definitions and linking
+
+if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+
+   message(STATUS "Using SDL3 as host UI library")
+
+   # SDL3 (shared library via FetchContent)
+   set(SDL_SHARED ON CACHE BOOL "Build SDL shared library")
+   set(SDL_STATIC OFF CACHE BOOL "Build SDL static library")
+
+   include(FetchContent)
+   FetchContent_Declare(
+      SDL3
+      GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+      GIT_TAG release-3.4.0
+   )
+   FetchContent_MakeAvailable(SDL3)
+
+   target_compile_definitions(elements PUBLIC ELEMENTS_HOST_UI_LIBRARY_SDL)
+   target_link_libraries(elements PUBLIC SDL3::SDL3)
+   if (WIN32)
+      target_compile_definitions(elements PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _UNICODE)
+   endif()
+else()
+
+   message(STATUS "Using Win32 API as host UI library")
+
+   # Win32 host
+   target_compile_definitions(elements PUBLIC
+      WIN32_LEAN_AND_MEAN
+      NOMINMAX
+      _UNICODE
+      ELEMENTS_HOST_UI_LIBRARY_WIN32
+   )
+endif()
 
 if (WIN32 AND NOT MSVC)
    find_package(Threads)
    target_link_libraries(elements PUBLIC Threads::Threads ws2_32)
 endif()
 
-# Replace missing Shcore library removed by WIN32_LEAN_AND_MEAN
-target_link_libraries(elements PUBLIC Shcore)
+if (WIN32)
+   target_link_libraries(elements PUBLIC Shcore)
+endif()
 
 add_library(cycfi::elements ALIAS elements)

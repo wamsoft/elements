@@ -40,7 +40,7 @@ endif()
 ###############################################################################
 # UI Libraries (Windows only — 最終的にSDLで統一予定)
 
-set(ELEMENTS_HOST_UI_LIBRARY "win32" CACHE STRING "Host UI library (win32)")
+set(ELEMENTS_HOST_UI_LIBRARY "sdl" CACHE STRING "Host UI library (sdl or win32)")
 
 message(STATUS "building elements with ${ELEMENTS_HOST_UI_LIBRARY} host UI library")
 
