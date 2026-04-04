@@ -50,9 +50,7 @@ set(ELEMENTS_SOURCES
    src/element/tooltip.cpp
    src/support/canvas.cpp
    src/support/text_backend_tvg.cpp
-   src/support/text_backend_richtext.cpp
    src/support/glyph_layout_ft.cpp
-   src/support/glyph_layout_richtext.cpp
    src/support/draw_utils.cpp
    src/support/font.cpp
    src/support/glyphs.cpp
@@ -221,39 +219,78 @@ FetchContent_MakeAvailable(cycfi_infra)
 target_link_libraries(elements PUBLIC cycfi::infra)
 
 ###############################################################################
-# ThorVG + richtext (text rendering, font management, vector graphics)
+# Dependencies: ThorVG, HarfBuzz, FreeType (+ optionally richtext)
 #
-# richtext is included as a git submodule at ext/richtext.
-# It brings in thorvg and minikin as subdirectories.
+# ELEMENTS_USE_RICHTEXT=ON  → FetchContent richtext (includes thorvg+minikin+harfbuzz+freetype)
+# ELEMENTS_USE_RICHTEXT=OFF → FetchContent thorvg + harfbuzz, vcpkg freetype
+###############################################################################
 
+option(ELEMENTS_USE_RICHTEXT "Build with richtext support (text backend + glyph layout)" OFF)
+
+# ThorVG loader options (shared by both paths)
 option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
 option(TVG_LOADER_PNG "Enable PNG Loader" ON)
 option(TVG_LOADER_JPG "Enable JPG Loader" ON)
 option(TVG_LOADER_LOTTIE "Enable Lottie Loader" OFF)
 option(TVG_LOADER_TTF "Enable TTF Loader" ON)
 option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
-
 option(TVG_LOG "Enable log message" OFF)
 option(TVG_FILE_IO "Enable File IO calls" ON)
 
-set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ext/richtext")
-if(NOT EXISTS "${RICHTEXT_DIR}/CMakeLists.txt")
-   message(FATAL_ERROR
-      "richtext submodule not found at ${RICHTEXT_DIR}. "
-      "Run: git submodule update --init --recursive"
+if (ELEMENTS_USE_RICHTEXT)
+   message(STATUS "ELEMENTS_USE_RICHTEXT=ON: FetchContent richtext (includes ThorVG+minikin+HarfBuzz)")
+
+   FetchContent_Declare(
+      richtext
+      GIT_REPOSITORY https://github.com/wamsoft/richtext.git
+      GIT_TAG main
    )
+   FetchContent_MakeAvailable(richtext)
+
+   target_link_libraries(elements PUBLIC richtext_lib)
+   target_include_directories(elements PUBLIC "${richtext_SOURCE_DIR}/ext/thorvg/inc")
+
+   # richtext backend sources
+   target_sources(elements PRIVATE
+      src/support/text_backend_richtext.cpp
+      src/support/glyph_layout_richtext.cpp
+   )
+   target_include_directories(elements PRIVATE "${richtext_SOURCE_DIR}/include")
+
+else()
+   message(STATUS "ELEMENTS_USE_RICHTEXT=OFF: FetchContent ThorVG + HarfBuzz, vcpkg FreeType")
+
+   # --- ThorVG ---
+   FetchContent_Declare(
+      thorvg
+      GIT_REPOSITORY https://github.com/wtnbgo/thorvg.git
+      GIT_TAG cmake
+   )
+   FetchContent_MakeAvailable(thorvg)
+   target_link_libraries(elements PUBLIC thorvg)
+   target_include_directories(elements PUBLIC "${thorvg_SOURCE_DIR}/inc")
+
+   # --- FreeType (vcpkg) ---
+   find_package(freetype CONFIG REQUIRED)
+   target_link_libraries(elements PUBLIC freetype)
+
+   # --- HarfBuzz 13.1.1 (FetchContent, ICU なし) ---
+   set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
+   set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
+   set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
+   set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
+   set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+
+   FetchContent_Declare(
+      harfbuzz_source
+      GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+      GIT_TAG 13.1.1
+      GIT_SHALLOW TRUE
+   )
+   FetchContent_MakeAvailable(harfbuzz_source)
+   target_link_libraries(elements PUBLIC harfbuzz)
+
 endif()
-
-if(NOT TARGET richtext_lib)
-   add_subdirectory("${RICHTEXT_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/richtext")
-endif()
-
-target_link_libraries(elements PUBLIC richtext_lib)
-
-# ThorVG headers needed by canvas.hpp and scratch_context.hpp
-target_include_directories(elements PUBLIC
-   "${RICHTEXT_DIR}/ext/thorvg/inc"
-)
 
 ###############################################################################
 # Asio headers

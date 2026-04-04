@@ -56,8 +56,16 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 
 ### Dependencies
 
-- **richtext** (git submodule at `ext/richtext`): Provides ThorVG, minikin (text layout), FreeType. Built as subdirectory via CMake.
-- **SDL3** (FetchContent, release-3.4.0): Used for SDL host layer (`ELEMENTS_HOST_UI_LIBRARY=sdl`). Shared library.
+When `ELEMENTS_USE_RICHTEXT=OFF` (default):
+- **ThorVG** (FetchContent from `wtnbgo/thorvg` cmake branch): Vector graphics engine.
+- **FreeType** (vcpkg): Font loading and metrics.
+- **HarfBuzz 13.1.1** (FetchContent, ICU disabled): Text shaping.
+
+When `ELEMENTS_USE_RICHTEXT=ON`:
+- **richtext** (FetchContent from `wamsoft/richtext`): Includes ThorVG, minikin, HarfBuzz, FreeType.
+
+Common:
+- **SDL3** (FetchContent, release-3.4.0): Used for SDL host layer (`ELEMENTS_HOST_UI_LIBRARY=sdl`).
 - **cycfi/infra**: Utility library, fetched via FetchContent.
 - **ASIO**: Async I/O for timers/callbacks, fetched via FetchContent.
 

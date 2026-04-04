@@ -1,0 +1,125 @@
+# Elements ThorVG Port
+
+This fork ports the [Elements](https://github.com/cycfi/elements) C++ GUI library from Cairo to ThorVG-based rendering, with a pluggable architecture for text rendering and glyph layout.
+
+## Changes from Original
+
+### Rendering Engine: Cairo → ThorVG
+
+- **Canvas** (`lib/src/support/canvas.cpp`): Complete rewrite from `cairo_t*` to `tvg::SwCanvas`. Shapes are accumulated via deferred rendering and flushed in batch.
+- **Pixmap** (`lib/src/support/pixmap.cpp`): Uses `tvg::Picture` instead of `cairo_surface_t`. Source rectangle cropping implemented via transform + clip.
+- **Clip compositing**: Clips are intersected (bounding box) to support nested elements, matching Cairo's `cairo_clip()` behavior.
+- **Gradient rendering**: Removed double-transform bug. Single-pass pre-blended gradient option for buttons.
+
+### Host Layer
+
+Two host layers are available, selected at build time via `ELEMENTS_HOST_UI_LIBRARY`:
+
+| Host | Platform | Notes |
+|------|----------|-------|
+| **Win32** (default) | Windows | DIB section rendering, `WndProc` event dispatch |
+| **SDL3** | Cross-platform | `SDL_Texture` rendering, SDL3 event loop, FetchContent (release-3.4.0) |
+
+```bash
+# Win32 (default)
+cmake --preset x64-windows
+
+# SDL3
+cmake --preset x64-windows -DELEMENTS_HOST_UI_LIBRARY=sdl
+```
+
+### Text Rendering Backend (Plugin)
+
+Text rendering is abstracted via `text_backend` interface (`text_backend.hpp`):
+
+| Backend | Default | Description |
+|---------|---------|-------------|
+| **ThorVG** | Yes | Uses `tvg::Text` API. Always available. |
+| **richtext** | No | Uses richtext `GlyphRenderer` for glyph-level vector rendering. Requires `ELEMENTS_USE_RICHTEXT=ON`. |
+
+```cpp
+// Switch to richtext backend at runtime
+#include <elements/support/text_backend_richtext.hpp>
+canvas::set_text_backend(create_richtext_text_backend());
+```
+
+### Glyph Layout Backend (Plugin)
+
+Text shaping and font metrics are abstracted via `glyph_layout_backend` and `font_backend` interfaces (`glyph_utils.hpp`):
+
+| Backend | Default | Description |
+|---------|---------|-------------|
+| **FreeType + HarfBuzz** | Yes | Direct `hb_shape()` + `FT_Face` metrics. No minikin dependency. |
+| **richtext** | No | Uses richtext `TextLayout` / minikin for shaping. Requires `ELEMENTS_USE_RICHTEXT=ON`. |
+
+```cpp
+// Switch to richtext backend at runtime
+#include <elements/support/glyph_utils_richtext.hpp>
+set_glyph_layout_backend(create_richtext_glyph_layout_backend());
+set_font_backend(create_richtext_font_backend());
+```
+
+### Build Configuration
+
+#### CMake Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `ELEMENTS_HOST_UI_LIBRARY` | `win32` | Host UI: `win32` or `sdl` |
+| `ELEMENTS_USE_RICHTEXT` | `OFF` | Enable richtext backends (FetchContent from GitHub) |
+
+#### Dependencies by Configuration
+
+**`ELEMENTS_USE_RICHTEXT=OFF`** (default):
+- ThorVG — FetchContent from `https://github.com/wtnbgo/thorvg.git` (cmake branch)
+- FreeType — vcpkg
+- HarfBuzz 13.1.1 — FetchContent (ICU disabled)
+
+**`ELEMENTS_USE_RICHTEXT=ON`**:
+- richtext — FetchContent from `https://github.com/wamsoft/richtext.git` (includes ThorVG, minikin, HarfBuzz, FreeType)
+
+#### Build Commands
+
+```bash
+# Default (Win32 + ThorVG text + FT/HB glyphs)
+cmake --preset x64-windows
+cmake --build build/x64-windows/ --config Debug
+
+# With richtext support
+cmake --preset x64-windows -DELEMENTS_USE_RICHTEXT=ON
+cmake --build build/x64-windows/ --config Debug
+
+# SDL3 host
+cmake --preset x64-windows -DELEMENTS_HOST_UI_LIBRARY=sdl
+cmake --build build/x64-windows/ --config Debug
+```
+
+### ThorVG-Specific Notes
+
+- **Font name key**: ThorVG's `tvg::Text` registers fonts by filename stem (e.g., `"OpenSans-Regular"`). The ThorVG text backend converts via `stem_from_path()`.
+- **DPI compensation**: ThorVG internally applies 96/72 DPI factor. `tvg_font_scale = 72.0f/96.0f` is applied in the ThorVG text backend.
+- **Dirty region**: `EngineOption::None` is required to prevent ThorVG from clearing glyph regions with black.
+- **pixmap scale**: Cairo convention `device_scale = 1/scale`, so `pixmap::size() = pixels * scale`.
+
+### File Structure
+
+```
+lib/
+├── host/
+│   ├── windows/          # Win32 host (app, base_view, window, key, drag_and_drop)
+│   └── sdl/              # SDL3 host (app, base_view, window)
+├── include/elements/support/
+│   ├── canvas.hpp         # ThorVG canvas wrapper
+│   ├── text_backend.hpp   # Text rendering backend interface
+│   ├── text_backend_richtext.hpp  # richtext backend factory (optional)
+│   ├── glyph_utils.hpp   # Glyph layout backend interface
+│   └── glyph_utils_richtext.hpp   # richtext glyph backend factory (optional)
+└── src/support/
+    ├── canvas.cpp          # Canvas implementation
+    ├── text_backend_tvg.cpp          # ThorVG text backend (default)
+    ├── text_backend_richtext.cpp     # richtext text backend (ELEMENTS_USE_RICHTEXT=ON)
+    ├── glyph_layout_ft.cpp           # FreeType+HarfBuzz glyph backend (default)
+    ├── glyph_layout_richtext.cpp     # richtext glyph backend (ELEMENTS_USE_RICHTEXT=ON)
+    ├── font.cpp            # Font registration (backend-agnostic)
+    └── glyphs.cpp          # Text layout/shaping (backend-agnostic)
+```

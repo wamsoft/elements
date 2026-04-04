@@ -1,3 +1,0 @@
-[submodule "ext/richtext"]
-	path = ext/richtext
-	url = https://github.com/wamsoft/richtext.git
