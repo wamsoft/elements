@@ -1,0 +1,89 @@
+/*=============================================================================
+   Copyright (c) 2016-2023 Joel de Guzman
+
+   Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
+=============================================================================*/
+#if !defined(ELEMENTS_GLYPH_UTILS_HPP)
+#define ELEMENTS_GLYPH_UTILS_HPP
+
+#include <elements/support/font.hpp>
+#include <vector>
+#include <memory>
+#include <string>
+
+namespace cycfi { namespace elements
+{
+   ////////////////////////////////////////////////////////////////////////////
+   // Per-character position data
+   ////////////////////////////////////////////////////////////////////////////
+   struct char_pos
+   {
+      float    x;           // x position relative to layout start
+      float    advance;     // advance width
+      int      num_bytes;   // number of UTF-8 bytes for this character
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Glyph layout backend interface
+   //
+   // Performs text shaping (glyph positioning) and font metrics extraction.
+   // Implementations may use richtext/minikin, direct HarfBuzz+FreeType, etc.
+   // The virtual destructor ensures proper cache cleanup.
+   ////////////////////////////////////////////////////////////////////////////
+   class glyph_layout_backend
+   {
+   public:
+      virtual ~glyph_layout_backend() = default;
+
+      struct metrics
+      {
+         float ascent;    // positive
+         float descent;   // positive
+         float leading;
+      };
+
+      // Perform text shaping and build per-character positions.
+      // If first == last (empty text), only compute metrics using the font.
+      virtual void layout(
+         char const* first, char const* last,
+         font const& f, float size,
+         float x_offset,
+         std::vector<char_pos>& positions,
+         metrics& out_metrics
+      ) = 0;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Font registration backend interface
+   //
+   // Registers fonts for use by the glyph layout backend.
+   ////////////////////////////////////////////////////////////////////////////
+   class font_backend
+   {
+   public:
+      virtual ~font_backend() = default;
+
+      // Initialize the font subsystem
+      virtual void initialize() = 0;
+
+      // Register a font file. Called for each font.
+      virtual void register_font(std::string const& file_path) = 0;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Default (FreeType + HarfBuzz) backends — always available
+   ////////////////////////////////////////////////////////////////////////////
+   std::shared_ptr<glyph_layout_backend> create_ft_glyph_layout_backend();
+   std::shared_ptr<font_backend>         create_ft_font_backend();
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Global backend access
+   ////////////////////////////////////////////////////////////////////////////
+   void set_glyph_layout_backend(std::shared_ptr<glyph_layout_backend> b);
+   std::shared_ptr<glyph_layout_backend> get_glyph_layout_backend();
+
+   void set_font_backend(std::shared_ptr<font_backend> b);
+   std::shared_ptr<font_backend> get_font_backend();
+}}
+
+#endif

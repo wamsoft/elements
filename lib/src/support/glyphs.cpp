@@ -5,10 +5,6 @@
 =============================================================================*/
 #include <elements/support/glyphs.hpp>
 
-#include <richtext/TextLayout.hpp>
-#include <richtext/TextStyle.hpp>
-#include <richtext/FontManager.hpp>
-
 #include <string>
 #include <algorithm>
 #include <cstring>
@@ -16,152 +12,6 @@
 
 namespace cycfi { namespace elements
 {
-   namespace
-   {
-      // Convert UTF-8 string to UTF-16
-      std::u16string utf8_to_utf16(char const* first, char const* last)
-      {
-         std::u16string result;
-         result.reserve(last - first);
-
-         unsigned state = 0;
-         unsigned codepoint = 0;
-         for (auto p = first; p != last; ++p)
-         {
-            if (!decode_utf8(state, codepoint, uint8_t(*p)))
-            {
-               if (codepoint <= 0xFFFF)
-               {
-                  result.push_back(char16_t(codepoint));
-               }
-               else
-               {
-                  // Surrogate pair
-                  codepoint -= 0x10000;
-                  result.push_back(char16_t(0xD800 + (codepoint >> 10)));
-                  result.push_back(char16_t(0xDC00 + (codepoint & 0x3FF)));
-               }
-            }
-         }
-         return result;
-      }
-
-      // Count UTF-8 bytes per Unicode codepoint in the string
-      // Returns a vector with one entry per codepoint
-      std::vector<int> utf8_byte_counts(char const* first, char const* last)
-      {
-         std::vector<int> counts;
-         unsigned state = 0;
-         unsigned codepoint = 0;
-         int byte_count = 0;
-
-         for (auto p = first; p != last; ++p)
-         {
-            ++byte_count;
-            if (!decode_utf8(state, codepoint, uint8_t(*p)))
-            {
-               counts.push_back(byte_count);
-               byte_count = 0;
-            }
-         }
-         return counts;
-      }
-
-      // Build a richtext::TextStyle from a font object
-      richtext::TextStyle make_text_style(font const& f, float size)
-      {
-         richtext::TextStyle style;
-         style.fontSize = size;
-
-         // Create a single-font collection from the font's file path
-         // (registered in font.cpp using file path as name)
-         if (!f.file().empty())
-         {
-            auto& fm = richtext::FontManager::instance();
-            auto collection = fm.createCollection({f.file()});
-            if (collection)
-               style.fontCollection = collection;
-         }
-         return style;
-      }
-
-      // Build char_pos array from richtext TextLayout
-      // Maps per-glyph data back to per-Unicode-codepoint positions
-      void build_char_positions(
-         richtext::TextLayout const& layout,
-         char const* first, char const* last,
-         std::vector<char_pos>& positions,
-         float x_offset)
-      {
-         auto byte_counts = utf8_byte_counts(first, last);
-         int num_chars = int(byte_counts.size());
-
-         if (num_chars == 0)
-            return;
-
-         // Map UTF-16 indices to codepoint indices
-         // Each codepoint may be 1 or 2 UTF-16 code units (surrogate pairs)
-         auto u16text = layout.getText();
-         std::vector<int> u16_to_cp(u16text.size(), -1);
-         int cp_idx = 0;
-         for (size_t i = 0; i < u16text.size() && cp_idx < num_chars; ++i)
-         {
-            u16_to_cp[i] = cp_idx;
-            if (u16text[i] >= 0xD800 && u16text[i] <= 0xDBFF)
-            {
-               // High surrogate — the low surrogate at i+1 maps to same cp
-               if (i + 1 < u16text.size())
-                  u16_to_cp[i + 1] = cp_idx;
-               ++i; // skip low surrogate
-            }
-            ++cp_idx;
-         }
-
-         // Initialize positions array
-         positions.resize(num_chars);
-         for (int i = 0; i < num_chars; ++i)
-         {
-            positions[i].x = 0;
-            positions[i].advance = 0;
-            positions[i].num_bytes = byte_counts[i];
-         }
-
-         // Fill in positions from glyph info
-         size_t glyph_count = layout.getGlyphCount();
-         for (size_t gi = 0; gi < glyph_count; ++gi)
-         {
-            auto const& glyph = layout.getGlyph(gi);
-            int ci = -1;
-            if (glyph.charIndex < u16_to_cp.size())
-               ci = u16_to_cp[glyph.charIndex];
-            if (ci < 0 || ci >= num_chars)
-               continue;
-
-            // Determine how many codepoints this glyph covers
-            int next_ci = num_chars;
-            if (gi + 1 < glyph_count)
-            {
-               auto const& next_glyph = layout.getGlyph(gi + 1);
-               if (next_glyph.charIndex < u16_to_cp.size())
-               {
-                  int nci = u16_to_cp[next_glyph.charIndex];
-                  if (nci > ci)
-                     next_ci = nci;
-               }
-            }
-
-            int span = next_ci - ci;
-            float per_char_advance = glyph.advance / std::max(1, span);
-
-            for (int k = 0; k < span && (ci + k) < num_chars; ++k)
-            {
-               positions[ci + k].x = x_offset + glyph.x + k * per_char_advance;
-               positions[ci + k].advance = per_char_advance;
-            }
-         }
-      }
-   }
-
    ////////////////////////////////////////////////////////////////////////////
    // glyphs
    ////////////////////////////////////////////////////////////////////////////
@@ -232,10 +82,9 @@ namespace cycfi { namespace elements
 
       auto state = canvas_.new_state();
 
-      // pos.y is the baseline position (caller uses richtext metrics).
-      // Convert to top-of-text position using richtext ascent so that
-      // fill_text (which uses ThorVG metrics internally) doesn't
-      // introduce a mismatch.
+      // pos.y is the baseline position (caller uses layout metrics).
+      // Convert to top-of-text using ascent so that fill_text
+      // (which may use different internal metrics) doesn't mismatch.
       canvas_.font(_font, _font_size);
       canvas_.text_align(canvas::top | canvas::left);
       canvas_.fill_text(
@@ -425,34 +274,22 @@ namespace cycfi { namespace elements
    {
       _owned_positions.clear();
 
-      // Create TextStyle from font
-      auto style = make_text_style(_font, _font_size);
+      // Dispatch to the glyph layout backend
+      glyph_layout_backend::metrics m;
+      get_glyph_layout_backend()->layout(
+         _first, _last, _font, _font_size, start.x,
+         _owned_positions, m
+      );
 
-      // Use a space character for metrics when text is empty,
-      // so that input boxes still have correct height.
-      auto u16text = (_first != _last)
-         ? utf8_to_utf16(_first, _last)
-         : std::u16string(1, u' ');
+      _ascent = m.ascent;
+      _descent = m.descent;
+      _leading = m.leading;
 
-      // Layout the text
-      richtext::TextLayout layout;
-      layout.layout(u16text, style);
-
-      // Extract metrics
-      _ascent = std::abs(layout.getAscent());   // Elements expects positive ascent
-      _descent = std::abs(layout.getDescent());  // Elements expects positive descent
-      float height = _ascent + _descent;
-      float total_height = layout.getHeight();
-      _leading = total_height > height ? total_height - height : 0;
-
-      if (_first == _last)
-         return;
-
-      // Build per-character positions
-      build_char_positions(layout, _first, _last, _owned_positions, start.x);
-
-      _positions = &_owned_positions;
-      _pos_start = 0;
-      _pos_count = int(_owned_positions.size());
+      if (_first != _last)
+      {
+         _positions = &_owned_positions;
+         _pos_start = 0;
+         _pos_count = int(_owned_positions.size());
+      }
    }
 }}

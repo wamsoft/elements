@@ -51,6 +51,8 @@ set(ELEMENTS_SOURCES
    src/support/canvas.cpp
    src/support/text_backend_tvg.cpp
    src/support/text_backend_richtext.cpp
+   src/support/glyph_layout_ft.cpp
+   src/support/glyph_layout_richtext.cpp
    src/support/draw_utils.cpp
    src/support/font.cpp
    src/support/glyphs.cpp

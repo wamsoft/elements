@@ -10,6 +10,7 @@
 #include <infra/string_view.hpp>
 #include <elements/support/canvas.hpp>
 #include <elements/support/text_utils.hpp>
+#include <elements/support/glyph_utils.hpp>
 #include <vector>
 #include <stdexcept>
 #include <string>
@@ -17,15 +18,6 @@
 
 namespace cycfi { namespace elements
 {
-   ////////////////////////////////////////////////////////////////////////////
-   // Per-character position data extracted from richtext TextLayout
-   ////////////////////////////////////////////////////////////////////////////
-   struct char_pos
-   {
-      float    x;           // x position relative to layout start
-      float    advance;     // advance width
-      int      num_bytes;   // number of UTF-8 bytes for this character
-   };
 
    ////////////////////////////////////////////////////////////////////////////
    // glyphs: Text drawing and measuring utility

@@ -5,10 +5,10 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/support/font.hpp>
+#include <elements/support/glyph_utils.hpp>
 #include <infra/assert.hpp>
 #include <infra/filesystem.hpp>
 
-#include <richtext/FontManager.hpp>
 #include <thorvg.h>
 
 
@@ -120,46 +120,12 @@ namespace cycfi { namespace elements
       }
 
       ////////////////////////////////////////////////////////////////////////
-      // richtext FontManager integration
+      // Font backend integration
       ////////////////////////////////////////////////////////////////////////
-      std::once_flag                fm_init_flag;
-      std::set<std::string>         fm_registered_files;
-      std::mutex                    fm_registered_mutex;
-
-      void init_font_manager()
+      void ensure_font_registered(std::string const& file_path)
       {
-         auto& fm = richtext::FontManager::instance();
-         fm.initialize();
-
-         // File-based font data loader
-         fm.setFontDataLoader(
-            [](std::string const& file_path) -> richtext::FontDataBuffer
-            {
-               std::ifstream file(file_path, std::ios::binary);
-               if (!file.is_open())
-                  return nullptr;
-               auto data = std::make_shared<std::vector<uint8_t>>(
-                  std::istreambuf_iterator<char>(file),
-                  std::istreambuf_iterator<char>()
-               );
-               if (data->empty())
-                  return nullptr;
-               return data;
-            }
-         );
-      }
-
-      void ensure_fm_font_registered(std::string const& file_path)
-      {
-         std::call_once(fm_init_flag, init_font_manager);
-
-         std::lock_guard<std::mutex> lock(fm_registered_mutex);
-         if (fm_registered_files.find(file_path) == fm_registered_files.end())
-         {
-            auto& fm = richtext::FontManager::instance();
-            if (fm.registerFont(file_path, file_path))
-               fm_registered_files.insert(file_path);
-         }
+         get_font_backend()->initialize();
+         get_font_backend()->register_font(file_path);
       }
    }
 
@@ -185,7 +151,7 @@ namespace cycfi { namespace elements
       }
 
       // Also register with richtext::FontManager
-      ensure_fm_font_registered(file);
+      ensure_font_registered(file);
    }
 
    ////////////////////////////////////////////////////////////////////////////

@@ -47,6 +47,7 @@ ThorVG uses **deferred rendering**: shapes are accumulated via `_tvg_canvas->add
 - **Canvas** (`lib/src/support/canvas.cpp`): ThorVG-based 2D drawing API wrapping `tvg::SwCanvas`. Creates shapes per fill/stroke operation.
 - **Text backends** (`lib/src/support/text_backend_tvg.cpp`, `text_backend_richtext.cpp`): Pluggable text rendering via `text_backend` interface. Default is ThorVG. richtext backend available via `create_richtext_text_backend()`.
 - **Element tree** (`lib/src/element/`, `lib/include/elements/element/`): ~57 UI element implementations. Each element has `limits()`, `layout()`, `draw()`, `click()` etc.
+- **Glyph layout backends** (`lib/src/support/glyph_layout_ft.cpp`, `glyph_layout_richtext.cpp`): Pluggable text shaping/metrics via `glyph_layout_backend` interface. Default is FreeType+HarfBuzz. richtext backend available via `create_richtext_glyph_layout_backend()`.
 - **Support** (`lib/src/support/`): Font management (requires explicit `register_font()` — no auto-discovery), glyphs, pixmap, theme, text utilities.
 
 ### Scratch Context
@@ -67,6 +68,14 @@ Text rendering is abstracted via `text_backend` interface (`text_backend.hpp`):
 - **richtext backend**: Uses richtext `GlyphRenderer` for glyph-level vector rendering. Available via `create_richtext_text_backend()` from `text_backend_richtext.hpp`.
 - Switch at runtime: `canvas::set_text_backend(create_richtext_text_backend())`
 - Backends access canvas state via `canvas::get_state()`, `canvas::flush_shapes()`, `canvas::make_clip_shape()`, `canvas::tvg_canvas()`.
+
+### Glyph Layout Plugin System
+
+Text shaping and font metrics are abstracted via `glyph_layout_backend` and `font_backend` interfaces (`glyph_utils.hpp`):
+- **FreeType+HarfBuzz backend** (default): Direct `hb_shape()` + `FT_Face` metrics. No minikin/richtext dependency.
+- **richtext backend**: Uses richtext `TextLayout`/minikin for shaping. Available via `create_richtext_glyph_layout_backend()` from `glyph_utils_richtext.hpp`.
+- Switch at runtime: `set_glyph_layout_backend(create_richtext_glyph_layout_backend())` and `set_font_backend(create_richtext_font_backend())`
+- `glyphs.cpp` and `font.cpp` have no direct richtext dependency — all access goes through the backend interfaces.
 
 ### ThorVG-Specific Quirks
 
