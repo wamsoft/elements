@@ -232,16 +232,15 @@ namespace cycfi { namespace elements
 
       auto state = canvas_.new_state();
 
-      // Get the x offset of the first character in this slice
-      float start_x = 0;
-      if (_positions && _pos_count > 0)
-         start_x = (*_positions)[_pos_start].x;
-
-      // Draw the text substring at the specified position
+      // pos.y is the baseline position (caller uses richtext metrics).
+      // Convert to top-of-text position using richtext ascent so that
+      // fill_text (which uses ThorVG metrics internally) doesn't
+      // introduce a mismatch.
       canvas_.font(_font, _font_size);
+      canvas_.text_align(canvas::top | canvas::left);
       canvas_.fill_text(
          {_first, std::size_t(_last - _first)},
-         point{pos.x - start_x, pos.y}
+         point{pos.x, pos.y - _ascent}
       );
    }
 
@@ -426,16 +425,14 @@ namespace cycfi { namespace elements
    {
       _owned_positions.clear();
 
-      if (_first == _last)
-         return;
-
-      // Convert UTF-8 to UTF-16 for richtext
-      auto u16text = utf8_to_utf16(_first, _last);
-      if (u16text.empty())
-         return;
-
       // Create TextStyle from font
       auto style = make_text_style(_font, _font_size);
+
+      // Use a space character for metrics when text is empty,
+      // so that input boxes still have correct height.
+      auto u16text = (_first != _last)
+         ? utf8_to_utf16(_first, _last)
+         : std::u16string(1, u' ');
 
       // Layout the text
       richtext::TextLayout layout;
@@ -447,6 +444,9 @@ namespace cycfi { namespace elements
       float height = _ascent + _descent;
       float total_height = layout.getHeight();
       _leading = total_height > height ? total_height - height : 0;
+
+      if (_first == _last)
+         return;
 
       // Build per-character positions
       build_char_positions(layout, _first, _last, _owned_positions, start.x);

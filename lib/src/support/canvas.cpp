@@ -486,9 +486,11 @@ namespace cycfi { namespace elements
          max_x = std::max(max_x, x);
          max_y = std::max(max_y, y);
       }
-      // Convert from device to user coords
-      auto tl = device_to_user(point{min_x, min_y});
-      auto br = device_to_user(point{max_x, max_y});
+      // Clip points are in absolute device (pixel) space.
+      // Convert back to user coords using inverse of current state matrix.
+      auto inv = invert(_state.matrix);
+      auto tl = transform_point(inv, point{min_x, min_y});
+      auto br = transform_point(inv, point{max_x, max_y});
       return {tl.x, tl.y, br.x, br.y};
    }
 
@@ -899,6 +901,9 @@ namespace cycfi { namespace elements
       tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
       text->transform(multiply(tm2, offset));
 
+      if (auto* clip_shape = make_clip_shape())
+         text->clip(clip_shape);
+
       _tvg_canvas->add(text);
       _tvg_canvas->update();
       _tvg_canvas->draw(false);
@@ -945,6 +950,9 @@ namespace cycfi { namespace elements
 
       tvg::Matrix offset = {1, 0, p.x, 0, 1, p.y + dy, 0, 0, 1};
       text->transform(multiply(_state.matrix, offset));
+
+      if (auto* clip_shape = make_clip_shape())
+         text->clip(clip_shape);
 
       _tvg_canvas->add(text);
       _tvg_canvas->update();

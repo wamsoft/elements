@@ -1062,12 +1062,12 @@ namespace cycfi::elements
             auto& theme = get_theme();
             auto  size = _layout.metrics();
 
-            canvas.text_align(canvas::left);
+            canvas.text_align(canvas::left | canvas::top);
             canvas.font(theme.text_box_font, theme.text_box_font._size);
             canvas.fill_style(theme.inactive_font_color);
             canvas.fill_text(
                _placeholder.c_str()
-             , {ctx.bounds.left, ctx.bounds.top + size.ascent}
+             , {ctx.bounds.left, ctx.bounds.top}
             );
          }
          draw_caret(ctx);
