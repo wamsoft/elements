@@ -13,6 +13,7 @@
 #include <elements/support/font.hpp>
 #include <infra/filesystem.hpp>
 
+#include <elements/support/text_backend.hpp>
 #include <thorvg.h>
 
 #include <vector>
@@ -23,15 +24,11 @@
 #include <variant>
 #include <memory>
 
-namespace richtext { class TextRenderer; }
-
 namespace cycfi { namespace elements
 {
    class canvas
    {
    public:
-
-      enum class text_backend { richtext, thorvg };
 
       explicit          canvas(uint32_t* buf, uint32_t w, uint32_t h, float scale = 1.0f);
                         canvas(canvas&& rhs);
@@ -40,15 +37,22 @@ namespace cycfi { namespace elements
                         canvas(canvas const& rhs) = delete;
       canvas&           operator=(canvas const& rhs) = delete;
 
-      // Switch text rendering backend at runtime
-      static void       set_text_backend(text_backend b) { _text_backend = b; }
-      static text_backend get_text_backend()              { return _text_backend; }
+      // Text rendering backend (plugin)
+      static void       set_text_backend(std::shared_ptr<elements::text_backend> b);
+      static std::shared_ptr<elements::text_backend> get_text_backend();
 
       // Access to underlying ThorVG canvas (for advanced use)
       tvg::Canvas&      tvg_canvas() const;
 
       // Finalize rendering (must call at end of frame)
       void              flush();
+
+      // Access for text backends
+      void              flush_shapes();
+      tvg::Shape*       make_clip_shape() const;
+      struct canvas_state;
+      canvas_state const& get_state() const;
+      static tvg::Matrix multiply(tvg::Matrix const& a, tvg::Matrix const& b);
 
       ///////////////////////////////////////////////////////////////////////////////////
       // Transforms
@@ -167,21 +171,9 @@ namespace cycfi { namespace elements
          bottom   = 16        // Align text vertically to bottom.
       };
 
-      struct text_metrics
-      {
-         float       ascent;
-         float       descent;
-         float       leading;
-         point       size;
-      };
-
-      struct font_metrics
-      {
-         float       ascent;
-         float       descent;
-         float       height;
-         float       leading;
-      };
+      // Text metrics — defined in text_backend.hpp
+      using text_metrics = elements::text_metrics;
+      using font_metrics = elements::font_metrics;
 
                         [[deprecated("Use fill_text(utf8, p) instead following artist API.")]]
       void              fill_text(point p, char const* utf8);
@@ -225,46 +217,9 @@ namespace cycfi { namespace elements
       void              save();
       void              restore();
 
-   private:
-
-      friend class glyphs;
-
-      void              apply_fill_style();
-      void              apply_stroke_style();
-
-      // Create a ThorVG Shape from current accumulated path
-      tvg::Shape*       make_shape() const;
-
-      // Create a clip Shape clone from current clip data
-      tvg::Shape*       make_clip_shape() const;
-
-      // Apply current matrix to a paint
-      void              apply_transform(tvg::Paint* paint) const;
-
-      // Flush pending shapes to render
-      void              flush_shapes();
-
-      // Get/create richtext TextRenderer
-      richtext::TextRenderer& text_renderer();
-
-      // Backend-specific implementations
-      void              fill_text_tvg(std::string_view utf8, point p);
-      void              fill_text_rt(std::string_view utf8, point p);
-      void              stroke_text_tvg(std::string_view utf8, point p);
-      void              stroke_text_rt(std::string_view utf8, point p);
-      text_metrics      measure_text_tvg(char const* utf8);
-      text_metrics      measure_text_rt(char const* utf8);
-      font_metrics      measure_font_tvg();
-      font_metrics      measure_font_rt();
-
-      // Matrix helpers
-      static tvg::Matrix multiply(tvg::Matrix const& a, tvg::Matrix const& b);
-      static tvg::Matrix invert(tvg::Matrix const& m);
-      static point       transform_point(tvg::Matrix const& m, point p);
-      static tvg::Matrix identity();
-
       ///////////////////////////////////////////////////////////////////////////////////
-      // Fill/stroke style variant
+      // Types used by text backends (public for plugin access)
+
       struct gradient_data
       {
          bool is_linear; // true = linear, false = radial
@@ -279,13 +234,6 @@ namespace cycfi { namespace elements
 
       using style_variant = std::variant<color, gradient_data>;
 
-      // Apply style to shape fill
-      void              apply_fill_to_shape(tvg::Shape* shape) const;
-      // Apply style to shape stroke
-      void              apply_stroke_to_shape(tvg::Shape* shape) const;
-
-      ///////////////////////////////////////////////////////////////////////////////////
-      // Clip data (stored as path so we can create new Shape clones)
       struct clip_data
       {
          std::vector<tvg::PathCommand> cmds;
@@ -294,8 +242,6 @@ namespace cycfi { namespace elements
          tvg::FillRule                 rule = tvg::FillRule::NonZero;
       };
 
-      ///////////////////////////////////////////////////////////////////////////////////
-      // Canvas state (save/restore)
       struct canvas_state
       {
          style_variant      fill_style_data{colors::black};
@@ -311,6 +257,29 @@ namespace cycfi { namespace elements
          std::string        font_file;
          float              font_size = 12;
       };
+
+   private:
+
+      friend class glyphs;
+
+      void              apply_fill_style();
+      void              apply_stroke_style();
+
+      // Create a ThorVG Shape from current accumulated path
+      tvg::Shape*       make_shape() const;
+
+      // Apply current matrix to a paint
+      void              apply_transform(tvg::Paint* paint) const;
+
+      // Matrix helpers (multiply is public, others are internal)
+      static tvg::Matrix invert(tvg::Matrix const& m);
+      static point       transform_point(tvg::Matrix const& m, point p);
+      static tvg::Matrix identity();
+
+      // Apply style to shape fill
+      void              apply_fill_to_shape(tvg::Shape* shape) const;
+      // Apply style to shape stroke
+      void              apply_stroke_to_shape(tvg::Shape* shape) const;
 
       // ThorVG canvas and buffer
       tvg::SwCanvas*                _tvg_canvas = nullptr;
@@ -338,11 +307,8 @@ namespace cycfi { namespace elements
       // Track whether shapes have been added since last flush
       bool                          _has_pending = false;
 
-      // Richtext renderer (uses _tvg_canvas directly)
-      std::unique_ptr<richtext::TextRenderer> _text_renderer;
-
-      // Text backend selection
-      static text_backend _text_backend;
+      // Text backend (static, shared across all canvas instances)
+      static std::shared_ptr<elements::text_backend> _text_backend;
    };
 }}
 

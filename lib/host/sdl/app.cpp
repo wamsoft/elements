@@ -5,16 +5,10 @@
 =============================================================================*/
 #include <elements/app.hpp>
 #include <elements/support/font.hpp>
-#include <elements/support/canvas.hpp>
 #include <elements/support/resource_paths.hpp>
 #include <infra/filesystem.hpp>
 #include <SDL3/SDL.h>
 #include <thorvg.h>
-#include <cstring>
-#ifdef _WIN32
-#include <windows.h>
-#include <shellapi.h>
-#endif
 
 namespace cycfi::elements
 {
@@ -30,25 +24,6 @@ namespace cycfi::elements
 
       // Initialize ThorVG rendering engine
       tvg::Initializer::init(4);
-
-      // Parse command line for --text-backend=thorvg|richtext
-#ifdef _WIN32
-      {
-         int argc = 0;
-         LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-         if (argv)
-         {
-            for (int i = 1; i < argc; ++i)
-            {
-               if (wcscmp(argv[i], L"--text-backend=thorvg") == 0)
-                  canvas::set_text_backend(canvas::text_backend::thorvg);
-               else if (wcscmp(argv[i], L"--text-backend=richtext") == 0)
-                  canvas::set_text_backend(canvas::text_backend::richtext);
-            }
-            LocalFree(argv);
-         }
-      }
-#endif
 
       // Load fonts from exe-relative resources directory
       auto base_path = SDL_GetBasePath();  // SDL3: returns const char*, no free needed

@@ -107,6 +107,11 @@ namespace cycfi { namespace elements
       return *this;
    }
 
+   inline canvas::canvas_state const& canvas::get_state() const
+   {
+      return _state;
+   }
+
    inline void canvas::apply_fill_style()
    {
       // No-op: styles are applied when creating shapes

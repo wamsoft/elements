@@ -49,6 +49,8 @@ set(ELEMENTS_SOURCES
    src/element/tile.cpp
    src/element/tooltip.cpp
    src/support/canvas.cpp
+   src/support/text_backend_tvg.cpp
+   src/support/text_backend_richtext.cpp
    src/support/draw_utils.cpp
    src/support/font.cpp
    src/support/glyphs.cpp
@@ -267,18 +269,11 @@ target_include_directories(elements PUBLIC ${asio_SOURCE_DIR}/asio/include)
 ###############################################################################
 # Global options
 
-# Text backend: "thorvg" (default) or "richtext"
-set(ELEMENTS_TEXT_BACKEND "thorvg" CACHE STRING "Default text rendering backend (thorvg or richtext)")
-
 # Common definitions
 target_compile_definitions(elements PUBLIC
    BOOST_DATE_TIME_NO_LIB
    BOOST_REGEX_NO_LIB
 )
-
-if (ELEMENTS_TEXT_BACKEND STREQUAL "richtext")
-   target_compile_definitions(elements PUBLIC ELEMENTS_TEXT_BACKEND_RICHTEXT)
-endif()
 
 ###############################################################################
 # Host-specific definitions and linking

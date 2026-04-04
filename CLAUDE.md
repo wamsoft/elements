@@ -11,11 +11,14 @@ Elements is a lightweight C++ GUI library originally by Joel de Guzman (cycfi). 
 ## Build Commands
 
 ```bash
-# Configure (uses CMake presets, default: x64-windows)
+# Configure (uses CMake presets)
 make prebuild                    # or: cmake --preset x64-windows
 
 # Build (default: Release)
 make build                       # or: make build BUILD_TYPE=Debug
+
+# SDL host build
+cmake --preset x64-windows -DELEMENTS_HOST_UI_LIBRARY=sdl
 
 # Clean
 make clean
@@ -39,9 +42,10 @@ ThorVG uses **deferred rendering**: shapes are accumulated via `_tvg_canvas->add
 
 ### Key Layers
 
-- **Host layer** (`lib/host/windows/`): Win32 window management, event handling, paint loop. `base_view.cpp` owns the rendering surface (DIB section + pixel buffer).
+- **Host layer** (`lib/host/windows/` or `lib/host/sdl/`): Platform window management, event handling, paint loop. Win32 uses DIB section, SDL uses `SDL_Texture`. Selected via `ELEMENTS_HOST_UI_LIBRARY` CMake option.
 - **View** (`lib/src/view.cpp`, `lib/include/elements/view.hpp`): Bridges host and element tree. Manages layout, event dispatch, undo/redo, async tasks via ASIO.
 - **Canvas** (`lib/src/support/canvas.cpp`): ThorVG-based 2D drawing API wrapping `tvg::SwCanvas`. Creates shapes per fill/stroke operation.
+- **Text backends** (`lib/src/support/text_backend_tvg.cpp`, `text_backend_richtext.cpp`): Pluggable text rendering via `text_backend` interface. Default is ThorVG. richtext backend available via `create_richtext_text_backend()`.
 - **Element tree** (`lib/src/element/`, `lib/include/elements/element/`): ~57 UI element implementations. Each element has `limits()`, `layout()`, `draw()`, `click()` etc.
 - **Support** (`lib/src/support/`): Font management (requires explicit `register_font()` — no auto-discovery), glyphs, pixmap, theme, text utilities.
 
@@ -51,9 +55,18 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 
 ### Dependencies
 
-- **richtext** (at `../../richtext` relative to `lib/`): Provides ThorVG, minikin (text layout), FreeType. Built as subdirectory via CMake.
+- **richtext** (git submodule at `ext/richtext`): Provides ThorVG, minikin (text layout), FreeType. Built as subdirectory via CMake.
+- **SDL3** (FetchContent, release-3.4.0): Used for SDL host layer (`ELEMENTS_HOST_UI_LIBRARY=sdl`). Shared library.
 - **cycfi/infra**: Utility library, fetched via FetchContent.
 - **ASIO**: Async I/O for timers/callbacks, fetched via FetchContent.
+
+### Text Backend Plugin System
+
+Text rendering is abstracted via `text_backend` interface (`text_backend.hpp`):
+- **ThorVG backend** (default): Uses `tvg::Text` for rendering. Always available.
+- **richtext backend**: Uses richtext `GlyphRenderer` for glyph-level vector rendering. Available via `create_richtext_text_backend()` from `text_backend_richtext.hpp`.
+- Switch at runtime: `canvas::set_text_backend(create_richtext_text_backend())`
+- Backends access canvas state via `canvas::get_state()`, `canvas::flush_shapes()`, `canvas::make_clip_shape()`, `canvas::tvg_canvas()`.
 
 ### ThorVG-Specific Quirks
 
@@ -62,18 +75,16 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 - **pixmap scale convention**: Cairo uses `device_scale = 1/scale`, so `pixmap::size() = pixels * scale`, not `pixels / scale`.
 - **Dirty region**: `EngineOption::None` is required to prevent ThorVG from clearing glyph regions with black.
 
-### Known Porting Issues
+### Known Remaining Issues
 
-- `canvas::draw(pixmap, src, dest)` ignores the `src` rect parameter (no source cropping)
-- Clip operations don't compose — only the last `clip()` is active (Cairo maintained a clip stack)
 - `glyphs::for_each()` has O(n²) byte offset recalculation
 - No system font discovery (e.g., "Segoe UI Symbol"); `load_fonts_from_directory()` scans `resources/` at startup
-- Sprite button images render as blue rectangles (pixmap drawing may have issues)
 
 ## Code Conventions
 
 - C++20 standard required
 - Namespace: `cycfi::elements`
 - MSVC builds use `/utf-8` and `/Zc:__cplusplus`
-- Windows defines: `WIN32_LEAN_AND_MEAN`, `NOMINMAX`, `_UNICODE`, `ELEMENTS_HOST_UI_LIBRARY_WIN32`
+- Windows defines: `WIN32_LEAN_AND_MEAN`, `NOMINMAX`, `_UNICODE`, `ELEMENTS_HOST_UI_LIBRARY_WIN32` (or `ELEMENTS_HOST_UI_LIBRARY_SDL`)
 - Example apps use `ElementsConfigApp.cmake` — set `ELEMENTS_APP_PROJECT`, `ELEMENTS_APP_SOURCES`, then `include(ElementsConfigApp)`
+- Host UI library: `ELEMENTS_HOST_UI_LIBRARY` CMake option (`win32` default, or `sdl`)

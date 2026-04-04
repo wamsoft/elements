@@ -4,23 +4,25 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/support/canvas.hpp>
-#include <richtext/TextRenderer.hpp>
-#include <richtext/TextLayout.hpp>
-#include <richtext/TextStyle.hpp>
-#include <richtext/Appearance.hpp>
-#include <richtext/FontManager.hpp>
-#include <richtext/GlyphRenderer.hpp>
 #include <algorithm>
 #include <cstring>
 
 namespace cycfi { namespace elements
 {
-   // Default text backend (switchable via CMake: -DELEMENTS_TEXT_BACKEND=richtext)
-#ifdef ELEMENTS_TEXT_BACKEND_RICHTEXT
-   canvas::text_backend canvas::_text_backend = canvas::text_backend::richtext;
-#else
-   canvas::text_backend canvas::_text_backend = canvas::text_backend::thorvg;
-#endif
+   // Default text backend (ThorVG). Can be replaced via set_text_backend().
+   std::shared_ptr<elements::text_backend> canvas::_text_backend;
+
+   void canvas::set_text_backend(std::shared_ptr<elements::text_backend> b)
+   {
+      _text_backend = std::move(b);
+   }
+
+   std::shared_ptr<elements::text_backend> canvas::get_text_backend()
+   {
+      if (!_text_backend)
+         _text_backend = create_tvg_text_backend();
+      return _text_backend;
+   }
 
    ///////////////////////////////////////////////////////////////////////////
    // Matrix helpers
@@ -761,21 +763,6 @@ namespace cycfi { namespace elements
    ///////////////////////////////////////////////////////////////////////////
    // Font
    ///////////////////////////////////////////////////////////////////////////
-   namespace
-   {
-      // ThorVG backend helpers
-      constexpr float tvg_font_scale = 72.0f / 96.0f;
-
-      std::string stem_from_path(std::string const& path)
-      {
-         auto slash = path.find_last_of("/\\");
-         auto start = (slash != std::string::npos) ? slash + 1 : 0;
-         auto dot = path.rfind('.');
-         auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
-         return path.substr(start, end - start);
-      }
-   }
-
    void canvas::font(elements::font const& font_)
    {
       _state.font_file = font_.file();
@@ -795,384 +782,8 @@ namespace cycfi { namespace elements
    }
 
    ///////////////////////////////////////////////////////////////////////////
-   // Text — richtext-based implementation
+   // Text — dispatched through text_backend interface
    ///////////////////////////////////////////////////////////////////////////
-   namespace
-   {
-      // UTF-8 → UTF-16 conversion
-      std::u16string to_u16(std::string_view utf8)
-      {
-         std::u16string result;
-         result.reserve(utf8.size());
-         unsigned state = 0, codepoint = 0;
-         for (auto ch : utf8)
-         {
-            auto byte = static_cast<uint8_t>(ch);
-            if (byte < 0x80) { state = 0; codepoint = byte; }
-            else if ((byte & 0xC0) == 0x80) {
-               codepoint = (codepoint << 6) | (byte & 0x3F);
-               if (--state > 0) continue;
-            }
-            else if ((byte & 0xE0) == 0xC0) { state = 1; codepoint = byte & 0x1F; continue; }
-            else if ((byte & 0xF0) == 0xE0) { state = 2; codepoint = byte & 0x0F; continue; }
-            else { state = 3; codepoint = byte & 0x07; continue; }
-
-            if (codepoint <= 0xFFFF)
-               result.push_back(char16_t(codepoint));
-            else {
-               codepoint -= 0x10000;
-               result.push_back(char16_t(0xD800 + (codepoint >> 10)));
-               result.push_back(char16_t(0xDC00 + (codepoint & 0x3FF)));
-            }
-         }
-         return result;
-      }
-
-      // Build a richtext::TextStyle from canvas font state
-      richtext::TextStyle make_style(
-         std::string const& font_file, float font_size)
-      {
-         richtext::TextStyle style;
-         style.fontSize = font_size;
-         if (!font_file.empty())
-         {
-            auto& fm = richtext::FontManager::instance();
-            auto collection = fm.createCollection({font_file});
-            if (collection)
-               style.fontCollection = collection;
-         }
-         return style;
-      }
-
-      // Build richtext::Appearance from a color (clamp to [0,255])
-      richtext::Appearance make_fill_appearance(color const& c)
-      {
-         auto clamp8 = [](float v) -> uint8_t {
-            return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
-         };
-         uint32_t argb = (uint32_t(clamp8(c.alpha)) << 24)
-                       | (uint32_t(clamp8(c.red))   << 16)
-                       | (uint32_t(clamp8(c.green)) << 8)
-                       |  uint32_t(clamp8(c.blue));
-         richtext::Appearance app;
-         app.addFill(argb);
-         return app;
-      }
-
-      richtext::Appearance make_stroke_appearance(
-         color const& c, float width)
-      {
-         auto clamp8 = [](float v) -> uint8_t {
-            return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
-         };
-         uint32_t argb = (uint32_t(clamp8(c.alpha)) << 24)
-                       | (uint32_t(clamp8(c.red))   << 16)
-                       | (uint32_t(clamp8(c.green)) << 8)
-                       |  uint32_t(clamp8(c.blue));
-         richtext::Appearance app;
-         app.addStroke(argb, width);
-         return app;
-      }
-
-      // Layout text and get metrics in one step
-      struct rt_metrics
-      {
-         float width;
-         float ascent;   // positive
-         float descent;  // positive
-         float leading;
-         float height;
-      };
-
-      rt_metrics layout_and_measure(
-         richtext::TextLayout& layout,
-         std::string_view utf8,
-         std::string const& font_file,
-         float font_size)
-      {
-         auto u16 = to_u16(utf8);
-         auto style = make_style(font_file, font_size);
-         layout.layout(u16, style);
-
-         rt_metrics m;
-         m.width = layout.getWidth();
-         m.ascent = std::abs(layout.getAscent());
-         m.descent = std::abs(layout.getDescent());
-         m.height = layout.getHeight();
-         m.leading = m.height > (m.ascent + m.descent)
-            ? m.height - (m.ascent + m.descent) : 0;
-         return m;
-      }
-   }
-
-   // Ensure TextRenderer is initialized with our canvas
-   richtext::TextRenderer& canvas::text_renderer()
-   {
-      if (!_text_renderer)
-      {
-         _text_renderer = std::make_unique<richtext::TextRenderer>();
-         _text_renderer->setCanvas(_tvg_canvas);
-      }
-      return *_text_renderer;
-   }
-
-   // ======================================================================
-   // ThorVG text backend
-   // ======================================================================
-   namespace
-   {
-      auto clamp8 = [](float v) -> uint8_t {
-         return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
-      };
-   }
-
-   void canvas::fill_text_tvg(std::string_view utf8_, point p)
-   {
-      flush_shapes();
-      std::string utf8(utf8_);
-
-      auto* text = tvg::Text::gen();
-      auto font_name = _state.font_file.empty()
-         ? _state.font_family : stem_from_path(_state.font_file);
-      if (!_state.font_file.empty())
-         tvg::Text::load(_state.font_file.c_str());
-
-      text->font(font_name.c_str());
-      text->size(_state.font_size * tvg_font_scale);
-      text->text(utf8.c_str());
-
-      tvg::TextMetrics tm;
-      text->metrics(tm);
-      float ascent = tm.ascent;
-      float descent = -tm.descent;
-
-      float dx = 0, dy = 0;
-      switch (_state.align & 0x3)
-      {
-         case text_alignment::right:
-         case text_alignment::center:
-         {
-            float width = 0;
-            for (const char* c = utf8.c_str(); *c; )
-            {
-               tvg::GlyphMetrics gm;
-               int len = (*c & 0x80) == 0 ? 1 : (*c & 0xE0) == 0xC0 ? 2
-                       : (*c & 0xF0) == 0xE0 ? 3 : 4;
-               std::string ch(c, len);
-               if (text->metrics(ch.c_str(), gm) == tvg::Result::Success)
-                  width += gm.advance;
-               c += len;
-            }
-            dx = (_state.align & 0x3) == text_alignment::right ? -width : -width / 2;
-            break;
-         }
-         default: break;
-      }
-      switch (_state.align & 0x1C)
-      {
-         case text_alignment::top:    dy = 0; break;
-         case text_alignment::middle: dy = -(ascent + descent) / 2; break;
-         case text_alignment::bottom: dy = -(ascent + descent); break;
-         default: dy = -ascent; break;
-      }
-
-      if (auto* c = std::get_if<color>(&_state.fill_style_data))
-      {
-         text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-         text->opacity(clamp8(c->alpha));
-      }
-
-      tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
-      text->transform(multiply(_state.matrix, offset));
-
-      if (auto* clip_shape = make_clip_shape())
-         text->clip(clip_shape);
-
-      _tvg_canvas->add(text);
-      _tvg_canvas->update();
-      _tvg_canvas->draw(false);
-      _tvg_canvas->sync();
-      _tvg_canvas->remove();
-   }
-
-   void canvas::stroke_text_tvg(std::string_view utf8_, point p)
-   {
-      flush_shapes();
-      std::string utf8(utf8_);
-
-      auto* text = tvg::Text::gen();
-      auto font_name = _state.font_file.empty()
-         ? _state.font_family : stem_from_path(_state.font_file);
-      if (!_state.font_file.empty())
-         tvg::Text::load(_state.font_file.c_str());
-
-      text->font(font_name.c_str());
-      text->size(_state.font_size * tvg_font_scale);
-      text->text(utf8.c_str());
-
-      tvg::TextMetrics tm;
-      text->metrics(tm);
-      float dy = -tm.ascent;
-
-      if (auto* c = std::get_if<color>(&_state.stroke_style_data))
-      {
-         text->outline(_state.line_width_val,
-            clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-         text->opacity(clamp8(c->alpha));
-      }
-      text->fill(0, 0, 0);
-
-      tvg::Matrix offset = {1, 0, p.x, 0, 1, p.y + dy, 0, 0, 1};
-      text->transform(multiply(_state.matrix, offset));
-
-      if (auto* clip_shape = make_clip_shape())
-         text->clip(clip_shape);
-
-      _tvg_canvas->add(text);
-      _tvg_canvas->update();
-      _tvg_canvas->draw(false);
-      _tvg_canvas->sync();
-      _tvg_canvas->remove();
-   }
-
-   canvas::text_metrics canvas::measure_text_tvg(char const* utf8)
-   {
-      auto* text = tvg::Text::gen();
-      auto font_name = _state.font_file.empty()
-         ? _state.font_family : stem_from_path(_state.font_file);
-      if (!_state.font_file.empty())
-         tvg::Text::load(_state.font_file.c_str());
-
-      text->font(font_name.c_str());
-      text->size(_state.font_size * tvg_font_scale);
-      text->text(utf8);
-
-      tvg::TextMetrics tm = {};
-      text->metrics(tm);
-
-      float width = 0;
-      for (const char* c = utf8; *c; )
-      {
-         tvg::GlyphMetrics gm;
-         int len = (*c & 0x80) == 0 ? 1 : (*c & 0xE0) == 0xC0 ? 2
-                 : (*c & 0xF0) == 0xE0 ? 3 : 4;
-         std::string ch(c, len);
-         if (text->metrics(ch.c_str(), gm) == tvg::Result::Success)
-            width += gm.advance;
-         c += len;
-      }
-
-      float ascent = tm.ascent, descent = -tm.descent, leading = tm.linegap;
-      tvg::Paint::rel(text);
-      return { ascent, descent, leading, {width, ascent + descent} };
-   }
-
-   canvas::font_metrics canvas::measure_font_tvg()
-   {
-      auto* text = tvg::Text::gen();
-      auto font_name = _state.font_file.empty()
-         ? _state.font_family : stem_from_path(_state.font_file);
-      if (!_state.font_file.empty())
-         tvg::Text::load(_state.font_file.c_str());
-
-      text->font(font_name.c_str());
-      text->size(_state.font_size * tvg_font_scale);
-      text->text(" ");
-
-      tvg::TextMetrics tm;
-      text->metrics(tm);
-
-      float ascent = tm.ascent, descent = -tm.descent;
-      float height = tm.advance, leading = tm.linegap;
-      tvg::Paint::rel(text);
-      return { ascent, descent, height, leading };
-   }
-
-   // ======================================================================
-   // Richtext text backend
-   // ======================================================================
-   void canvas::fill_text_rt(std::string_view utf8_, point p)
-   {
-      flush_shapes();
-
-      richtext::TextLayout layout;
-      auto m = layout_and_measure(layout, utf8_, _state.font_file, _state.font_size);
-
-      float dx = 0, dy = 0;
-      switch (_state.align & 0x3)
-      {
-         case text_alignment::right:  dx = -m.width; break;
-         case text_alignment::center: dx = -m.width / 2; break;
-         default: break;
-      }
-      switch (_state.align & 0x1C)
-      {
-         case text_alignment::top:    dy = m.ascent; break;
-         case text_alignment::middle: dy = (m.ascent - m.descent) / 2; break;
-         case text_alignment::bottom: dy = -m.descent; break;
-         default: dy = 0; break; // baseline
-      }
-
-      richtext::Appearance app;
-      if (auto* c = std::get_if<color>(&_state.fill_style_data))
-         app = make_fill_appearance(*c);
-
-      tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
-      tvg::Matrix combined = multiply(_state.matrix, offset);
-
-      auto& renderer = text_renderer();
-      renderer.getGlyphRenderer()->setTransform(&combined);
-      renderer.drawLayout(layout, 0, 0, app);
-      renderer.getGlyphRenderer()->setTransform(nullptr);
-
-      _tvg_canvas->update();
-      _tvg_canvas->draw(false);
-      _tvg_canvas->sync();
-      _tvg_canvas->remove();
-   }
-
-   void canvas::stroke_text_rt(std::string_view utf8_, point p)
-   {
-      flush_shapes();
-
-      richtext::TextLayout layout;
-      auto m = layout_and_measure(layout, utf8_, _state.font_file, _state.font_size);
-
-      richtext::Appearance app;
-      if (auto* c = std::get_if<color>(&_state.stroke_style_data))
-         app = make_stroke_appearance(*c, _state.line_width_val);
-
-      tvg::Matrix offset = {1, 0, p.x, 0, 1, p.y, 0, 0, 1};
-      tvg::Matrix combined = multiply(_state.matrix, offset);
-
-      auto& renderer = text_renderer();
-      renderer.getGlyphRenderer()->setTransform(&combined);
-      renderer.drawLayout(layout, 0, 0, app);
-      renderer.getGlyphRenderer()->setTransform(nullptr);
-
-      _tvg_canvas->update();
-      _tvg_canvas->draw(false);
-      _tvg_canvas->sync();
-      _tvg_canvas->remove();
-   }
-
-   canvas::text_metrics canvas::measure_text_rt(char const* utf8)
-   {
-      richtext::TextLayout layout;
-      auto m = layout_and_measure(layout, utf8, _state.font_file, _state.font_size);
-      return { m.ascent, m.descent, m.leading, {m.width, m.ascent + m.descent} };
-   }
-
-   canvas::font_metrics canvas::measure_font_rt()
-   {
-      richtext::TextLayout layout;
-      auto m = layout_and_measure(layout, " ", _state.font_file, _state.font_size);
-      return { m.ascent, m.descent, m.height, m.leading };
-   }
-
-   // ======================================================================
-   // Public dispatch
-   // ======================================================================
    void canvas::fill_text(point p, char const* utf8)
    {
       fill_text(std::string_view(utf8), p);
@@ -1181,10 +792,7 @@ namespace cycfi { namespace elements
    void canvas::fill_text(std::string_view utf8_, point p)
    {
       if (utf8_.empty()) return;
-      if (_text_backend == text_backend::thorvg)
-         fill_text_tvg(utf8_, p);
-      else
-         fill_text_rt(utf8_, p);
+      get_text_backend()->fill_text(*this, utf8_, p);
    }
 
    void canvas::stroke_text(point p, char const* utf8)
@@ -1195,22 +803,17 @@ namespace cycfi { namespace elements
    void canvas::stroke_text(std::string_view utf8_, point p)
    {
       if (utf8_.empty()) return;
-      if (_text_backend == text_backend::thorvg)
-         stroke_text_tvg(utf8_, p);
-      else
-         stroke_text_rt(utf8_, p);
+      get_text_backend()->stroke_text(*this, utf8_, p);
    }
 
    canvas::text_metrics canvas::measure_text(char const* utf8)
    {
-      return _text_backend == text_backend::thorvg
-         ? measure_text_tvg(utf8) : measure_text_rt(utf8);
+      return get_text_backend()->measure_text(*this, utf8);
    }
 
    canvas::font_metrics canvas::measure_font()
    {
-      return _text_backend == text_backend::thorvg
-         ? measure_font_tvg() : measure_font_rt();
+      return get_text_backend()->measure_font(*this);
    }
 
    ///////////////////////////////////////////////////////////////////////////
