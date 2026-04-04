@@ -355,7 +355,7 @@ namespace cycfi { namespace elements
 
          auto info = parse_font_filename(stem);
 
-         // Load font in ThorVG for text rendering
+         // Load font in ThorVG (needed for tvg::Text backend)
          tvg::Text::load(file_path.c_str());
 
          // Register in elements font system

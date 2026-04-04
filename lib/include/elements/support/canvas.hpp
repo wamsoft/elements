@@ -23,11 +23,15 @@
 #include <variant>
 #include <memory>
 
+namespace richtext { class TextRenderer; }
+
 namespace cycfi { namespace elements
 {
    class canvas
    {
    public:
+
+      enum class text_backend { richtext, thorvg };
 
       explicit          canvas(uint32_t* buf, uint32_t w, uint32_t h, float scale = 1.0f);
                         canvas(canvas&& rhs);
@@ -35,6 +39,10 @@ namespace cycfi { namespace elements
 
                         canvas(canvas const& rhs) = delete;
       canvas&           operator=(canvas const& rhs) = delete;
+
+      // Switch text rendering backend at runtime
+      static void       set_text_backend(text_backend b) { _text_backend = b; }
+      static text_backend get_text_backend()              { return _text_backend; }
 
       // Access to underlying ThorVG canvas (for advanced use)
       tvg::Canvas&      tvg_canvas() const;
@@ -236,6 +244,19 @@ namespace cycfi { namespace elements
       // Flush pending shapes to render
       void              flush_shapes();
 
+      // Get/create richtext TextRenderer
+      richtext::TextRenderer& text_renderer();
+
+      // Backend-specific implementations
+      void              fill_text_tvg(std::string_view utf8, point p);
+      void              fill_text_rt(std::string_view utf8, point p);
+      void              stroke_text_tvg(std::string_view utf8, point p);
+      void              stroke_text_rt(std::string_view utf8, point p);
+      text_metrics      measure_text_tvg(char const* utf8);
+      text_metrics      measure_text_rt(char const* utf8);
+      font_metrics      measure_font_tvg();
+      font_metrics      measure_font_rt();
+
       // Matrix helpers
       static tvg::Matrix multiply(tvg::Matrix const& a, tvg::Matrix const& b);
       static tvg::Matrix invert(tvg::Matrix const& m);
@@ -316,6 +337,12 @@ namespace cycfi { namespace elements
 
       // Track whether shapes have been added since last flush
       bool                          _has_pending = false;
+
+      // Richtext renderer (uses _tvg_canvas directly)
+      std::unique_ptr<richtext::TextRenderer> _text_renderer;
+
+      // Text backend selection
+      static text_backend _text_backend;
    };
 }}
 

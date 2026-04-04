@@ -257,6 +257,9 @@ target_include_directories(elements PUBLIC ${asio_SOURCE_DIR}/asio/include)
 ###############################################################################
 # Global options (Windows only — GTK/macOS removed, SDL統一予定)
 
+# Text backend: "thorvg" (default) or "richtext"
+set(ELEMENTS_TEXT_BACKEND "thorvg" CACHE STRING "Default text rendering backend (thorvg or richtext)")
+
 target_compile_definitions(elements PUBLIC
    WIN32_LEAN_AND_MEAN
    NOMINMAX
@@ -265,6 +268,10 @@ target_compile_definitions(elements PUBLIC
    BOOST_DATE_TIME_NO_LIB
    BOOST_REGEX_NO_LIB
 )
+
+if (ELEMENTS_TEXT_BACKEND STREQUAL "richtext")
+   target_compile_definitions(elements PUBLIC ELEMENTS_TEXT_BACKEND_RICHTEXT)
+endif()
 
 ###############################################################################
 # Libraries and linking
