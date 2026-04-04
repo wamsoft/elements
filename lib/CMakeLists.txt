@@ -209,8 +209,8 @@ target_link_libraries(elements PUBLIC cycfi::infra)
 ###############################################################################
 # ThorVG + richtext (text rendering, font management, vector graphics)
 #
-# richtext brings in thorvg and minikin as subdirectories.
-# The richtext project is expected at ../../richtext relative to this file.
+# richtext is included as a git submodule at ext/richtext.
+# It brings in thorvg and minikin as subdirectories.
 
 option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
 option(TVG_LOADER_PNG "Enable PNG Loader" ON)
@@ -222,11 +222,11 @@ option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
 option(TVG_LOG "Enable log message" ON)
 option(TVG_FILE_IO "Enable File IO calls" ON)
 
-set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../richtext")
+set(RICHTEXT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ext/richtext")
 if(NOT EXISTS "${RICHTEXT_DIR}/CMakeLists.txt")
    message(FATAL_ERROR
-      "richtext library not found at ${RICHTEXT_DIR}. "
-      "Please ensure the richtext project is at ../richtext relative to the elements root."
+      "richtext submodule not found at ${RICHTEXT_DIR}. "
+      "Run: git submodule update --init --recursive"
    )
 endif()
 
