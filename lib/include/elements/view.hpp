@@ -17,6 +17,9 @@
 #include <elements/element/indirect.hpp>
 #include <elements/support/context.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <asio.hpp>
 #include <memory>
 #include <unordered_map>
