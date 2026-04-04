@@ -403,12 +403,66 @@ namespace cycfi { namespace elements
 
    void canvas::clip()
    {
-      // Store current path as clip data
+      // Compute the bounding box of the new clip path in device coordinates
+      auto transform_pt = [](tvg::Matrix const& m, tvg::Point const& p) -> tvg::Point {
+         return {m.e11*p.x + m.e12*p.y + m.e13,
+                 m.e21*p.x + m.e22*p.y + m.e23};
+      };
+
+      float new_min_x = 1e30f, new_min_y = 1e30f;
+      float new_max_x = -1e30f, new_max_y = -1e30f;
+      for (auto& pt : _path_pts)
+      {
+         auto dp = transform_pt(_state.matrix, pt);
+         new_min_x = std::min(new_min_x, dp.x);
+         new_min_y = std::min(new_min_y, dp.y);
+         new_max_x = std::max(new_max_x, dp.x);
+         new_max_y = std::max(new_max_y, dp.y);
+      }
+
+      // If there is an existing clip, intersect bounding boxes
+      if (_state.clip && !_state.clip->pts.empty())
+      {
+         float old_min_x = 1e30f, old_min_y = 1e30f;
+         float old_max_x = -1e30f, old_max_y = -1e30f;
+         for (auto& pt : _state.clip->pts)
+         {
+            auto dp = transform_pt(_state.clip->transform, pt);
+            old_min_x = std::min(old_min_x, dp.x);
+            old_min_y = std::min(old_min_y, dp.y);
+            old_max_x = std::max(old_max_x, dp.x);
+            old_max_y = std::max(old_max_y, dp.y);
+         }
+
+         // Intersect the two bounding boxes in device space
+         new_min_x = std::max(new_min_x, old_min_x);
+         new_min_y = std::max(new_min_y, old_min_y);
+         new_max_x = std::min(new_max_x, old_max_x);
+         new_max_y = std::min(new_max_y, old_max_y);
+
+         // Clamp to non-negative area
+         if (new_max_x < new_min_x) new_max_x = new_min_x;
+         if (new_max_y < new_min_y) new_max_y = new_min_y;
+      }
+
+      // Store intersected clip as an axis-aligned rect in device space
+      // (identity transform since coordinates are already in device space)
       auto cd = std::make_shared<clip_data>();
-      cd->cmds = _path_cmds;
-      cd->pts = _path_pts;
-      cd->transform = _state.matrix;
-      cd->rule = _state.fill_rule_val;
+      cd->cmds = {
+         tvg::PathCommand::MoveTo,
+         tvg::PathCommand::LineTo,
+         tvg::PathCommand::LineTo,
+         tvg::PathCommand::LineTo,
+         tvg::PathCommand::Close
+      };
+      cd->pts = {
+         {new_min_x, new_min_y},
+         {new_max_x, new_min_y},
+         {new_max_x, new_max_y},
+         {new_min_x, new_max_y}
+      };
+      cd->transform = {1, 0, 0, 0, 1, 0, 0, 0, 1}; // identity
+      cd->rule = tvg::FillRule::NonZero;
       _state.clip = cd;
 
       _path_cmds.clear();
@@ -1010,10 +1064,42 @@ namespace cycfi { namespace elements
       tvg::Matrix mat = {sx, 0, tx, 0, sy, ty, 0, 0, 1};
       pic->transform(multiply(_state.matrix, mat));
 
-      // Clip to dest rectangle so portions outside src are hidden
+      // Clip to dest rectangle (in device coords), intersected with state clip
+      auto& m = _state.matrix;
+      auto tx_pt = [&m](float x, float y) -> tvg::Point {
+         return {m.e11*x + m.e12*y + m.e13, m.e21*x + m.e22*y + m.e23};
+      };
+      // Transform dest corners to device space
+      auto d0 = tx_pt(dest.left,  dest.top);
+      auto d1 = tx_pt(dest.right, dest.top);
+      auto d2 = tx_pt(dest.right, dest.bottom);
+      auto d3 = tx_pt(dest.left,  dest.bottom);
+      float cl = std::min({d0.x, d1.x, d2.x, d3.x});
+      float ct = std::min({d0.y, d1.y, d2.y, d3.y});
+      float cr = std::max({d0.x, d1.x, d2.x, d3.x});
+      float cb = std::max({d0.y, d1.y, d2.y, d3.y});
+
+      // Intersect with state clip if present
+      if (_state.clip && !_state.clip->pts.empty())
+      {
+         auto& cm = _state.clip->transform;
+         float ol = 1e30f, ot = 1e30f, or_ = -1e30f, ob = -1e30f;
+         for (auto& pt : _state.clip->pts)
+         {
+            float x = cm.e11*pt.x + cm.e12*pt.y + cm.e13;
+            float y = cm.e21*pt.x + cm.e22*pt.y + cm.e23;
+            ol = std::min(ol, x); ot = std::min(ot, y);
+            or_ = std::max(or_, x); ob = std::max(ob, y);
+         }
+         cl = std::max(cl, ol); ct = std::max(ct, ot);
+         cr = std::min(cr, or_); cb = std::min(cb, ob);
+         if (cr < cl) cr = cl;
+         if (cb < ct) cb = ct;
+      }
+
       auto* clip = tvg::Shape::gen();
-      clip->appendRect(dest.left, dest.top, dest.width(), dest.height());
-      clip->transform(_state.matrix);
+      clip->appendRect(cl, ct, cr - cl, cb - ct);
+      // Already in device coords — identity transform
       pic->clip(clip);
 
       _tvg_canvas->add(pic);
