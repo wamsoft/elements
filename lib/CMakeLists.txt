@@ -321,17 +321,23 @@ if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
 
    message(STATUS "Using SDL3 as host UI library")
 
-   # SDL3 (shared library via FetchContent)
-   set(SDL_SHARED ON CACHE BOOL "Build SDL shared library")
-   set(SDL_STATIC OFF CACHE BOOL "Build SDL static library")
+   # SDL3: 親 CMakeLists で既に SDL3::SDL3 が提供されていればそれを使う。
+   # 単体ビルド時のみ FetchContent でダウンロードする。
+   if (NOT TARGET SDL3::SDL3)
+      message(STATUS "SDL3::SDL3 target not found, fetching SDL3 via FetchContent")
+      set(SDL_SHARED ON CACHE BOOL "Build SDL shared library")
+      set(SDL_STATIC OFF CACHE BOOL "Build SDL static library")
 
-   include(FetchContent)
-   FetchContent_Declare(
-      SDL3
-      GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-      GIT_TAG release-3.4.0
-   )
-   FetchContent_MakeAvailable(SDL3)
+      include(FetchContent)
+      FetchContent_Declare(
+         SDL3
+         GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+         GIT_TAG release-3.4.0
+      )
+      FetchContent_MakeAvailable(SDL3)
+   else()
+      message(STATUS "Using SDL3::SDL3 target provided by parent project")
+   endif()
 
    target_compile_definitions(elements PUBLIC ELEMENTS_HOST_UI_LIBRARY_SDL)
    target_link_libraries(elements PUBLIC SDL3::SDL3)
