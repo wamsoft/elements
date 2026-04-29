@@ -547,7 +547,11 @@ namespace cycfi::elements
    void base_view::size(extent size_)
    {
       auto* vs = get_view_state_for(_view);
-      if (!vs || !vs->window) return;
+      if (!vs || !vs->window) {
+         // Embedded (host_view 非経由) モードでは _embedded_size を更新するだけ。
+         _embedded_size = size_;
+         return;
+      }
       SDL_SetWindowSize(vs->window,
          int(size_.x * vs->scale), int(size_.y * vs->scale));
       vs->needs_refresh = true;

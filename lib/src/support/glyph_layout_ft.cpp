@@ -30,7 +30,10 @@ namespace cycfi { namespace elements
       struct ft_state
       {
          FT_Library library = nullptr;
-         std::map<std::string, FT_Face> faces;  // keyed by file path
+         std::map<std::string, FT_Face> faces;  // keyed by file path or memory key
+         // FT_New_Memory_Face requires the buffer to outlive the face.
+         // Buffers are stored here, owned by the state.
+         std::map<std::string, std::vector<std::uint8_t>> mem_buffers;
          std::mutex mutex;
 
          ~ft_state()
@@ -230,6 +233,34 @@ namespace cycfi { namespace elements
       {
          // Pre-load the face so it's cached
          get_face(file_path);
+      }
+
+      void register_font_buffer(std::string const& key,
+                                std::uint8_t const* data,
+                                std::size_t size) override
+      {
+         if (!data || size == 0 || key.empty()) return;
+         auto& ft = get_ft();
+         std::lock_guard<std::mutex> lock(ft.mutex);
+         if (!ft.library)
+            FT_Init_FreeType(&ft.library);
+         if (ft.faces.find(key) != ft.faces.end()) return;  // already done
+
+         // Copy buffer locally so caller can free their data.
+         auto& buf = ft.mem_buffers[key];
+         buf.assign(data, data + size);
+
+         FT_Face face = nullptr;
+         if (FT_New_Memory_Face(ft.library, buf.data(),
+                                FT_Long(buf.size()), 0, &face) == 0)
+         {
+            ft.faces[key] = face;
+         }
+         else
+         {
+            // Loading failed; release the buffer.
+            ft.mem_buffers.erase(key);
+         }
       }
    };
 

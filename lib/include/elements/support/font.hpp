@@ -339,6 +339,27 @@ namespace cycfi { namespace elements
    );
 
    ////////////////////////////////////////////////////////////////////////////
+   // Register a font from an in-memory buffer. Useful when fonts are embedded
+   // as resources (e.g. in a Win32 .rc) and there is no real on-disk path.
+   //
+   // `key` is an identifier used internally as the cache key (replaces the
+   // file path in the path-based register_font). Re-using the same key with a
+   // different `data` is a no-op (the first registration wins).
+   //
+   // Both ThorVG (with copy=true) and the FreeType backend take a copy of
+   // `data`, so the caller can free the buffer after this returns.
+   ////////////////////////////////////////////////////////////////////////////
+   void register_font_buffer(
+      std::string const&                family,
+      std::string const&                key,
+      std::uint8_t const*               data,
+      std::size_t                       size,
+      font_constants::weight_enum       weight  = font_constants::weight_normal,
+      font_constants::slant_enum        slant   = font_constants::slant_normal,
+      font_constants::stretch_enum      stretch = font_constants::stretch_normal
+   );
+
+   ////////////////////////////////////////////////////////////////////////////
    // Scan a directory for TTF/OTF files and auto-register them.
    // Extracts family name and weight/slant from filename conventions.
    void load_fonts_from_directory(std::string const& dir);

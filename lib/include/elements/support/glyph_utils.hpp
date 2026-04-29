@@ -68,6 +68,15 @@ namespace cycfi { namespace elements
 
       // Register a font file. Called for each font.
       virtual void register_font(std::string const& file_path) = 0;
+
+      // Register a font from an in-memory buffer. The backend owns a copy of
+      // the buffer; the caller is free to release `data` after this returns.
+      // `key` is used as cache identifier (same role as `file_path` for
+      // register_font). Default implementation is a no-op for backends that
+      // don't support memory loading.
+      virtual void register_font_buffer(std::string const& /*key*/,
+                                        std::uint8_t const* /*data*/,
+                                        std::size_t /*size*/) {}
    };
 
    ////////////////////////////////////////////////////////////////////////////

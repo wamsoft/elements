@@ -155,6 +155,48 @@ namespace cycfi { namespace elements
    }
 
    ////////////////////////////////////////////////////////////////////////////
+   // register_font_buffer — public API (in-memory font registration)
+   ////////////////////////////////////////////////////////////////////////////
+   void register_font_buffer(
+      std::string const&                family,
+      std::string const&                key,
+      std::uint8_t const*               data,
+      std::size_t                       size,
+      font_constants::weight_enum       weight,
+      font_constants::slant_enum        slant,
+      font_constants::stretch_enum      stretch)
+   {
+      if (!data || size == 0 || key.empty())
+         return;
+
+      // Register in internal font map. `key` plays the role normally taken
+      // by the file path, so canvas/text rendering will use it as identifier.
+      {
+         std::lock_guard<std::mutex> lock(font_map_mutex());
+         font_entry entry;
+         entry.file = key;
+         entry.weight = uint8_t(weight);
+         entry.slant = uint8_t(slant);
+         entry.stretch = uint8_t(stretch);
+         font_map()[family].push_back(std::move(entry));
+      }
+
+      // Register with ThorVG (copy=true so we don't need to keep the
+      // caller's buffer alive for ThorVG).
+      tvg::Text::load(
+         key.c_str(),
+         reinterpret_cast<const char*>(data),
+         static_cast<uint32_t>(size),
+         "ttf",
+         /*copy=*/true);
+
+      // Register with the active font backend (FreeType etc.). The backend
+      // takes its own copy of the buffer.
+      get_font_backend()->initialize();
+      get_font_backend()->register_font_buffer(key, data, size);
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
    // font
    ////////////////////////////////////////////////////////////////////////////
    font::font(font_descr descr)
