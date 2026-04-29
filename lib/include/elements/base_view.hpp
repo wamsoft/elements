@@ -349,6 +349,9 @@ namespace cycfi::elements
    private:
 
       host_view_handle     _view;
+      // Embedded (host_view 非経由) モードで base_view(extent) 経由で
+      // 構築された場合のサイズ。_view が null の場合に size() が返す。
+      extent               _embedded_size{0, 0};
    };
 
    ////////////////////////////////////////////////////////////////////////////

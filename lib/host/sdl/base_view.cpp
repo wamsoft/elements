@@ -472,6 +472,7 @@ namespace cycfi::elements
    base_view::base_view(extent size_)
    {
       _view = nullptr;
+      _embedded_size = size_;
    }
 
    base_view::base_view(host_window_handle h)
@@ -533,7 +534,11 @@ namespace cycfi::elements
    extent base_view::size() const
    {
       auto* vs = get_view_state_for(_view);
-      if (!vs || !vs->window) return {0, 0};
+      if (!vs || !vs->window) {
+         // Embedded モード: SDL_Window を持たない。コンストラクタで受けた
+         // サイズをそのまま返す。
+         return _embedded_size;
+      }
       int w, h;
       SDL_GetWindowSize(vs->window, &w, &h);
       return {float(w) / vs->scale, float(h) / vs->scale};
