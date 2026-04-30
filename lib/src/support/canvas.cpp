@@ -781,6 +781,11 @@ namespace cycfi { namespace elements
       _state.font_size = size;
    }
 
+   void canvas::text_locale(std::string locale)
+   {
+      _state.text_locale = std::move(locale);
+   }
+
    ///////////////////////////////////////////////////////////////////////////
    // Text — dispatched through text_backend interface
    ///////////////////////////////////////////////////////////////////////////

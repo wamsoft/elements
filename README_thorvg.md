@@ -59,6 +59,59 @@ set_glyph_layout_backend(create_richtext_glyph_layout_backend());
 set_font_backend(create_richtext_font_backend());
 ```
 
+### Multilingual Text (ThorVG FT Loader)
+
+ThorVG is built with the fork's **FreeType + HarfBuzz text loader** (`TVG_LOADER_FT=ON`) instead of the built-in minimal TTF reader (`TVG_LOADER_TTF=OFF`). This adds:
+
+- **HarfBuzz shaping** — ligatures, kerning, complex scripts (Arabic, Indic), correct CJK glyph selection
+- **Per-codepoint font fallback** — codepoints missing from the primary font are resolved against other registered fonts in load order; mixed-UPM fonts (e.g. NotoEmoji 2048 vs OpenSans 1000) are normalized
+- **BCP47 locale tags** — `Text::locale("ja-JP")` triggers HarfBuzz `locl` GSUB feature for language-sensitive glyph variants
+- **Wrap modes** — `Character`, `Word`, `Smart`, `Ellipsis` (full parity with the TTF loader)
+
+See `build/x64-windows/_deps/thorvg-src/README_ft_text.md` for ThorVG-side spec. **Color emoji** (sbix/CBDT/COLRv1) is intentionally out of scope; monochrome emoji fonts (e.g. Noto Emoji) work via normal outline extraction.
+
+#### Font registration and fallback
+
+`load_fonts_from_directory()` is invoked automatically at app startup by both host layers. It scans `resources/fonts/` then `resources/`, and calls `tvg::Text::load()` on every `.ttf`/`.otf` it finds. **Load order = fallback priority** — primary fonts should sort before fallback fonts.
+
+Drop additional fonts into `resources/fonts/` (or list them in the example's `ELEMENTS_APP_RESOURCES`) and they participate in fallback automatically. No per-string font switching is needed:
+
+```cpp
+label("Hi 👋  今日もコードを書こう 💻 🌸")
+   .font(font_descr{"Open Sans"})   // primary
+   .font_size(20);
+// CJK → Noto Sans JP, emoji → Noto Emoji, all chosen per codepoint
+```
+
+#### Setting a locale
+
+`canvas::text_locale()` and `label::locale()` plumb a BCP47 tag through to `tvg::Text::locale()`. The tag is part of the canvas state and participates in `save()`/`restore()`, so it does not leak across `new_state()` boundaries.
+
+```cpp
+// On a label (chains like other style methods)
+label("直 骨 次 海")
+   .font(font_descr{"Noto Sans JP"})
+   .locale("ja-JP")              // Japanese glyph variants
+   .font_size(20);
+
+// Inside a custom draw
+ctx.canvas.text_locale("zh-TW");
+ctx.canvas.fill_text("直 骨 次 海", point{x, y});
+```
+
+The locale tag affects within-face glyph variant selection. Cross-face selection is governed by load order — to render the same codepoints with Simplified-Chinese vs Traditional-Chinese shapes, set both the primary font and the locale appropriately for each label.
+
+#### Example
+
+`examples/multilingual_text/` demonstrates per-codepoint fallback (English / Japanese / monochrome emoji) and a side-by-side JP / SC / TC comparison using `font_descr` + `.locale()`:
+
+```bash
+cmake --preset x64-windows
+cmake --build build/x64-windows --config Debug --target MultilingualText
+```
+
+It bundles `NotoSansJP-Regular.otf`, `NotoSansSC-Regular.otf`, `NotoSansTC-Regular.otf`, and `NotoEmoji-Regular.ttf` via `ELEMENTS_APP_RESOURCES`.
+
 ### Build Configuration
 
 #### CMake Options
@@ -71,9 +124,9 @@ set_font_backend(create_richtext_font_backend());
 #### Dependencies by Configuration
 
 **`ELEMENTS_USE_RICHTEXT=OFF`** (default):
-- ThorVG — FetchContent from `https://github.com/wtnbgo/thorvg.git` (cmake branch)
+- ThorVG — FetchContent from `https://github.com/wtnbgo/thorvg.git` (cmake branch). Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual text loader); the built-in `TVG_LOADER_TTF` is off.
 - FreeType — vcpkg
-- HarfBuzz 13.1.1 — FetchContent (ICU disabled)
+- HarfBuzz — vcpkg (used by ThorVG's FT loader). Plus HarfBuzz 13.1.1 via FetchContent for `glyph_layout_ft.cpp` (ICU disabled).
 
 **`ELEMENTS_USE_RICHTEXT=ON`**:
 - richtext — FetchContent from `https://github.com/wamsoft/richtext.git` (includes ThorVG, minikin, HarfBuzz, FreeType)

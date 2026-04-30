@@ -57,9 +57,9 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 ### Dependencies
 
 When `ELEMENTS_USE_RICHTEXT=OFF` (default):
-- **ThorVG** (FetchContent from `wtnbgo/thorvg` cmake branch): Vector graphics engine.
+- **ThorVG** (FetchContent from `wtnbgo/thorvg` cmake branch): Vector graphics engine. Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual loader); `TVG_LOADER_TTF=OFF`. Spec: `build/x64-windows/_deps/thorvg-src/README_ft_text.md`.
 - **FreeType** (vcpkg): Font loading and metrics.
-- **HarfBuzz 13.1.1** (FetchContent, ICU disabled): Text shaping.
+- **HarfBuzz** (vcpkg): Used by ThorVG's FT loader. Plus HarfBuzz 13.1.1 via FetchContent for `glyph_layout_ft.cpp` (ICU disabled).
 
 When `ELEMENTS_USE_RICHTEXT=ON`:
 - **richtext** (FetchContent from `wamsoft/richtext`): Includes ThorVG, minikin, HarfBuzz, FreeType.
@@ -91,6 +91,15 @@ Text shaping and font metrics are abstracted via `glyph_layout_backend` and `fon
 - **DPI compensation**: ThorVG internally applies 96/72 DPI factor to font metrics. `tvg_font_scale = 72.0f/96.0f` is applied to all `text->size()` calls to match Cairo's user-space convention.
 - **pixmap scale convention**: Cairo uses `device_scale = 1/scale`, so `pixmap::size() = pixels * scale`, not `pixels / scale`.
 - **Dirty region**: `EngineOption::None` is required to prevent ThorVG from clearing glyph regions with black.
+
+### Multilingual Text (FT loader)
+
+The FT loader gives per-codepoint fallback (load order = priority), HarfBuzz shaping, mixed-UPM normalization, and BCP47 locale tags. Plumbing:
+- `canvas_state::text_locale` carries a BCP47 tag (e.g. `"ja-JP"`, `"zh-TW"`). Saved/restored by `canvas::save()/restore()`.
+- `canvas::text_locale(string)` setter; `text_backend_tvg.cpp` calls `tvg::Text::locale()` in fill/stroke/measure paths when non-empty.
+- `default_label_styler::get_text_locale()` virtual; `label_styler_with_locale` + `label::locale("ja-JP")` chainable builder.
+- Color emoji (sbix/CBDT/COLRv1) is intentionally out of scope. Monochrome emoji (e.g. Noto Emoji) works via outline extraction.
+- Reference example: `examples/multilingual_text/`.
 
 ### Known Remaining Issues
 

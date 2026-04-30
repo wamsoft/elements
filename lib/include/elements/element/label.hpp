@@ -48,6 +48,7 @@ namespace cycfi::elements
       virtual float           get_default_font_size() const;
       virtual color           get_font_color() const;
       virtual int             get_text_align() const;
+      virtual std::string     get_text_locale() const { return {}; }
 
    private:
 
@@ -194,6 +195,31 @@ namespace cycfi::elements
    };
 
    /**
+    * \struct label_styler_with_locale
+    *
+    * \brief
+    *    Label styler that attaches a BCP47 locale tag (e.g. "ja-JP", "zh-TW")
+    *    used by FT-loader-backed text rendering for HarfBuzz language-sensitive
+    *    glyph selection. Empty string clears the locale.
+    */
+   template <concepts::LabelStyler Base>
+   struct label_styler_with_locale : Base
+   {
+      using base_type = label_styler_with_locale<typename Base::base_type>;
+
+                              label_styler_with_locale(Base base, std::string locale)
+                               : Base(std::move(base)), _locale(std::move(locale))
+                              {}
+
+      std::string             get_text_locale() const override { return _locale; }
+      void                    set_text_locale(std::string locale) { _locale = std::move(locale); }
+
+   private:
+
+      std::string             _locale;
+   };
+
+   /**
     * \struct label_styler_gen
     *
     * \brief
@@ -231,12 +257,14 @@ namespace cycfi::elements
       using gen_font_size  = label_styler_gen<label_styler_with_font_size<base_type>>;
       using gen_font_color = label_styler_gen<label_styler_with_font_color<base_type>>;
       using gen_text_align = label_styler_gen<label_with_text_align<base_type>>;
+      using gen_locale     = label_styler_gen<label_styler_with_locale<base_type>>;
 
       gen_font                font(font_type font_) const;
       gen_font_size           font_size(float size) const;
       gen_font_size           relative_font_size(float size) const;
       gen_font_color          font_color(color color_) const;
       gen_text_align          text_align(int align) const;
+      gen_locale              locale(std::string locale_) const;
    };
 
    using basic_label = basic_label_styler_base<default_label_styler>;
@@ -526,6 +554,18 @@ namespace cycfi::elements
    label_styler_gen<Base>::text_align(int align) const
    {
       return {*this, align};
+   }
+
+   /**
+    * \brief
+    *    Generator for setting the BCP47 locale tag used by the text shaper
+    *    (e.g. "ja-JP", "zh-CN", "zh-TW").
+    */
+   template <concepts::LabelStyler Base>
+   inline typename label_styler_gen<Base>::gen_locale
+   label_styler_gen<Base>::locale(std::string locale_) const
+   {
+      return {*this, std::move(locale_)};
    }
 
    /**
