@@ -47,6 +47,8 @@ namespace cycfi { namespace elements
 
          text->font(font_name.c_str());
          text->size(cnv.get_state().font_size * tvg_font_scale);
+         if (!cnv.get_state().text_locale.empty())
+            text->locale(cnv.get_state().text_locale.c_str());
          text->text(utf8.c_str());
 
          tvg::TextMetrics tm;
@@ -117,6 +119,8 @@ namespace cycfi { namespace elements
 
          text->font(font_name.c_str());
          text->size(cnv.get_state().font_size * tvg_font_scale);
+         if (!cnv.get_state().text_locale.empty())
+            text->locale(cnv.get_state().text_locale.c_str());
          text->text(utf8.c_str());
 
          tvg::TextMetrics tm;
@@ -154,6 +158,8 @@ namespace cycfi { namespace elements
 
          text->font(font_name.c_str());
          text->size(cnv.get_state().font_size * tvg_font_scale);
+         if (!cnv.get_state().text_locale.empty())
+            text->locale(cnv.get_state().text_locale.c_str());
          text->text(utf8);
 
          tvg::TextMetrics tm = {};
@@ -186,6 +192,8 @@ namespace cycfi { namespace elements
 
          text->font(font_name.c_str());
          text->size(cnv.get_state().font_size * tvg_font_scale);
+         if (!cnv.get_state().text_locale.empty())
+            text->locale(cnv.get_state().text_locale.c_str());
          text->text(" ");
 
          tvg::TextMetrics tm;

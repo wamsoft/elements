@@ -155,6 +155,11 @@ namespace cycfi { namespace elements
       void              font(elements::font const& font_, float size);
       void              font_size(float size);
 
+      // BCP47 locale tag (e.g. "ja-JP", "zh-TW"). Pass empty string to clear.
+      // Used by the FT text loader for HarfBuzz language-sensitive glyph
+      // selection (locl GSUB feature). Other backends silently ignore.
+      void              text_locale(std::string locale);
+
       ///////////////////////////////////////////////////////////////////////////////////
       // Text
       enum text_alignment
@@ -256,6 +261,11 @@ namespace cycfi { namespace elements
          std::string        font_family;
          std::string        font_file;
          float              font_size = 12;
+
+         // BCP47 locale tag for HarfBuzz language-sensitive shaping
+         // (e.g. "ja-JP", "zh-CN", "zh-TW"). Empty = no locale hint.
+         // Honored by FT loader builds (TVG_LOADER_FT=ON); ignored otherwise.
+         std::string        text_locale;
       };
 
    private:

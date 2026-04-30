@@ -30,6 +30,7 @@ namespace cycfi::elements
 
       canvas_.fill_style(text_c);
       canvas_.font(get_font(), get_font_size());
+      canvas_.text_locale(get_text_locale());
 
       float cx = ctx.bounds.left + (ctx.bounds.width() / 2);
       switch (align & 0x3)
