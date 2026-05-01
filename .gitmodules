@@ -1,0 +1,4 @@
+[submodule "external/thorvg"]
+	path = external/thorvg
+	url = https://github.com/wtnbgo/thorvg.git
+	branch = cmake

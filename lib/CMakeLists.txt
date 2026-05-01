@@ -260,17 +260,18 @@ if (ELEMENTS_USE_RICHTEXT)
    target_include_directories(elements PRIVATE "${richtext_SOURCE_DIR}/include")
 
 else()
-   message(STATUS "ELEMENTS_USE_RICHTEXT=OFF: FetchContent ThorVG + HarfBuzz, vcpkg FreeType")
+   message(STATUS "ELEMENTS_USE_RICHTEXT=OFF: submodule ThorVG + FetchContent HarfBuzz, vcpkg FreeType")
 
-   # --- ThorVG ---
-   FetchContent_Declare(
-      thorvg
-      GIT_REPOSITORY https://github.com/wtnbgo/thorvg.git
-      GIT_TAG cmake
-   )
-   FetchContent_MakeAvailable(thorvg)
+   # --- ThorVG (git submodule at external/thorvg, branch: cmake) ---
+   set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
+   if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
+      message(FATAL_ERROR
+         "ThorVG submodule is not initialized at ${_thorvg_dir}.\n"
+         "Run: git submodule update --init --recursive external/thorvg")
+   endif()
+   add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
    target_link_libraries(elements PUBLIC thorvg)
-   target_include_directories(elements PUBLIC "${thorvg_SOURCE_DIR}/inc")
+   target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
 
    # --- FreeType (vcpkg) ---
    find_package(freetype CONFIG REQUIRED)

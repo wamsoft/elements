@@ -57,7 +57,7 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 ### Dependencies
 
 When `ELEMENTS_USE_RICHTEXT=OFF` (default):
-- **ThorVG** (FetchContent from `wtnbgo/thorvg` cmake branch): Vector graphics engine. Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual loader); `TVG_LOADER_TTF=OFF`. Spec: `build/x64-windows/_deps/thorvg-src/README_ft_text.md`.
+- **ThorVG** (git submodule at `external/thorvg`, branch: `cmake` of `wtnbgo/thorvg`): Vector graphics engine. Built via `add_subdirectory()` so local edits to the FT loader can flow back to the fork. Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual loader); `TVG_LOADER_TTF=OFF`. Spec: `external/thorvg/README_ft_text.md`. Initialize with `git submodule update --init --recursive external/thorvg`.
 - **FreeType** (vcpkg): Font loading and metrics.
 - **HarfBuzz** (vcpkg): Used by ThorVG's FT loader. Plus HarfBuzz 13.1.1 via FetchContent for `glyph_layout_ft.cpp` (ICU disabled).
 
