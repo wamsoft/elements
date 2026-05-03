@@ -27,7 +27,7 @@ namespace cycfi { namespace elements
    // Glyph layout backend interface
    //
    // Performs text shaping (glyph positioning) and font metrics extraction.
-   // Implementations may use richtext/minikin, direct HarfBuzz+FreeType, etc.
+   // The default implementation uses HarfBuzz + FreeType directly.
    // The virtual destructor ensures proper cache cleanup.
    ////////////////////////////////////////////////////////////////////////////
    class glyph_layout_backend

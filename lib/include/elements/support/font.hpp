@@ -102,7 +102,7 @@ namespace cycfi { namespace elements
       explicit             operator bool() const;
       float                size() const { return _size; }
 
-      // Access to font info for ThorVG/richtext
+      // Access to font info for ThorVG
       std::string const&   family() const { return _family; }
       std::string const&   file() const   { return _file; }
 

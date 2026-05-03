@@ -28,36 +28,13 @@ cmake --preset x64-windows
 cmake --preset x64-windows -DELEMENTS_HOST_UI_LIBRARY=sdl
 ```
 
-### Text Rendering Backend (Plugin)
+### Text Rendering Backend
 
-Text rendering is abstracted via `text_backend` interface (`text_backend.hpp`):
+Text rendering goes through the `text_backend` interface (`text_backend.hpp`). The shipped implementation uses `tvg::Text` (`text_backend_tvg.cpp`). The interface is kept so a specialized backend can be reintroduced later for narrow use cases (e.g. a text editor) without touching call sites.
 
-| Backend | Default | Description |
-|---------|---------|-------------|
-| **ThorVG** | Yes | Uses `tvg::Text` API. Always available. |
-| **richtext** | No | Uses richtext `GlyphRenderer` for glyph-level vector rendering. Requires `ELEMENTS_USE_RICHTEXT=ON`. |
+### Glyph Layout Backend
 
-```cpp
-// Switch to richtext backend at runtime
-#include <elements/support/text_backend_richtext.hpp>
-canvas::set_text_backend(create_richtext_text_backend());
-```
-
-### Glyph Layout Backend (Plugin)
-
-Text shaping and font metrics are abstracted via `glyph_layout_backend` and `font_backend` interfaces (`glyph_utils.hpp`):
-
-| Backend | Default | Description |
-|---------|---------|-------------|
-| **FreeType + HarfBuzz** | Yes | Direct `hb_shape()` + `FT_Face` metrics. No minikin dependency. |
-| **richtext** | No | Uses richtext `TextLayout` / minikin for shaping. Requires `ELEMENTS_USE_RICHTEXT=ON`. |
-
-```cpp
-// Switch to richtext backend at runtime
-#include <elements/support/glyph_utils_richtext.hpp>
-set_glyph_layout_backend(create_richtext_glyph_layout_backend());
-set_font_backend(create_richtext_font_backend());
-```
+Text shaping and font metrics go through the `glyph_layout_backend` and `font_backend` interfaces (`glyph_utils.hpp`). The shipped implementation uses HarfBuzz `hb_shape()` + `FT_Face` metrics directly (`glyph_layout_ft.cpp`).
 
 ### Multilingual Text (ThorVG FT Loader)
 
@@ -119,27 +96,18 @@ It bundles `NotoSansJP-Regular.otf`, `NotoSansSC-Regular.otf`, `NotoSansTC-Regul
 | Option | Default | Description |
 |--------|---------|-------------|
 | `ELEMENTS_HOST_UI_LIBRARY` | `win32` | Host UI: `win32` or `sdl` |
-| `ELEMENTS_USE_RICHTEXT` | `OFF` | Enable richtext backends (FetchContent from GitHub) |
 
-#### Dependencies by Configuration
+#### Dependencies
 
-**`ELEMENTS_USE_RICHTEXT=OFF`** (default):
-- ThorVG — FetchContent from `https://github.com/wtnbgo/thorvg.git` (cmake branch). Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual text loader); the built-in `TVG_LOADER_TTF` is off.
+- ThorVG — git submodule at `external/thorvg` (cmake branch of `wtnbgo/thorvg`). Built with `TVG_LOADER_FT=ON` (FreeType + HarfBuzz multilingual text loader); the built-in `TVG_LOADER_TTF` is off.
 - FreeType — vcpkg
 - HarfBuzz — vcpkg (used by ThorVG's FT loader). Plus HarfBuzz 13.1.1 via FetchContent for `glyph_layout_ft.cpp` (ICU disabled).
-
-**`ELEMENTS_USE_RICHTEXT=ON`**:
-- richtext — FetchContent from `https://github.com/wamsoft/richtext.git` (includes ThorVG, minikin, HarfBuzz, FreeType)
 
 #### Build Commands
 
 ```bash
 # Default (Win32 + ThorVG text + FT/HB glyphs)
 cmake --preset x64-windows
-cmake --build build/x64-windows/ --config Debug
-
-# With richtext support
-cmake --preset x64-windows -DELEMENTS_USE_RICHTEXT=ON
 cmake --build build/x64-windows/ --config Debug
 
 # SDL3 host
@@ -164,15 +132,11 @@ lib/
 ├── include/elements/support/
 │   ├── canvas.hpp         # ThorVG canvas wrapper
 │   ├── text_backend.hpp   # Text rendering backend interface
-│   ├── text_backend_richtext.hpp  # richtext backend factory (optional)
-│   ├── glyph_utils.hpp   # Glyph layout backend interface
-│   └── glyph_utils_richtext.hpp   # richtext glyph backend factory (optional)
+│   └── glyph_utils.hpp    # Glyph layout backend interface
 └── src/support/
-    ├── canvas.cpp          # Canvas implementation
-    ├── text_backend_tvg.cpp          # ThorVG text backend (default)
-    ├── text_backend_richtext.cpp     # richtext text backend (ELEMENTS_USE_RICHTEXT=ON)
-    ├── glyph_layout_ft.cpp           # FreeType+HarfBuzz glyph backend (default)
-    ├── glyph_layout_richtext.cpp     # richtext glyph backend (ELEMENTS_USE_RICHTEXT=ON)
-    ├── font.cpp            # Font registration (backend-agnostic)
-    └── glyphs.cpp          # Text layout/shaping (backend-agnostic)
+    ├── canvas.cpp           # Canvas implementation
+    ├── text_backend_tvg.cpp # ThorVG text backend
+    ├── glyph_layout_ft.cpp  # FreeType+HarfBuzz glyph backend
+    ├── font.cpp             # Font registration (backend-agnostic)
+    └── glyphs.cpp           # Text layout/shaping (backend-agnostic)
 ```

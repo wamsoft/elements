@@ -150,7 +150,7 @@ namespace cycfi { namespace elements
          font_map()[family].push_back(std::move(entry));
       }
 
-      // Also register with richtext::FontManager
+      // Register with the active font backend (FreeType etc.).
       ensure_font_registered(file);
    }
 

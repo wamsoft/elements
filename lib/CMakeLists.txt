@@ -219,15 +219,10 @@ FetchContent_MakeAvailable(cycfi_infra)
 target_link_libraries(elements PUBLIC cycfi::infra)
 
 ###############################################################################
-# Dependencies: ThorVG, HarfBuzz, FreeType (+ optionally richtext)
-#
-# ELEMENTS_USE_RICHTEXT=ON  → FetchContent richtext (includes thorvg+minikin+harfbuzz+freetype)
-# ELEMENTS_USE_RICHTEXT=OFF → FetchContent thorvg + harfbuzz, vcpkg freetype
+# Dependencies: ThorVG (submodule), FreeType (vcpkg), HarfBuzz (FetchContent)
 ###############################################################################
 
-option(ELEMENTS_USE_RICHTEXT "Build with richtext support (text backend + glyph layout)" OFF)
-
-# ThorVG loader options (shared by both paths)
+# ThorVG loader options
 option(TVG_BUILD_SHARED "Build shared library" OFF)
 option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
 option(TVG_LOADER_PNG "Enable PNG Loader" ON)
@@ -239,61 +234,36 @@ option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
 option(TVG_LOG "Enable log message" OFF)
 option(TVG_FILE_IO "Enable File IO calls" ON)
 
-if (ELEMENTS_USE_RICHTEXT)
-   message(STATUS "ELEMENTS_USE_RICHTEXT=ON: FetchContent richtext (includes ThorVG+minikin+HarfBuzz)")
-
-   FetchContent_Declare(
-      richtext
-      GIT_REPOSITORY https://github.com/wamsoft/richtext.git
-      GIT_TAG main
-   )
-   FetchContent_MakeAvailable(richtext)
-
-   target_link_libraries(elements PUBLIC richtext_lib)
-   target_include_directories(elements PUBLIC "${richtext_SOURCE_DIR}/ext/thorvg/inc")
-
-   # richtext backend sources
-   target_sources(elements PRIVATE
-      src/support/text_backend_richtext.cpp
-      src/support/glyph_layout_richtext.cpp
-   )
-   target_include_directories(elements PRIVATE "${richtext_SOURCE_DIR}/include")
-
-else()
-   message(STATUS "ELEMENTS_USE_RICHTEXT=OFF: submodule ThorVG + FetchContent HarfBuzz, vcpkg FreeType")
-
-   # --- ThorVG (git submodule at external/thorvg, branch: cmake) ---
-   set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
-   if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
-      message(FATAL_ERROR
-         "ThorVG submodule is not initialized at ${_thorvg_dir}.\n"
-         "Run: git submodule update --init --recursive external/thorvg")
-   endif()
-   add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
-   target_link_libraries(elements PUBLIC thorvg)
-   target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
-
-   # --- FreeType (vcpkg) ---
-   find_package(freetype CONFIG REQUIRED)
-   target_link_libraries(elements PUBLIC freetype)
-
-   # --- HarfBuzz 13.1.1 (FetchContent, ICU なし) ---
-   set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
-   set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
-   set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
-   set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
-   set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
-
-   FetchContent_Declare(
-      harfbuzz_source
-      GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
-      GIT_TAG 13.1.1
-      GIT_SHALLOW TRUE
-   )
-   FetchContent_MakeAvailable(harfbuzz_source)
-   target_link_libraries(elements PUBLIC harfbuzz)
-
+# --- ThorVG (git submodule at external/thorvg, branch: cmake) ---
+set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
+if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
+   message(FATAL_ERROR
+      "ThorVG submodule is not initialized at ${_thorvg_dir}.\n"
+      "Run: git submodule update --init --recursive external/thorvg")
 endif()
+add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
+target_link_libraries(elements PUBLIC thorvg)
+target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
+
+# --- FreeType (vcpkg) ---
+find_package(freetype CONFIG REQUIRED)
+target_link_libraries(elements PUBLIC freetype)
+
+# --- HarfBuzz 13.1.1 (FetchContent, ICU なし) ---
+set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
+set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
+set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
+set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
+set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+   harfbuzz_source
+   GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+   GIT_TAG 13.1.1
+   GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(harfbuzz_source)
+target_link_libraries(elements PUBLIC harfbuzz)
 
 ###############################################################################
 # Asio headers
