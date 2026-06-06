@@ -1,10 +1,17 @@
 /*=============================================================================
    Key-driven operation demo for the Elements (ThorVG port) library.
 
-   Tab / Shift+Tab  : move keyboard focus between widgets
+   Tab / Shift+Tab  : move keyboard focus between widgets (wraps around)
    Space / Enter    : activate the focused button (momentary / toggle /
                       latching / choice / button_menu)
-   Arrow keys       : adjust the focused slider / dial / thumbwheel
+   Arrow keys       : adjust the focused slider / dial / thumbwheel.
+                      When arrow_focus_navigation is enabled and the
+                      focused widget does NOT consume arrows (i.e., the
+                      focus is on a button / check_box / radio / input),
+                      arrows move the focus 2D-wise to the nearest
+                      focusable widget in that direction. Sliders, dials,
+                      and thumbwheels keep ownership of arrow keys for
+                      value adjustment.
    PageUp / PageDown: ±0.1 on the focused slider / dial / thumbwheel
    Home / End       : jump to min / max on the focused slider / dial /
                       thumbwheel
@@ -93,6 +100,7 @@ auto make_check_and_radio_panel()
 
 auto make_value_panel(view& view_, std::shared_ptr<basic_slider_base>& focus_target)
 {
+   // Two horizontal sliders: ←/→ adjust value, ↑/↓ pass through to focus nav.
    auto sl1 = share(slider(
       basic_thumb<25>(),
       basic_track<5, false>(colors::black),
@@ -106,18 +114,37 @@ auto make_value_panel(view& view_, std::shared_ptr<basic_slider_base>& focus_tar
       0.25
    ));
 
+   // Dial: ←/→ adjust value, ↑/↓ pass through to focus nav.
    auto dial_ = share(dial(
       radial_marks<20>(basic_knob<50>()),
       0.3
    ));
 
+   // Vertical thumbwheel: ↑/↓ adjust value, ←/→ pass through to focus nav.
+   auto compose_item =
+      [](std::size_t index)
+      {
+         auto text = "Item " + std::to_string(index + 1);
+         return share(
+            hsize(100, align_center(
+               heading(text)
+                  .font_color(get_theme().indicator_hilite_color)
+                  .font_size(16)
+            ))
+         );
+      };
+   auto wheel = share(vthumbwheel(10, compose_item));
+
    return
-      group("Sliders (Arrows / PgUp / PgDn / Home / End)",
+      group("Sliders / Dial / Thumbwheel (axis-only arrows)",
          margin({10, 35, 10, 10},
             vtile_spaced(15.0,
                hold(sl1),
                hold(sl2),
-               align_center(hold(dial_))
+               htile_spaced(20.0,
+                  align_center(hold(dial_)),
+                  layer(hsize(120, hold(wheel)), frame{})
+               )
             )
          )
       );
@@ -175,6 +202,14 @@ auto make_ui(view& view_, std::shared_ptr<basic_slider_base>& slider_target)
             view_.focus(sl);
       };
 
+   auto arrow_nav_toggle = check_box("Arrow keys move focus (2D nav)");
+   arrow_nav_toggle.value(view_.arrow_focus_navigation());
+   arrow_nav_toggle.on_click =
+      [&view_](bool on)
+      {
+         view_.arrow_focus_navigation(on);
+      };
+
    return
       margin({20, 20, 20, 20},
          vtile_spaced(15.0,
@@ -184,7 +219,10 @@ auto make_ui(view& view_, std::shared_ptr<basic_slider_base>& slider_target)
             ),
             values,
             htile_spaced(15.0, menu, inputs),
-            focus_to_slider
+            htile_spaced(15.0,
+               focus_to_slider,
+               align_left(arrow_nav_toggle)
+            )
          )
       );
 }
@@ -196,6 +234,10 @@ int main(int /*argc*/, char* /*argv*/[])
    _win.on_close = [&_app]() { _app.stop(); };
 
    view view_(_win);
+
+   // Enable arrow-key 2D focus navigation by default for the demo. Toggle
+   // the check_box at the bottom to compare with the legacy Tab-only mode.
+   view_.arrow_focus_navigation(true);
 
    std::shared_ptr<basic_slider_base> slider_target;
 

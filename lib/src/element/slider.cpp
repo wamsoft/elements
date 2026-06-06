@@ -212,8 +212,10 @@ namespace cycfi::elements
       if (k.action != key_action::press && k.action != key_action::repeat)
          return false;
 
-      // Direction: horizontal sliders react to Left/Right (and also Up/Down
-      // for convenience); vertical sliders treat Up as +, Down as -.
+      // Only consume the arrow axis that matches the slider's own
+      // orientation. The off-axis arrows are deliberately left
+      // unhandled so they fall through to view-level 2D focus
+      // navigation (when enabled).
       double delta = 0.0;
       bool   absolute = false;
       double abs_val = 0.0;
@@ -221,16 +223,20 @@ namespace cycfi::elements
       switch (k.key)
       {
          case key_code::left:
-            delta = _is_horiz ? -0.05 : -0.05;
+            if (!_is_horiz) return false;
+            delta = -0.05;
             break;
          case key_code::right:
-            delta = _is_horiz ? +0.05 : +0.05;
+            if (!_is_horiz) return false;
+            delta = +0.05;
             break;
          case key_code::down:
-            delta = _is_horiz ? -0.05 : -0.05;
+            if (_is_horiz) return false;
+            delta = -0.05;
             break;
          case key_code::up:
-            delta = _is_horiz ? +0.05 : +0.05;
+            if (_is_horiz) return false;
+            delta = +0.05;
             break;
          case key_code::page_down:
             delta = -0.1;

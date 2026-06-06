@@ -146,15 +146,16 @@ namespace cycfi::elements
       if (k.action != key_action::press && k.action != key_action::repeat)
          return false;
 
+      // Dial is treated as a horizontal-axis control: Left/Right adjust
+      // the value, Up/Down fall through so view-level 2D focus navigation
+      // (when enabled) can move focus vertically past the dial.
       double new_value = value();
       switch (k.key)
       {
          case key_code::left:
-         case key_code::down:
             new_value -= 0.05;
             break;
          case key_code::right:
-         case key_code::up:
             new_value += 0.05;
             break;
          case key_code::page_down:

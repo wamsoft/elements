@@ -144,15 +144,13 @@ namespace cycfi::elements
       if (k.action != key_action::press && k.action != key_action::repeat)
          return false;
 
+      // Thumbwheel is treated as a vertical-axis control: Up/Down (and
+      // PageUp/PageDown / Home / End) adjust the y component, while
+      // Left/Right fall through so view-level 2D focus navigation (when
+      // enabled) can move focus horizontally past the thumbwheel.
       point v = _value;
       switch (k.key)
       {
-         case key_code::left:
-            v.x -= 0.05f;
-            break;
-         case key_code::right:
-            v.x += 0.05f;
-            break;
          case key_code::down:
             v.y -= 0.05f;
             break;
@@ -166,10 +164,10 @@ namespace cycfi::elements
             v.y += 0.1f;
             break;
          case key_code::home:
-            v = {0.0f, 1.0f};
+            v.y = 1.0f;
             break;
          case key_code::end:
-            v = {1.0f, 0.0f};
+            v.y = 0.0f;
             break;
          default:
             return false;

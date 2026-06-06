@@ -6,9 +6,14 @@
 #include <elements/view.hpp>
 #include <elements/window.hpp>
 #include <elements/element/composite.hpp>
+#include <elements/element/indirect.hpp>
 #include <elements/element/proxy.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/detail/scratch_context.hpp>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <vector>
 
  namespace cycfi::elements
  {
@@ -288,8 +293,195 @@
          if (auto* p = dynamic_cast<proxy_base*>(&current))
             return descend_set_focus(p->subject(), target);
 
+         // indirect<reference<X>> / indirect<shared_element<X>> wrappers
+         // (used by view's main element and by link()/hold()) are NOT
+         // proxy_base — they delegate via indirect_base::get().
+         if (auto* i = dynamic_cast<indirect_base*>(&current))
+            return descend_set_focus(i->get(), target);
+
          return false;
       }
+
+      struct focusable_entry
+      {
+         element* el;
+         rect     bounds;
+      };
+
+      // Walk through any number of nested proxy_base layers until we find
+      // a composite_base. Used to decide whether a proxy is just wrapping a
+      // composite (descend through it) or is itself the focus-owning leaf
+      // (e.g. basic_button wraps a styler, with no composite underneath).
+      bool proxy_chain_has_composite(element* e)
+      {
+         while (e)
+         {
+            if (dynamic_cast<composite_base*>(e))
+               return true;
+            if (auto* p = dynamic_cast<proxy_base*>(e))
+            {
+               e = &p->subject();
+               continue;
+            }
+            if (auto* i = dynamic_cast<indirect_base*>(e))
+            {
+               e = &i->get();
+               continue;
+            }
+            return false;
+         }
+         return false;
+      }
+
+      // Collect every currently-visible focusable element together with the
+      // bounds it occupies in 'ctx'. Used for 2D directional focus
+      // navigation. We treat as a focusable any proxy / leaf that returns
+      // wants_focus() == true and whose subject chain does not bottom out
+      // in another composite (which would mean it is just a wrapper).
+      void collect_focusables(
+         context const& ctx, element& current,
+         std::vector<focusable_entry>& out)
+      {
+         if (auto* c = dynamic_cast<composite_base*>(&current))
+         {
+            c->for_each_visible(ctx,
+               [&](element& child, std::size_t /*ix*/, rect const& r)
+               {
+                  context cctx{ctx, &child, r};
+                  collect_focusables(cctx, child, out);
+                  return false;
+               });
+            return;
+         }
+
+         if (auto* p = dynamic_cast<proxy_base*>(&current))
+         {
+            if (proxy_chain_has_composite(&p->subject()))
+            {
+               context sctx{ctx, &p->subject(), ctx.bounds};
+               collect_focusables(sctx, p->subject(), out);
+            }
+            else if (current.wants_focus())
+            {
+               out.push_back({&current, ctx.bounds});
+            }
+            else
+            {
+               context sctx{ctx, &p->subject(), ctx.bounds};
+               collect_focusables(sctx, p->subject(), out);
+            }
+            return;
+         }
+
+         // indirect / reference / shared_element wrappers: always descend.
+         // wants_focus / focus / key are already forwarded to the held
+         // element, so for collection we should look at that element.
+         if (auto* i = dynamic_cast<indirect_base*>(&current))
+         {
+            context sctx{ctx, &i->get(), ctx.bounds};
+            collect_focusables(sctx, i->get(), out);
+            return;
+         }
+
+         if (current.wants_focus())
+            out.push_back({&current, ctx.bounds});
+      }
+
+      // Walk down the focus chain from 'current' and append every element
+      // on the path. composite_base steps via focus_index(); proxy_base
+      // steps via subject(). The chain terminates at the first leaf or at
+      // a composite with no focus.
+      void walk_focus_path(element& current, std::vector<element*>& path)
+      {
+         path.push_back(&current);
+         if (auto* c = dynamic_cast<composite_base*>(&current))
+         {
+            int idx = c->focus_index();
+            if (idx >= 0 && idx < int(c->size()))
+               walk_focus_path(c->at(idx), path);
+            return;
+         }
+         if (auto* p = dynamic_cast<proxy_base*>(&current))
+         {
+            walk_focus_path(p->subject(), path);
+            return;
+         }
+         if (auto* i = dynamic_cast<indirect_base*>(&current))
+         {
+            walk_focus_path(i->get(), path);
+            return;
+         }
+      }
+
+      enum class arrow_dir { left, right, up, down };
+
+      // Pick the focusable that best matches a 2D move in 'dir' starting
+      // from 'cur_bounds'. Score = distance along the move axis plus a
+      // heavy multiplier for misalignment on the perpendicular axis, so a
+      // "Right" press prefers a widget in the same horizontal band.
+      element* pick_directional(
+         std::vector<focusable_entry> const& list,
+         element const* current,
+         rect const& cur_bounds,
+         arrow_dir dir)
+      {
+         point cur_c = center_point(cur_bounds);
+         element* best = nullptr;
+         float best_score = std::numeric_limits<float>::max();
+
+         for (auto const& f : list)
+         {
+            if (f.el == current)
+               continue;
+
+            point c = center_point(f.bounds);
+            float dx = c.x - cur_c.x;
+            float dy = c.y - cur_c.y;
+
+            // Require the candidate to be unambiguously on the requested
+            // side (small epsilon to ignore co-aligned widgets).
+            bool in_dir = false;
+            switch (dir)
+            {
+               case arrow_dir::left:  in_dir = dx < -0.5f; break;
+               case arrow_dir::right: in_dir = dx >  0.5f; break;
+               case arrow_dir::up:    in_dir = dy < -0.5f; break;
+               case arrow_dir::down:  in_dir = dy >  0.5f; break;
+            }
+            if (!in_dir)
+               continue;
+
+            float primary, secondary;
+            if (dir == arrow_dir::left || dir == arrow_dir::right)
+            {
+               primary   = std::abs(dx);
+               secondary = std::abs(dy);
+            }
+            else
+            {
+               primary   = std::abs(dy);
+               secondary = std::abs(dx);
+            }
+            float score = primary + secondary * 4.0f;
+
+            if (score < best_score)
+            {
+               best_score = score;
+               best = f.el;
+            }
+         }
+         return best;
+      }
+   }
+
+   void view::arrow_focus_navigation(bool on)
+   {
+      _arrow_focus_nav = on;
+   }
+
+   bool view::arrow_focus_navigation() const
+   {
+      return _arrow_focus_nav;
    }
 
    void view::focus(element_ptr e)
@@ -328,6 +520,86 @@
          },
          *this, _current_bounds
       );
+
+      // Arrow-based 2D focus navigation, opt-in via
+      // view::arrow_focus_navigation(true). Runs only when the focused
+      // widget did NOT consume the arrow itself (so slider / dial /
+      // thumbwheel keep ownership of arrow keys for value adjustment).
+      if (!handled
+          && _arrow_focus_nav
+          && (k.action == key_action::press || k.action == key_action::repeat))
+      {
+         arrow_dir d;
+         bool is_arrow = true;
+         switch (k.key)
+         {
+            case key_code::left:  d = arrow_dir::left;  break;
+            case key_code::right: d = arrow_dir::right; break;
+            case key_code::up:    d = arrow_dir::up;    break;
+            case key_code::down:  d = arrow_dir::down;  break;
+            default: is_arrow = false; d = arrow_dir::left; break;
+         }
+         if (is_arrow)
+         {
+            with_context_do(
+               [d, &handled](auto const& ctx, auto& _main_element)
+               {
+                  std::vector<focusable_entry> list;
+                  collect_focusables(ctx, _main_element, list);
+                  if (list.empty())
+                     return;
+
+                  // Find which entry in 'list' currently owns the focus by
+                  // walking the focus chain top-down and matching against
+                  // collected entries. composite_base::focus() only returns
+                  // its immediate child, so a deep button is never directly
+                  // returned — we have to scan the whole path.
+                  std::vector<element*> path;
+                  walk_focus_path(_main_element, path);
+
+                  element* cur_collected = nullptr;
+                  rect     cur_bounds;
+                  for (element* pe : path)
+                  {
+                     for (auto const& f : list)
+                        if (f.el == pe)
+                        {
+                           cur_collected = pe;
+                           cur_bounds = f.bounds;
+                           break;
+                        }
+                     if (cur_collected)
+                        break;
+                  }
+
+                  element* target = nullptr;
+                  if (!cur_collected)
+                  {
+                     // No matching focus yet: take the first focusable.
+                     target = list.front().el;
+                  }
+                  else
+                  {
+                     target = pick_directional(list, cur_collected, cur_bounds, d);
+                  }
+
+                  if (!target || target == cur_collected)
+                     return;
+
+                  _main_element.end_focus();
+                  if (descend_set_focus(_main_element, target))
+                  {
+                     _main_element.begin_focus(
+                        element::focus_request::restore_previous);
+                     handled = true;
+                     ctx.view.refresh(ctx);
+                  }
+               },
+               *this, _current_bounds
+            );
+            _is_focus = handled;
+         }
+      }
 
       // Wrap focus around when Tab / Shift+Tab walks off either end.
       // composite_base::key returns false when no further sibling wants

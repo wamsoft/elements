@@ -75,6 +75,10 @@ Text shaping and font metrics go through the `glyph_layout_backend` and `font_ba
 - **pixmap scale convention**: Cairo uses `device_scale = 1/scale`, so `pixmap::size() = pixels * scale`, not `pixels / scale`.
 - **Dirty region**: `EngineOption::None` is required to prevent ThorVG from clearing glyph regions with black.
 
+### Keyboard Navigation
+
+All interactive widgets are keyboard-operable (not just text boxes). Tab/Shift+Tab cycles focus (wraps at ends); Space/Enter activates buttons; arrows adjust the focused slider/dial/thumbwheel on their primary axis. `view::arrow_focus_navigation(true)` enables an opt-in 2D directional focus mode where unconsumed arrows move focus to the nearest widget in that direction (value adjustment wins over navigation). Initial focus can be set with `view::focus(element_ptr)` or the declarative `initial_focus(...)` wrapper from `<elements/element/focus.hpp>`. Spec: `docs/keyboard-navigation.md`. Reference example: `examples/key_driven/`.
+
 ### Multilingual Text (FT loader)
 
 The FT loader gives per-codepoint fallback (load order = priority), HarfBuzz shaping, mixed-UPM normalization, and BCP47 locale tags. Plumbing:

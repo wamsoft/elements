@@ -58,6 +58,16 @@ namespace cycfi::elements
       // view::remove), so it is safe to call from anywhere — including
       // an element callback that itself runs inside an event dispatch.
       void                    focus(element_ptr e);
+
+      // When enabled, arrow keys that no focused widget consumed are
+      // translated into 2D directional focus moves (e.g., Right picks the
+      // nearest focusable widget to the right of the currently focused
+      // one, biased toward the same row). Defaults to false to preserve
+      // legacy behavior. Sliders / dials / thumbwheels handle arrows
+      // themselves so they keep adjusting their value — they win over
+      // focus navigation.
+      void                    arrow_focus_navigation(bool on);
+      bool                    arrow_focus_navigation() const;
       void                    track_drop(drop_info const& info, cursor_tracking status) override;
       bool                    drop(drop_info const& info) override;
       void                    poll() override;
@@ -150,6 +160,7 @@ namespace cycfi::elements
       view_limits             _current_limits = {{0, 0}, { full_extent, full_extent}};
       mouse_button            _current_button;
       bool                    _is_focus = false;
+      bool                    _arrow_focus_nav = false;
 
       using undo_stack_type = std::stack<undo_redo_task>;
       undo_stack_type         _undo_stack;
