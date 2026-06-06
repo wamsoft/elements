@@ -47,6 +47,8 @@ namespace cycfi::elements
       void                    scroll(point dir, point p) override;
       bool                    key(key_info const& k) override;
       bool                    text(text_info const& info) override;
+      bool                    pad_button_event(pad_button_info info) override;
+      void                    pad_axis_event(pad_axis_info info) override;
       void                    begin_focus() override;
       void                    end_focus() override;
       void                    relinquish_focus();
@@ -68,6 +70,57 @@ namespace cycfi::elements
       // focus navigation.
       void                    arrow_focus_navigation(bool on);
       bool                    arrow_focus_navigation() const;
+
+      // ---- Gamepad button → key synthesis -----------------------------
+      // Map a gamepad button to a key event. When the bound pad button is
+      // pressed and no shortcut intercepts it, the bound key_info is
+      // dispatched through view::key() as if a real key were hit. Defaults
+      // are installed in the view constructor:
+      //   A → Enter, B → Esc, X → Shift+Tab, Y → Tab, D-Pad → arrows.
+      void                    bind_pad_button(pad_button btn, key_code key, int mods = 0);
+      void                    unbind_pad_button(pad_button btn);
+
+      // ---- Shortcuts (work for both keys and pad buttons) -------------
+      // When a bound input fires, the target element's activation path
+      // runs (basic_button::activate for buttons) or the callback is
+      // invoked. By default the shortcut is suppressed while a text-
+      // consuming widget (e.g. an editable input_box) currently holds
+      // focus; pass `force=true` to bypass that check.
+      void                    bind_shortcut(key_info key, element_ptr target, bool force = false);
+      void                    bind_shortcut(pad_button btn, element_ptr target, bool force = false);
+      void                    bind_shortcut(key_info key, std::function<void()> cb, bool force = false);
+      void                    bind_shortcut(pad_button btn, std::function<void()> cb, bool force = false);
+      void                    unbind_shortcut(key_info key);
+      void                    unbind_shortcut(pad_button btn);
+
+      // ---- Analog axis modes ------------------------------------------
+      // Per-group axis mode. Defaults:
+      //   D-Pad   : both
+      //   L-Stick : focus
+      //   R-Stick : value
+      //   Trigger : disabled
+      void                    dpad_mode(pad_axis_mode m);
+      void                    left_stick_mode(pad_axis_mode m);
+      void                    right_stick_mode(pad_axis_mode m);
+      void                    trigger_mode(pad_axis_mode m);
+      pad_axis_mode           dpad_mode() const;
+      pad_axis_mode           left_stick_mode() const;
+      pad_axis_mode           right_stick_mode() const;
+      pad_axis_mode           trigger_mode() const;
+
+      // Below the deadzone an axis is treated as zero. Default 0.15.
+      void                    stick_deadzone(float v);
+      float                   stick_deadzone() const;
+
+      // Speed (in 0..1 units / second) applied to value-mode axes when
+      // delivered to a widget's pad_axis(). Default 1.0.
+      void                    stick_value_speed(float per_sec);
+      float                   stick_value_speed() const;
+
+      // Time elapsed (seconds) between the previous poll() and the
+      // current one. Used by widgets implementing pad_axis to scale the
+      // per-frame value step.
+      float                   frame_dt() const { return _frame_dt; }
       void                    track_drop(drop_info const& info, cursor_tracking status) override;
       bool                    drop(drop_info const& info) override;
       void                    poll() override;
@@ -161,6 +214,51 @@ namespace cycfi::elements
       mouse_button            _current_button;
       bool                    _is_focus = false;
       bool                    _arrow_focus_nav = false;
+
+      struct pad_key_binding
+      {
+         key_code key;
+         int      mods;
+      };
+      std::map<pad_button, pad_key_binding> _pad_key_bindings;
+
+      struct shortcut_target
+      {
+         std::weak_ptr<element> target;
+         std::function<void()>  callback;
+         bool                   force = false;
+      };
+
+      // key_info is a small POD: store (key, modifiers) in std::pair to
+      // avoid relying on operator< for key_info itself.
+      using key_shortcut_key = std::pair<key_code, int>;
+      std::map<key_shortcut_key, shortcut_target> _key_shortcuts;
+      std::map<pad_button, shortcut_target>       _pad_shortcuts;
+
+      bool                    focus_consumes_text();
+      void                    fire_shortcut(shortcut_target const& t);
+
+      // Pad axis state ----------------------------------------------------
+      struct axis_state
+      {
+         float                                       current = 0.0f; // -1..+1 after deadzone
+         int                                         dir = 0;        // -1, 0, +1 (sign of last triggered move)
+         std::chrono::steady_clock::time_point       next_repeat{};
+      };
+      axis_state              _axis_states[8] = {};   // indexed by pad_axis enum value
+
+      pad_axis_mode           _dpad_mode         = pad_axis_mode::both;
+      pad_axis_mode           _left_stick_mode   = pad_axis_mode::focus;
+      pad_axis_mode           _right_stick_mode  = pad_axis_mode::value;
+      pad_axis_mode           _trigger_mode      = pad_axis_mode::disabled;
+      float                   _stick_deadzone    = 0.15f;
+      float                   _stick_value_speed = 1.0f;
+      float                   _frame_dt          = 0.0f;
+      std::chrono::steady_clock::time_point _last_poll_time{};
+
+      pad_axis_mode           mode_for(pad_axis a) const;
+      void                    process_pad_axes(std::chrono::steady_clock::time_point now);
+      void                    synthesize_axis_key(pad_axis axis, int sign);
 
       using undo_stack_type = std::stack<undo_redo_task>;
       undo_stack_type         _undo_stack;

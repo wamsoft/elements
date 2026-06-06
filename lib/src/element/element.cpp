@@ -342,6 +342,11 @@ namespace cycfi::elements
     * \return
     *    false by default, indicating that the key event was not handled.
     */
+   bool element::pad_axis(context const& /*ctx*/, pad_axis_info /*info*/)
+   {
+      return false;
+   }
+
    bool element::key(context const& /* ctx */, key_info /* k */)
    {
       return false;

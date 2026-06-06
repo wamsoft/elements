@@ -1,20 +1,32 @@
 /*=============================================================================
-   Key-driven operation demo for the Elements (ThorVG port) library.
+   Key-driven / gamepad operation demo for the Elements (ThorVG port) library.
 
-   Tab / Shift+Tab  : move keyboard focus between widgets (wraps around)
-   Space / Enter    : activate the focused button (momentary / toggle /
-                      latching / choice / button_menu)
-   Arrow keys       : adjust the focused slider / dial / thumbwheel.
-                      When arrow_focus_navigation is enabled and the
-                      focused widget does NOT consume arrows (i.e., the
-                      focus is on a button / check_box / radio / input),
-                      arrows move the focus 2D-wise to the nearest
-                      focusable widget in that direction. Sliders, dials,
-                      and thumbwheels keep ownership of arrow keys for
-                      value adjustment.
-   PageUp / PageDown: ±0.1 on the focused slider / dial / thumbwheel
-   Home / End       : jump to min / max on the focused slider / dial /
-                      thumbwheel
+   Keyboard:
+     Tab / Shift+Tab  : move keyboard focus between widgets (wraps around)
+     Space / Enter    : activate the focused button (momentary / toggle /
+                        latching / choice / button_menu)
+     Arrow keys       : adjust the focused slider / dial / thumbwheel.
+                        When arrow_focus_navigation is enabled and the
+                        focused widget does NOT consume arrows (i.e., the
+                        focus is on a button / check_box / radio / input),
+                        arrows move the focus 2D-wise to the nearest
+                        focusable widget in that direction. Sliders, dials,
+                        and thumbwheels keep ownership of arrow keys for
+                        value adjustment.
+     PageUp / PageDown: +-0.1 on the focused slider / dial / thumbwheel
+     Home / End       : jump to min / max on the focused slider / dial /
+                        thumbwheel
+
+   Gamepad (SDL3 host only; auto-detected, optional):
+     A                : Enter (activate focused button)
+     B                : Esc (cancel / close menu)
+     X / Y            : Shift+Tab / Tab (focus back / forward)
+     D-Pad            : arrow-key equivalent (mode = both)
+     Left stick       : focus move (mode = focus, auto-repeat)
+     Right stick      : value adjust on focused slider / dial / thumbwheel
+                        (mode = value; magnitude scaled by tilt)
+     LB               : Move focus to slider (shortcut bound here)
+     RB               : Reset latching button (shortcut bound here)
 
    The initial focus is placed on the "Momentary" button via the
    initial_focus(...) wrapper; the "Focus the slider" button uses the
@@ -26,6 +38,12 @@ using namespace cycfi::elements;
 
 auto constexpr bkd_color = rgba(35, 35, 37, 255);
 auto background = box(bkd_color);
+
+struct buttons_panel
+{
+   std::shared_ptr<element> panel;
+   std::shared_ptr<element> reset_btn;
+};
 
 auto make_buttons_panel()
 {
@@ -50,8 +68,8 @@ auto make_buttons_panel()
       };
    reset->enable(false);
 
-   return
-      group("Buttons (Space/Enter)",
+   auto panel = share(
+      group("Buttons (Space/Enter, A=Enter)",
          margin({10, 35, 10, 10},
             vtile_spaced(10.0,
                // Mark this button as the initial focus on startup.
@@ -61,7 +79,9 @@ auto make_buttons_panel()
                hold(reset)
             )
          )
-      );
+      )
+   );
+   return buttons_panel{panel, reset};
 }
 
 auto make_check_and_radio_panel()
@@ -194,8 +214,8 @@ auto make_ui(view& view_, std::shared_ptr<basic_slider_base>& slider_target)
    auto menu       = make_menu_panel();
    auto inputs     = make_input_panel();
 
-   auto focus_to_slider = button("Move focus to slider");
-   focus_to_slider.on_click =
+   auto focus_to_slider = share(button("Move focus to slider (LB)"));
+   focus_to_slider->on_click =
       [&view_, w = std::weak_ptr<basic_slider_base>(slider_target)](bool) mutable
       {
          if (auto sl = w.lock())
@@ -210,17 +230,23 @@ auto make_ui(view& view_, std::shared_ptr<basic_slider_base>& slider_target)
          view_.arrow_focus_navigation(on);
       };
 
+   // Gamepad shortcut bindings: LB → focus-to-slider, RB → reset latch.
+   // Works identically whether triggered by gamepad or by clicking the
+   // bound buttons themselves.
+   view_.bind_shortcut(pad_button::lb, focus_to_slider);
+   view_.bind_shortcut(pad_button::rb, buttons.reset_btn);
+
    return
       margin({20, 20, 20, 20},
          vtile_spaced(15.0,
             htile_spaced(15.0,
-               buttons,
+               hold(buttons.panel),
                checkradio
             ),
             values,
             htile_spaced(15.0, menu, inputs),
             htile_spaced(15.0,
-               focus_to_slider,
+               hold(focus_to_slider),
                align_left(arrow_nav_toggle)
             )
          )

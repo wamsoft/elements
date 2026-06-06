@@ -103,6 +103,32 @@ namespace cycfi::elements
       return true;
    }
 
+   bool thumbwheel_base::pad_axis(context const& ctx, pad_axis_info info)
+   {
+      if (!ctx.enabled)
+         return false;
+
+      // Thumbwheel is vertical-axis: ↑/↓ adjust y value, ←/→ pass through.
+      bool vertical =
+            info.axis == pad_axis::dpad_y
+         || info.axis == pad_axis::left_y
+         || info.axis == pad_axis::right_y;
+      if (!vertical)
+         return false;
+
+      // SDL +y is down; we want +y = decrease.
+      float tilt = -info.value;
+      float step = tilt * ctx.view.stick_value_speed() * ctx.view.frame_dt();
+      point new_val = _value;
+      new_val.y = std::clamp<float>(_value.y + step, 0.0f, 1.0f);
+      if (new_val != _value)
+      {
+         edit_value(this, new_val);
+         ctx.view.refresh(ctx);
+      }
+      return true;
+   }
+
    bool thumbwheel_base::wants_focus() const
    {
       return true;

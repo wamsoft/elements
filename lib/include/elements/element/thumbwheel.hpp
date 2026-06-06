@@ -36,6 +36,7 @@ namespace cycfi::elements
 
       void                 draw(context const& ctx) override;
       bool                 key(context const& ctx, key_info k) override;
+      bool                 pad_axis(context const& ctx, pad_axis_info info) override;
 
       bool                 wants_focus() const override;
       void                 begin_focus(focus_request req) override;

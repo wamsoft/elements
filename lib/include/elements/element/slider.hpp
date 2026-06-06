@@ -39,6 +39,7 @@ namespace cycfi::elements
       void                    end_tracking(context const& ctx, tracker_info& track_info) override;
 
       bool                    key(context const& ctx, key_info k) override;
+      bool                    pad_axis(context const& ctx, pad_axis_info info) override;
 
       bool                    wants_focus() const override;
       void                    begin_focus(focus_request req) override;

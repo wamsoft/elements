@@ -105,6 +105,32 @@ namespace cycfi::elements
       return true;
    }
 
+   bool basic_dial::pad_axis(context const& ctx, pad_axis_info info)
+   {
+      if (!ctx.enabled)
+         return false;
+
+      // Dial is horizontal-axis: ←/→ adjust value, ↑/↓ pass through.
+      bool horizontal =
+            info.axis == pad_axis::dpad_x
+         || info.axis == pad_axis::left_x
+         || info.axis == pad_axis::right_x;
+      if (!horizontal)
+         return false;
+
+      double delta = double(info.value)
+                   * ctx.view.stick_value_speed()
+                   * ctx.view.frame_dt();
+      double new_val = value() + delta;
+      clamp(new_val, 0.0, 1.0);
+      if (new_val != value())
+      {
+         edit_value(this, new_val);
+         ctx.view.refresh(ctx);
+      }
+      return true;
+   }
+
    bool basic_dial::wants_focus() const
    {
       return true;

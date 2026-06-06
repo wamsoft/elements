@@ -105,6 +105,7 @@ namespace cycfi::elements
       void                    begin_focus(focus_request req) override;
       bool                    end_focus() override;
       bool                    wants_control() const override;
+      bool                    consumes_text() const override { return is_focus() && editable(); }
 
       bool                    text(context const& ctx, text_info info) override;
       void                    set_text(string_view text) override;

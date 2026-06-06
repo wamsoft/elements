@@ -17,6 +17,7 @@
 #include <elements/support/point.hpp>
 #include <elements/support/rect.hpp>
 #include <elements/support/payload.hpp>
+#include <elements/element/gamepad.hpp>
 
 #if defined(ELEMENTS_HOST_UI_LIBRARY_WIN32)
 # include <windows.h>
@@ -338,6 +339,16 @@ namespace cycfi::elements
       virtual bool         drop(drop_info const& info);
       virtual void         poll();
 
+      // Gamepad inputs. Default no-op; overridden by view to drive
+      // shortcut / pad→key / analog axis dispatch. pad_axis_event is a
+      // cache update (axes are sampled at frame rate inside poll());
+      // pad_button_event delivers a discrete press/release event
+      // immediately. Method names carry an `_event` suffix so they do
+      // not shadow the `pad_button` / `pad_axis` enum types from
+      // within derived class scope (MSVC name lookup quirk).
+      virtual bool         pad_button_event(pad_button_info info);
+      virtual void         pad_axis_event(pad_axis_info info);
+
       virtual void         refresh();
       virtual void         refresh(rect area);
 
@@ -370,6 +381,8 @@ namespace cycfi::elements
       return false;
    }
    inline void base_view::poll() {}
+   inline bool base_view::pad_button_event(pad_button_info /* info */) { return false; }
+   inline void base_view::pad_axis_event(pad_axis_info /* info */) {}
 
    ////////////////////////////////////////////////////////////////////////////
    // The clipboard

@@ -5,6 +5,7 @@
 =============================================================================*/
 #include <elements/view.hpp>
 #include <elements/window.hpp>
+#include <elements/element/button.hpp>
 #include <elements/element/composite.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/element/proxy.hpp>
@@ -17,23 +18,42 @@
 
  namespace cycfi::elements
  {
+   // Populate the default gamepad → key bindings on a freshly
+   // constructed view. D-Pad buttons are intentionally *not* bound here;
+   // they feed the axis-mode machinery instead so dpad_mode() applies
+   // uniformly. Face buttons get the conventional accept / cancel /
+   // focus-back / focus-next mapping.
+   static void install_default_pad_key_bindings(view& v)
+   {
+      using pb = pad_button;
+      v.bind_pad_button(pb::a, key_code::enter);
+      v.bind_pad_button(pb::b, key_code::escape);
+      v.bind_pad_button(pb::x, key_code::tab,   mod_shift);
+      v.bind_pad_button(pb::y, key_code::tab);
+   }
+
    view::view(extent size_)
     : base_view(size_)
     , _main_element(make_scaled_content())
     , _work(asio::make_work_guard(_io))
-   {}
+   {
+      install_default_pad_key_bindings(*this);
+   }
 
    view::view(host_view_handle h)
     : base_view(h)
     , _main_element(make_scaled_content())
     , _work(asio::make_work_guard(_io))
-   {}
+   {
+      install_default_pad_key_bindings(*this);
+   }
 
    view::view(window& win)
     : base_view(win.host())
     , _main_element(make_scaled_content())
     , _work(asio::make_work_guard(_io))
    {
+      install_default_pad_key_bindings(*this);
       on_change_limits = [&win](view_limits limits_)
       {
          win.limits(limits_);
@@ -512,6 +532,22 @@
       if (_content.empty())
          return false;
 
+      // Key shortcut takes priority over normal dispatch. Only fires on
+      // press / repeat — release events don't trigger shortcuts.
+      if (k.action == key_action::press || k.action == key_action::repeat)
+      {
+         auto it = _key_shortcuts.find({k.key, k.modifiers});
+         if (it != _key_shortcuts.end())
+         {
+            auto const& t = it->second;
+            if (t.force || !focus_consumes_text())
+            {
+               fire_shortcut(t);
+               return true;
+            }
+         }
+      }
+
       bool handled = false;
       with_context_do(
          [k, &handled](auto const& ctx, auto& _main_element)
@@ -647,6 +683,362 @@
       return handled;
    }
 
+   // -------------------------------------------------------------------
+   // Pad-button → key binding
+   // -------------------------------------------------------------------
+   void view::bind_pad_button(pad_button btn, key_code key, int mods)
+   {
+      _pad_key_bindings[btn] = {key, mods};
+   }
+
+   void view::unbind_pad_button(pad_button btn)
+   {
+      _pad_key_bindings.erase(btn);
+   }
+
+   // -------------------------------------------------------------------
+   // Shortcut registry
+   // -------------------------------------------------------------------
+   void view::bind_shortcut(key_info key, element_ptr target, bool force)
+   {
+      _key_shortcuts[{key.key, key.modifiers}] = {target, {}, force};
+   }
+
+   void view::bind_shortcut(pad_button btn, element_ptr target, bool force)
+   {
+      _pad_shortcuts[btn] = {target, {}, force};
+   }
+
+   void view::bind_shortcut(key_info key, std::function<void()> cb, bool force)
+   {
+      _key_shortcuts[{key.key, key.modifiers}] = {{}, std::move(cb), force};
+   }
+
+   void view::bind_shortcut(pad_button btn, std::function<void()> cb, bool force)
+   {
+      _pad_shortcuts[btn] = {{}, std::move(cb), force};
+   }
+
+   void view::unbind_shortcut(key_info key)
+   {
+      _key_shortcuts.erase({key.key, key.modifiers});
+   }
+
+   void view::unbind_shortcut(pad_button btn)
+   {
+      _pad_shortcuts.erase(btn);
+   }
+
+   // Returns true if any element along the current focus chain has
+   // consumes_text() == true. Used to decide whether to suppress
+   // non-forced shortcuts.
+   bool view::focus_consumes_text()
+   {
+      bool result = false;
+      with_context_do(
+         [&result](auto const& /*ctx*/, auto& _main_element)
+         {
+            std::vector<element*> path;
+            walk_focus_path(_main_element, path);
+            for (element* e : path)
+               if (e->consumes_text())
+               {
+                  result = true;
+                  break;
+               }
+         },
+         *this, _current_bounds
+      );
+      return result;
+   }
+
+   void view::fire_shortcut(shortcut_target const& t)
+   {
+      // Deferred so callers (key/pad event) can return cleanly first.
+      asio::post(_io,
+         [this, t]()
+         {
+            if (t.callback)
+            {
+               t.callback();
+               base_view::refresh();
+               return;
+            }
+            auto el = t.target.lock();
+            if (!el)
+               return;
+            // Run activate() with the element's own context. We pass a
+            // lambda capturing the raw pointer; lifetime is held via the
+            // shared_ptr we just locked.
+            element* raw = el.get();
+            in_context_do(*raw,
+               [raw](context const& ectx)
+               {
+                  if (auto* btn = dynamic_cast<basic_button*>(raw))
+                     btn->activate(ectx);
+                  // Non-button targets are currently no-ops. Future
+                  // widgets can opt in by exposing their own activate.
+               }
+            );
+            base_view::refresh();
+         }
+      );
+   }
+
+   bool view::pad_button_event(pad_button_info info)
+   {
+      // 1. Pad-button shortcut takes priority. Fires on press only.
+      if (info.down)
+      {
+         auto sit = _pad_shortcuts.find(info.button);
+         if (sit != _pad_shortcuts.end())
+         {
+            auto const& t = sit->second;
+            if (t.force || !focus_consumes_text())
+            {
+               fire_shortcut(t);
+               return true;
+            }
+         }
+      }
+
+      // 2. D-Pad buttons feed the axis machinery (so dpad_mode applies).
+      //    They do NOT participate in pad→key synthesis.
+      auto feed_dpad_axis = [this](pad_axis ax, int sign, bool down)
+      {
+         auto& st = _axis_states[static_cast<int>(ax)];
+         if (down)
+         {
+            st.current = float(sign);
+         }
+         else if (st.current * float(sign) > 0.0f)
+         {
+            // Only clear if we were currently driving this direction —
+            // protects against weird states where opposite directions
+            // are held simultaneously.
+            st.current = 0.0f;
+            st.dir = 0;
+            st.next_repeat = {};
+         }
+      };
+
+      switch (info.button)
+      {
+         case pad_button::dpad_left:
+            feed_dpad_axis(pad_axis::dpad_x, -1, info.down); return true;
+         case pad_button::dpad_right:
+            feed_dpad_axis(pad_axis::dpad_x, +1, info.down); return true;
+         case pad_button::dpad_up:
+            feed_dpad_axis(pad_axis::dpad_y, -1, info.down); return true;
+         case pad_button::dpad_down:
+            feed_dpad_axis(pad_axis::dpad_y, +1, info.down); return true;
+         default: break;
+      }
+
+      // 3. Other buttons: pad → key synthesis (press only).
+      if (!info.down)
+         return false;
+      auto bit = _pad_key_bindings.find(info.button);
+      if (bit == _pad_key_bindings.end())
+         return false;
+
+      key_info ki{bit->second.key, key_action::press, bit->second.mods};
+      bool r = this->key(ki);
+      key_info kr{bit->second.key, key_action::release, bit->second.mods};
+      this->key(kr);
+      return r;
+   }
+
+   void view::pad_axis_event(pad_axis_info info)
+   {
+      int idx = static_cast<int>(info.axis);
+      if (idx < 0 || idx >= 8)
+         return;
+
+      float v = info.value;
+      // Triggers come in as [0, 1]; sticks come in as [-1, +1].
+      if (info.axis == pad_axis::lt || info.axis == pad_axis::rt)
+      {
+         if (v < 0.0f) v = 0.0f;
+      }
+      else
+      {
+         // Snap deadzone region to zero so downstream checks are simple.
+         if (std::abs(v) < _stick_deadzone)
+            v = 0.0f;
+      }
+      auto& st = _axis_states[idx];
+      st.current = v;
+      if (v == 0.0f)
+      {
+         st.dir = 0;
+         st.next_repeat = {};
+      }
+   }
+
+   // -------------------------------------------------------------------
+   // Axis mode getters / setters
+   // -------------------------------------------------------------------
+   void view::dpad_mode(pad_axis_mode m)        { _dpad_mode = m; }
+   void view::left_stick_mode(pad_axis_mode m)  { _left_stick_mode = m; }
+   void view::right_stick_mode(pad_axis_mode m) { _right_stick_mode = m; }
+   void view::trigger_mode(pad_axis_mode m)     { _trigger_mode = m; }
+   pad_axis_mode view::dpad_mode() const        { return _dpad_mode; }
+   pad_axis_mode view::left_stick_mode() const  { return _left_stick_mode; }
+   pad_axis_mode view::right_stick_mode() const { return _right_stick_mode; }
+   pad_axis_mode view::trigger_mode() const     { return _trigger_mode; }
+
+   void view::stick_deadzone(float v)           { _stick_deadzone = v; }
+   float view::stick_deadzone() const           { return _stick_deadzone; }
+   void view::stick_value_speed(float per_sec)  { _stick_value_speed = per_sec; }
+   float view::stick_value_speed() const        { return _stick_value_speed; }
+
+   pad_axis_mode view::mode_for(pad_axis a) const
+   {
+      switch (a)
+      {
+         case pad_axis::dpad_x:
+         case pad_axis::dpad_y:  return _dpad_mode;
+         case pad_axis::left_x:
+         case pad_axis::left_y:  return _left_stick_mode;
+         case pad_axis::right_x:
+         case pad_axis::right_y: return _right_stick_mode;
+         case pad_axis::lt:
+         case pad_axis::rt:      return _trigger_mode;
+         default:                return pad_axis_mode::disabled;
+      }
+   }
+
+   void view::synthesize_axis_key(pad_axis axis, int sign)
+   {
+      key_code kc = key_code::unknown;
+      switch (axis)
+      {
+         case pad_axis::dpad_x:
+         case pad_axis::left_x:
+         case pad_axis::right_x:
+            kc = (sign > 0) ? key_code::right : key_code::left;
+            break;
+         case pad_axis::dpad_y:
+         case pad_axis::left_y:
+         case pad_axis::right_y:
+            // SDL convention: +y is downward.
+            kc = (sign > 0) ? key_code::down : key_code::up;
+            break;
+         case pad_axis::lt:
+            kc = key_code::page_down;
+            break;
+         case pad_axis::rt:
+            kc = key_code::page_up;
+            break;
+         default:
+            return;
+      }
+      key_info ki_press{kc, key_action::press, 0};
+      this->key(ki_press);
+      key_info ki_release{kc, key_action::release, 0};
+      this->key(ki_release);
+   }
+
+   void view::process_pad_axes(std::chrono::steady_clock::time_point now)
+   {
+      if (_content.empty())
+         return;
+
+      constexpr float threshold       = 0.5f;
+      auto const initial_delay        = std::chrono::milliseconds(400);
+
+      // Locate the deepest focus-owning element once — value-mode axes
+      // all dispatch to the same leaf. We can't just take path.back():
+      // for proxy-based widgets (basic_dial, basic_button, thumbwheel)
+      // the path continues down into the styler subject, which is a
+      // plain element that returns wants_focus() == false. Take the
+      // deepest element that still answers wants_focus() == true; that
+      // is the override-owning class (slider_base / basic_dial / ...)
+      // and the one whose pad_axis() / key() overrides matter.
+      element* focus_leaf = nullptr;
+      with_context_do(
+         [&focus_leaf](auto const& /*ctx*/, auto& _main_element)
+         {
+            std::vector<element*> path;
+            walk_focus_path(_main_element, path);
+            for (element* e : path)
+               if (e->wants_focus())
+                  focus_leaf = e;
+         },
+         *this, _current_bounds
+      );
+
+      pad_axis const axes[] = {
+         pad_axis::dpad_x,  pad_axis::dpad_y,
+         pad_axis::left_x,  pad_axis::left_y,
+         pad_axis::right_x, pad_axis::right_y,
+         pad_axis::lt,      pad_axis::rt
+      };
+
+      for (pad_axis axis : axes)
+      {
+         int idx = static_cast<int>(axis);
+         auto& st = _axis_states[idx];
+         pad_axis_mode const mode = mode_for(axis);
+         if (mode == pad_axis_mode::disabled)
+         {
+            st.dir = 0;
+            continue;
+         }
+
+         float const v = st.current;
+         bool consumed_by_value = false;
+
+         if ((mode == pad_axis_mode::value || mode == pad_axis_mode::both)
+             && v != 0.0f && focus_leaf)
+         {
+            pad_axis_info info{axis, v};
+            in_context_do(*focus_leaf,
+               [focus_leaf, info, &consumed_by_value](context const& ectx)
+               {
+                  consumed_by_value = focus_leaf->pad_axis(ectx, info);
+               }
+            );
+         }
+
+         bool run_focus_path =
+            (mode == pad_axis_mode::focus)
+            || (mode == pad_axis_mode::both && !consumed_by_value);
+
+         if (!run_focus_path)
+         {
+            st.dir = 0;
+            st.next_repeat = {};
+            continue;
+         }
+
+         int sign = 0;
+         if (v >  threshold) sign = +1;
+         else if (v < -threshold) sign = -1;
+
+         if (sign == 0)
+         {
+            st.dir = 0;
+            st.next_repeat = {};
+         }
+         else if (st.dir != sign)
+         {
+            // Edge: fresh push past threshold.
+            synthesize_axis_key(axis, sign);
+            st.dir = sign;
+            st.next_repeat = now + initial_delay;
+         }
+         else if (now >= st.next_repeat)
+         {
+            synthesize_axis_key(axis, sign);
+            float const mag = std::min(1.0f, std::abs(v));
+            int   const rep_ms = int(60 + (1.0f - mag) * 190);
+            st.next_repeat = now + std::chrono::milliseconds(rep_ms);
+         }
+      }
+   }
+
    void view::add_undo(undo_redo_task f)
    {
       _undo_stack.push(f);
@@ -755,12 +1147,29 @@
    void view::poll()
    {
       _io.poll();
+
+      auto now = std::chrono::steady_clock::now();
+
+      // Update the inter-frame delta. Clamp big gaps (debugger pause,
+      // long ASIO work) so a single weird frame can't run a slider all
+      // the way to its max.
+      if (_last_poll_time != std::chrono::steady_clock::time_point{})
+      {
+         float dt =
+            std::chrono::duration<float>(now - _last_poll_time).count();
+         if (dt < 0.0f) dt = 0.0f;
+         if (dt > 0.1f) dt = 0.1f;
+         _frame_dt = dt;
+      }
+      _last_poll_time = now;
+
+      process_pad_axes(now);
+
       if (!_tracking.empty())
       {
          for (auto it = _tracking.cbegin(); it != _tracking.cend(); /**/)
          {
             using namespace std::chrono_literals;
-            auto now = std::chrono::steady_clock::now();
             if ((now - it->second) > 1s)
             {
                on_tracking(*it->first, tracking::end_tracking);

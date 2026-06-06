@@ -13,6 +13,7 @@
 #include <cmath>
 #include <vector>
 #include <cstring>
+#include <unordered_map>
 
 namespace cycfi::elements
 {
@@ -249,6 +250,69 @@ namespace cycfi::elements
          if (mod & SDL_KMOD_GUI)   mods |= mod_super;
          return mods;
       }
+
+      // -------------------------------------------------------------
+      // Gamepad: opened controllers + SDL → elements code translation
+      // -------------------------------------------------------------
+      std::unordered_map<SDL_JoystickID, SDL_Gamepad*>& open_pads()
+      {
+         static std::unordered_map<SDL_JoystickID, SDL_Gamepad*> pads;
+         return pads;
+      }
+
+      pad_button translate_sdl_pad_button(Uint8 b)
+      {
+         switch (b)
+         {
+            case SDL_GAMEPAD_BUTTON_SOUTH:         return pad_button::a;
+            case SDL_GAMEPAD_BUTTON_EAST:          return pad_button::b;
+            case SDL_GAMEPAD_BUTTON_WEST:          return pad_button::x;
+            case SDL_GAMEPAD_BUTTON_NORTH:         return pad_button::y;
+            case SDL_GAMEPAD_BUTTON_DPAD_UP:       return pad_button::dpad_up;
+            case SDL_GAMEPAD_BUTTON_DPAD_DOWN:     return pad_button::dpad_down;
+            case SDL_GAMEPAD_BUTTON_DPAD_LEFT:     return pad_button::dpad_left;
+            case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:    return pad_button::dpad_right;
+            case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: return pad_button::lb;
+            case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:return pad_button::rb;
+            case SDL_GAMEPAD_BUTTON_LEFT_STICK:    return pad_button::l3;
+            case SDL_GAMEPAD_BUTTON_RIGHT_STICK:   return pad_button::r3;
+            case SDL_GAMEPAD_BUTTON_BACK:          return pad_button::back;
+            case SDL_GAMEPAD_BUTTON_START:         return pad_button::start;
+            case SDL_GAMEPAD_BUTTON_GUIDE:         return pad_button::guide;
+            default:                               return pad_button::unknown;
+         }
+      }
+
+      pad_axis translate_sdl_pad_axis(Uint8 a)
+      {
+         switch (a)
+         {
+            case SDL_GAMEPAD_AXIS_LEFTX:           return pad_axis::left_x;
+            case SDL_GAMEPAD_AXIS_LEFTY:           return pad_axis::left_y;
+            case SDL_GAMEPAD_AXIS_RIGHTX:          return pad_axis::right_x;
+            case SDL_GAMEPAD_AXIS_RIGHTY:          return pad_axis::right_y;
+            case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:    return pad_axis::lt;
+            case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:   return pad_axis::rt;
+            default:                               return pad_axis::unknown;
+         }
+      }
+
+      // SDL gamepad events aren't tied to a window. Route them to the
+      // view whose window currently has SDL input focus; if none does,
+      // fall back to any registered view.
+      base_view* gamepad_target_view()
+      {
+         base_view* fallback = nullptr;
+         for (auto& [wid, vs] : view_registry())
+         {
+            if (!vs || !vs->vptr) continue;
+            if (!fallback) fallback = vs->vptr;
+            if (vs->window
+                && (SDL_GetWindowFlags(vs->window) & SDL_WINDOW_INPUT_FOCUS))
+               return vs->vptr;
+         }
+         return fallback;
+      }
    }
 
    ////////////////////////////////////////////////////////////////////////////
@@ -256,6 +320,61 @@ namespace cycfi::elements
    ////////////////////////////////////////////////////////////////////////////
    void dispatch_sdl_event(SDL_Event const& e)
    {
+      // Gamepad events aren't tied to a window. Handle them first and
+      // route to whichever view holds keyboard focus.
+      switch (e.type)
+      {
+         case SDL_EVENT_GAMEPAD_ADDED:
+         {
+            // SDL3: e.gdevice.which is the joystick instance ID.
+            if (auto* gp = SDL_OpenGamepad(e.gdevice.which))
+               open_pads()[e.gdevice.which] = gp;
+            return;
+         }
+         case SDL_EVENT_GAMEPAD_REMOVED:
+         {
+            auto it = open_pads().find(e.gdevice.which);
+            if (it != open_pads().end())
+            {
+               SDL_CloseGamepad(it->second);
+               open_pads().erase(it);
+            }
+            return;
+         }
+         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+         case SDL_EVENT_GAMEPAD_BUTTON_UP:
+         {
+            if (auto* tv = gamepad_target_view())
+            {
+               auto btn = translate_sdl_pad_button(e.gbutton.button);
+               if (btn != pad_button::unknown)
+                  tv->pad_button_event({btn, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN});
+            }
+            return;
+         }
+         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+         {
+            if (auto* tv = gamepad_target_view())
+            {
+               auto ax = translate_sdl_pad_axis(e.gaxis.axis);
+               if (ax != pad_axis::unknown)
+               {
+                  // Normalize int16 range to [-1, 1]. Triggers report
+                  // 0..32767; analog sticks -32768..32767. Both are
+                  // handled by the same formula because consumers ignore
+                  // the negative half of triggers.
+                  float v = e.gaxis.value / 32767.0f;
+                  if (v < -1.0f) v = -1.0f;
+                  if (v >  1.0f) v =  1.0f;
+                  tv->pad_axis_event({ax, v});
+               }
+            }
+            return;
+         }
+         default:
+            break;
+      }
+
       SDL_WindowID wid = 0;
 
       // SDL3: window events are individual event types

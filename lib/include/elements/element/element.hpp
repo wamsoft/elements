@@ -76,6 +76,23 @@ namespace cycfi::elements
       virtual void            drag(context const& ctx, mouse_button btn);
       virtual bool            key(context const& ctx, key_info k);
       virtual bool            text(context const& ctx, text_info info);
+
+      // Called by view::poll for each non-zero gamepad axis whose mode
+      // is `value` or `both`. The supplied `info.value` is the raw tilt
+      // (-1..+1) after deadzone; widgets should multiply by
+      // `ctx.view.stick_value_speed() * ctx.view.frame_dt()` to get a
+      // frame-rate-independent per-tick step. Returning false signals
+      // the view that the input was not consumed; under `both` mode the
+      // axis then falls through to focus-move synthesis.
+      virtual bool            pad_axis(context const& ctx, pad_axis_info info);
+
+      // Returns true if this element is currently in a state that
+      // consumes generic textual input (e.g. an editable text box with
+      // focus). The view uses this to decide whether non-forced
+      // shortcuts should fire: a text box should be free to receive
+      // ordinary characters without LB/RB triggering a "Back/Next"
+      // button by accident.
+      virtual bool            consumes_text() const { return false; }
       virtual bool            cursor(context const& ctx, point p, cursor_tracking status);
       virtual bool            scroll(context const& ctx, point dir, point p);
       virtual void            enable(bool state = true);

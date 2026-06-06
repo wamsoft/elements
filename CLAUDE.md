@@ -79,6 +79,10 @@ Text shaping and font metrics go through the `glyph_layout_backend` and `font_ba
 
 All interactive widgets are keyboard-operable (not just text boxes). Tab/Shift+Tab cycles focus (wraps at ends); Space/Enter activates buttons; arrows adjust the focused slider/dial/thumbwheel on their primary axis. `view::arrow_focus_navigation(true)` enables an opt-in 2D directional focus mode where unconsumed arrows move focus to the nearest widget in that direction (value adjustment wins over navigation). Initial focus can be set with `view::focus(element_ptr)` or the declarative `initial_focus(...)` wrapper from `<elements/element/focus.hpp>`. Spec: `docs/keyboard-navigation.md`. Reference example: `examples/key_driven/`.
 
+### Gamepad Support (SDL3 host only)
+
+Gamepad input piggybacks on the keyboard plumbing. Discrete buttons map to synthesized key events via a per-view binding table (`view::bind_pad_button`); defaults are A=Enter, B=Esc, X=Shift+Tab, Y=Tab. D-Pad and analog sticks feed an axis-mode machinery (`view::dpad_mode` / `left_stick_mode` / `right_stick_mode` / `trigger_mode`) where each axis group can be set to `focus` (threshold-triggered arrow synth with auto-repeat), `value` (continuous dispatch to focused widget via `element::pad_axis(info)`), `both` (value first, focus as fallback), or `disabled`. Shortcut registry (`view::bind_shortcut`) works uniformly for keys and pad buttons and is suppressed while a text-editing widget holds focus (override the `consumes_text()` virtual on element). The SDL3 host initializes `SDL_INIT_GAMEPAD`, auto-opens gamepads on `SDL_EVENT_GAMEPAD_ADDED`, and routes button/axis events to whichever view currently holds SDL input focus. Spec: `docs/gamepad-support.md`. Same example as keyboard: `examples/key_driven/`.
+
 ### Multilingual Text (FT loader)
 
 The FT loader gives per-codepoint fallback (load order = priority), HarfBuzz shaping, mixed-UPM normalization, and BCP47 locale tags. Plumbing:

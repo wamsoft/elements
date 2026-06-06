@@ -20,7 +20,7 @@ namespace cycfi::elements
    {
       _app_name = name;
 
-      SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
+      SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD);
 
       // Initialize ThorVG rendering engine
       tvg::Initializer::init(4);

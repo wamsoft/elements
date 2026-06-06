@@ -189,6 +189,46 @@ namespace cycfi::elements
       }
    }
 
+   bool slider_base::pad_axis(context const& ctx, pad_axis_info info)
+   {
+      if (!ctx.enabled)
+         return false;
+
+      // Determine the input's axis orientation.
+      bool horizontal_axis =
+            info.axis == pad_axis::dpad_x
+         || info.axis == pad_axis::left_x
+         || info.axis == pad_axis::right_x;
+      bool vertical_axis =
+            info.axis == pad_axis::dpad_y
+         || info.axis == pad_axis::left_y
+         || info.axis == pad_axis::right_y;
+
+      if (!horizontal_axis && !vertical_axis)
+         return false;
+
+      // Only respond to the axis that matches our own orientation.
+      if (_is_horiz && !horizontal_axis) return false;
+      if (!_is_horiz && !vertical_axis)  return false;
+
+      // SDL Y axis: +y is downward; map to "down decreases value".
+      float v = info.value;
+      if (vertical_axis)
+         v = -v;
+
+      double delta = double(v)
+                   * ctx.view.stick_value_speed()
+                   * ctx.view.frame_dt();
+      double new_val = value() + delta;
+      clamp(new_val, 0.0, 1.0);
+      if (new_val != value())
+      {
+         edit_value(new_val);
+         ctx.view.refresh(ctx);
+      }
+      return true;
+   }
+
    bool slider_base::wants_focus() const
    {
       return true;
