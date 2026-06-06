@@ -5,6 +5,8 @@
 =============================================================================*/
 #include <elements/view.hpp>
 #include <elements/window.hpp>
+#include <elements/element/composite.hpp>
+#include <elements/element/proxy.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/detail/scratch_context.hpp>
 
@@ -260,6 +262,59 @@
       );
    }
 
+   namespace
+   {
+      // Depth-first descent: if 'target' lives anywhere under 'current',
+      // call focus(index) on every composite_base on the path so that a
+      // subsequent begin_focus(restore_previous) walk reaches the target.
+      bool descend_set_focus(element& current, element const* target)
+      {
+         if (&current == target)
+            return true;
+
+         if (auto* c = dynamic_cast<composite_base*>(&current))
+         {
+            for (std::size_t i = 0; i != c->size(); ++i)
+            {
+               if (descend_set_focus(c->at(i), target))
+               {
+                  c->focus(i);
+                  return true;
+               }
+            }
+            return false;
+         }
+
+         if (auto* p = dynamic_cast<proxy_base*>(&current))
+            return descend_set_focus(p->subject(), target);
+
+         return false;
+      }
+   }
+
+   void view::focus(element_ptr e)
+   {
+      if (!e)
+         return;
+      asio::post(_io,
+         [this, e]()
+         {
+            // Bail out cleanly if the view already shut down (io_context
+            // stopped during ~view).
+            if (_content.empty())
+               return;
+
+            _main_element.end_focus();
+            if (descend_set_focus(_main_element, e.get()))
+            {
+               _main_element.begin_focus(element::focus_request::restore_previous);
+               base_view::refresh();
+               _is_focus = _main_element.focus();
+            }
+         }
+      );
+   }
+
    bool view::key(key_info const& k)
    {
       if (_content.empty())
@@ -273,6 +328,34 @@
          },
          *this, _current_bounds
       );
+
+      // Wrap focus around when Tab / Shift+Tab walks off either end.
+      // composite_base::key returns false when no further sibling wants
+      // focus; here we reset the chain and pick the first / last focusable
+      // from the opposite end so the user perceives a loop.
+      if (!handled
+          && (k.action == key_action::press || k.action == key_action::repeat)
+          && k.key == key_code::tab)
+      {
+         bool reverse = (k.modifiers & mod_shift) != 0;
+         with_context_do(
+            [reverse, &handled](auto const& ctx, auto& _main_element)
+            {
+               _main_element.end_focus();
+               _main_element.begin_focus(
+                  reverse
+                     ? element::focus_request::from_bottom
+                     : element::focus_request::from_top
+               );
+               handled = _main_element.focus() != nullptr;
+               if (handled)
+                  ctx.view.refresh(ctx);
+            },
+            *this, _current_bounds
+         );
+         _is_focus = handled;
+      }
+
       return handled;
    }
 

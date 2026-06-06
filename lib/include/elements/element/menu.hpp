@@ -61,6 +61,11 @@ namespace cycfi::elements
 
       on_open_menu_function   on_open_menu;
 
+   protected:
+
+      // Space / Enter while focused opens the popup.
+      void                    activate(context const& ctx) override;
+
    private:
 
       void                    layout_menu(context const& ctx);

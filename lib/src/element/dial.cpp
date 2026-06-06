@@ -7,6 +7,7 @@
 #include <elements/element/traversal.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/view.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace cycfi::elements
@@ -101,6 +102,83 @@ namespace cycfi::elements
          + (sdir.x * dir.x * 0.005)
       );
       ctx.view.refresh(ctx);
+      return true;
+   }
+
+   bool basic_dial::wants_focus() const
+   {
+      return true;
+   }
+
+   void basic_dial::begin_focus(focus_request /*req*/)
+   {
+      _has_focus = true;
+   }
+
+   bool basic_dial::end_focus()
+   {
+      _has_focus = false;
+      return true;
+   }
+
+   void basic_dial::draw(context const& ctx)
+   {
+      proxy_base::draw(ctx);
+      if (_has_focus && ctx.enabled)
+      {
+         auto&       cnv = ctx.canvas;
+         auto        state = cnv.new_state();
+         auto const& th = get_theme();
+         auto        b = ctx.bounds.inset(-2.0f, -2.0f);
+         float       r = std::min(b.width(), b.height()) * 0.5f;
+         cnv.line_width(th.focus_ring_width);
+         cnv.stroke_style(th.focus_ring_color);
+         cnv.begin_path();
+         cnv.add_round_rect(b, r);
+         cnv.stroke();
+      }
+   }
+
+   bool basic_dial::key(context const& ctx, key_info k)
+   {
+      if (!ctx.enabled)
+         return false;
+      if (k.action != key_action::press && k.action != key_action::repeat)
+         return false;
+
+      double new_value = value();
+      switch (k.key)
+      {
+         case key_code::left:
+         case key_code::down:
+            new_value -= 0.05;
+            break;
+         case key_code::right:
+         case key_code::up:
+            new_value += 0.05;
+            break;
+         case key_code::page_down:
+            new_value -= 0.1;
+            break;
+         case key_code::page_up:
+            new_value += 0.1;
+            break;
+         case key_code::home:
+            new_value = 0.0;
+            break;
+         case key_code::end:
+            new_value = 1.0;
+            break;
+         default:
+            return false;
+      }
+
+      new_value = clamp(new_value, 0.0, 1.0);
+      if (new_value != value())
+      {
+         edit_value(this, new_value);
+         ctx.view.refresh(ctx);
+      }
       return true;
    }
 }

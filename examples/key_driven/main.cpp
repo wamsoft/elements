@@ -1,0 +1,209 @@
+/*=============================================================================
+   Key-driven operation demo for the Elements (ThorVG port) library.
+
+   Tab / Shift+Tab  : move keyboard focus between widgets
+   Space / Enter    : activate the focused button (momentary / toggle /
+                      latching / choice / button_menu)
+   Arrow keys       : adjust the focused slider / dial / thumbwheel
+   PageUp / PageDown: ±0.1 on the focused slider / dial / thumbwheel
+   Home / End       : jump to min / max on the focused slider / dial /
+                      thumbwheel
+
+   The initial focus is placed on the "Momentary" button via the
+   initial_focus(...) wrapper; the "Focus the slider" button uses the
+   programmatic view::focus(element_ptr) API to move focus to a slider.
+=============================================================================*/
+#include <elements.hpp>
+
+using namespace cycfi::elements;
+
+auto constexpr bkd_color = rgba(35, 35, 37, 255);
+auto background = box(bkd_color);
+
+auto make_buttons_panel()
+{
+   auto mbtn = share(button("Momentary"));
+   auto tbtn = share(toggle_button("Toggle", 1.0, colors::royal_blue.opacity(0.4)));
+   auto lbtn = share(latching_button("Latching", 1.0, colors::green.level(0.7).opacity(0.4)));
+   auto reset = share(button("Reset Latch"));
+
+   lbtn->on_click =
+      [reset = get(reset)](bool) mutable
+      {
+         if (auto p = reset.lock())
+            p->enable(true);
+      };
+   reset->on_click =
+      [lbtn = get(lbtn), reset = get(reset)](bool) mutable
+      {
+         if (auto p = lbtn.lock())
+            p->value(false);
+         if (auto p = reset.lock())
+            p->enable(false);
+      };
+   reset->enable(false);
+
+   return
+      group("Buttons (Space/Enter)",
+         margin({10, 35, 10, 10},
+            vtile_spaced(10.0,
+               // Mark this button as the initial focus on startup.
+               initial_focus(hold(mbtn)),
+               hold(tbtn),
+               hold(lbtn),
+               hold(reset)
+            )
+         )
+      );
+}
+
+auto make_check_and_radio_panel()
+{
+   auto cb1 = check_box("Check one");
+   auto cb2 = check_box("Check two");
+   auto cb3 = check_box("Check three");
+
+   auto rb1 = radio_button("Choice A");
+   auto rb2 = radio_button("Choice B");
+   auto rb3 = radio_button("Choice C");
+   rb1.select(true);
+
+   return
+      htile_spaced(20.0,
+         group("Check (Space)",
+            margin({10, 35, 10, 10},
+               vtile_spaced(8.0,
+                  align_left(cb1),
+                  align_left(cb2),
+                  align_left(cb3)
+               )
+            )
+         ),
+         group("Radio (Space)",
+            margin({10, 35, 10, 10},
+               vtile_spaced(8.0,
+                  align_left(rb1),
+                  align_left(rb2),
+                  align_left(rb3)
+               )
+            )
+         )
+      );
+}
+
+auto make_value_panel(view& view_, std::shared_ptr<basic_slider_base>& focus_target)
+{
+   auto sl1 = share(slider(
+      basic_thumb<25>(),
+      basic_track<5, false>(colors::black),
+      0.5
+   ));
+   focus_target = sl1;
+
+   auto sl2 = share(slider(
+      basic_thumb<25>(),
+      basic_track<5, false>(colors::black),
+      0.25
+   ));
+
+   auto dial_ = share(dial(
+      radial_marks<20>(basic_knob<50>()),
+      0.3
+   ));
+
+   return
+      group("Sliders (Arrows / PgUp / PgDn / Home / End)",
+         margin({10, 35, 10, 10},
+            vtile_spaced(15.0,
+               hold(sl1),
+               hold(sl2),
+               align_center(hold(dial_))
+            )
+         )
+      );
+}
+
+auto make_menu_panel()
+{
+   auto popup = button_menu("Open Menu", menu_position::bottom_right);
+
+   auto skf = shortcut_key{key_code::f, mod_action};
+   auto item_a = menu_item("Apple", skf);
+   auto item_b = menu_item("Banana");
+   auto item_c = menu_item("Cherry");
+
+   auto menu_layer =
+      layer(
+         vtile(item_a, item_b, item_c),
+         panel{}
+      );
+
+   popup.menu(hsize(200, menu_layer));
+
+   return
+      group("Menu (Space/Enter to open, then arrows + Enter)",
+         margin({10, 35, 10, 10}, popup)
+      );
+}
+
+auto make_input_panel()
+{
+   return
+      group("Text input (still works)",
+         margin({10, 35, 10, 10},
+            vtile_spaced(8.0,
+               input_box("Type here").first,
+               input_box("And here").first
+            )
+         )
+      );
+}
+
+auto make_ui(view& view_, std::shared_ptr<basic_slider_base>& slider_target)
+{
+   auto buttons    = make_buttons_panel();
+   auto checkradio = make_check_and_radio_panel();
+   auto values     = make_value_panel(view_, slider_target);
+   auto menu       = make_menu_panel();
+   auto inputs     = make_input_panel();
+
+   auto focus_to_slider = button("Move focus to slider");
+   focus_to_slider.on_click =
+      [&view_, w = std::weak_ptr<basic_slider_base>(slider_target)](bool) mutable
+      {
+         if (auto sl = w.lock())
+            view_.focus(sl);
+      };
+
+   return
+      margin({20, 20, 20, 20},
+         vtile_spaced(15.0,
+            htile_spaced(15.0,
+               buttons,
+               checkradio
+            ),
+            values,
+            htile_spaced(15.0, menu, inputs),
+            focus_to_slider
+         )
+      );
+}
+
+int main(int /*argc*/, char* /*argv*/[])
+{
+   app _app("Key Driven");
+   window _win(_app.name());
+   _win.on_close = [&_app]() { _app.stop(); };
+
+   view view_(_win);
+
+   std::shared_ptr<basic_slider_base> slider_target;
+
+   view_.content(
+      make_ui(view_, slider_target),
+      background
+   );
+
+   _app.run();
+   return 0;
+}

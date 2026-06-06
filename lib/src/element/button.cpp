@@ -4,6 +4,8 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/button.hpp>
+#include <elements/element/traversal.hpp>
+#include <elements/support/theme.hpp>
 
 namespace cycfi::elements
 {
@@ -97,6 +99,75 @@ namespace cycfi::elements
          _state.hilite = val;
    }
 
+   void basic_button::focused(bool val)
+   {
+      if (val != _state.focus)
+         _state.focus = val;
+   }
+
+   bool basic_button::wants_focus() const
+   {
+      return true;
+   }
+
+   void basic_button::begin_focus(focus_request /*req*/)
+   {
+      focused(true);
+   }
+
+   bool basic_button::end_focus()
+   {
+      focused(false);
+      return true;
+   }
+
+   void basic_button::draw(context const& ctx)
+   {
+      // Let the styler render the body first.
+      proxy_base::draw(ctx);
+
+      // Then overlay a focus ring on top so it is visible regardless of
+      // what the styler painted underneath.
+      if (_state.focus && ctx.enabled && is_enabled())
+      {
+         auto&       cnv = ctx.canvas;
+         auto        state = cnv.new_state();
+         auto const& th = get_theme();
+         auto        r = ctx.bounds.inset(-1.0f, -1.0f);
+         cnv.line_width(th.focus_ring_width);
+         cnv.stroke_style(th.focus_ring_color);
+         cnv.begin_path();
+         cnv.add_round_rect(r, th.button_corner_radius);
+         cnv.stroke();
+      }
+   }
+
+   void basic_button::activate(context const& ctx)
+   {
+      // Momentary: pulse value true → false, then fire on_click.
+      set_value(true);
+      if (on_click)
+         on_click(true);
+      set_value(false);
+      ctx.view.refresh(ctx);
+   }
+
+   bool basic_button::key(context const& ctx, key_info k)
+   {
+      if (!ctx.enabled || !is_enabled())
+         return false;
+
+      if (k.action != key_action::press && k.action != key_action::repeat)
+         return false;
+
+      if (k.key != key_code::space && k.key != key_code::enter
+          && k.key != key_code::kp_enter)
+         return false;
+
+      activate(ctx);
+      return true;
+   }
+
    /**
     * \brief
     *    Set the value of the button
@@ -172,6 +243,29 @@ namespace cycfi::elements
          ctx.view.refresh(ctx);
    }
 
+   void basic_toggle_button::activate(context const& ctx)
+   {
+      // Toggle: flip the persistent value and notify.
+      bool const new_val = !this->value();
+      this->set_value(new_val);
+      _current_state = new_val;
+      if (this->on_click)
+         this->on_click(new_val);
+      ctx.view.refresh(ctx);
+   }
+
+   void basic_latching_button::activate(context const& ctx)
+   {
+      // Latching: only fires from unlatched → latched. Once on, stays on
+      // until reset programmatically (matches click() semantics).
+      if (this->value())
+         return;
+      this->set_value(true);
+      if (this->on_click)
+         this->on_click(true);
+      ctx.view.refresh(ctx);
+   }
+
    bool basic_latching_button::click(context const& ctx, mouse_button btn)
    {
       if (btn.down && this->value())
@@ -200,6 +294,37 @@ namespace cycfi::elements
       if (btn.down && this->set_value(ctx.bounds.includes(btn.pos)))
          ctx.view.refresh(ctx);
       return true;
+   }
+
+   void basic_choice::activate(context const& ctx)
+   {
+      // Choice: latch self, then deselect every sibling that is also a
+      // selectable. Mirrors the release-half of basic_choice::click().
+      if (this->value())
+         return;
+      this->set_value(true);
+      if (this->on_click)
+         this->on_click(true);
+
+      auto [c, cctx] = find_composite(ctx);
+      if (c)
+      {
+         for (std::size_t i = 0; i != c->size(); ++i)
+         {
+            if (auto e = find_element<selectable*>(&c->at(i)))
+            {
+               if (e == this)
+                  e->select(true);
+               else if (e->is_selected())
+                  e->select(false);
+            }
+         }
+         cctx->view.refresh(*cctx);
+      }
+      else
+      {
+         ctx.view.refresh(ctx);
+      }
    }
 
    bool basic_choice::click(context const& ctx, mouse_button btn)

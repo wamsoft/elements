@@ -94,6 +94,22 @@ namespace cycfi::elements
       return true;
    }
 
+   void basic_button_menu::activate(context const& ctx)
+   {
+      // Mirrors the press-half of click(): open the popup.
+      if (!set_value(true))
+         return;
+      if (on_open_menu)
+         on_open_menu(*this);
+      if (_popup)
+      {
+         layout_menu(ctx);
+         _popup->menu_button(this);
+         _popup->open(ctx.view);
+      }
+      ctx.view.refresh(ctx);
+   }
+
    void basic_button_menu::drag(context const& ctx, mouse_button btn)
    {
       if (!_popup)

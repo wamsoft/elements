@@ -6,6 +6,7 @@
 #include <elements/element/slider.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/view.hpp>
+#include <algorithm>
 #include <cmath>
 
 namespace cycfi::elements
@@ -59,6 +60,20 @@ namespace cycfi::elements
             context sctx {ctx, &thumb(), ctx.bounds};
             sctx.bounds = thumb_bounds(sctx);
             thumb().draw(sctx);
+         }
+
+         if (_has_focus && ctx.enabled)
+         {
+            auto&       cnv = ctx.canvas;
+            auto        state = cnv.new_state();
+            auto const& th = get_theme();
+            auto        tb = thumb_bounds(ctx).inset(-2.0f, -2.0f);
+            float       radius = std::min(tb.width(), tb.height()) * 0.5f;
+            cnv.line_width(th.focus_ring_width);
+            cnv.stroke_style(th.focus_ring_color);
+            cnv.begin_path();
+            cnv.add_round_rect(tb, radius);
+            cnv.stroke();
          }
       }
    }
@@ -172,6 +187,77 @@ namespace cycfi::elements
          edit_value(new_value);
          ctx.view.refresh(ctx);
       }
+   }
+
+   bool slider_base::wants_focus() const
+   {
+      return true;
+   }
+
+   void slider_base::begin_focus(focus_request /*req*/)
+   {
+      _has_focus = true;
+   }
+
+   bool slider_base::end_focus()
+   {
+      _has_focus = false;
+      return true;
+   }
+
+   bool slider_base::key(context const& ctx, key_info k)
+   {
+      if (!ctx.enabled)
+         return false;
+      if (k.action != key_action::press && k.action != key_action::repeat)
+         return false;
+
+      // Direction: horizontal sliders react to Left/Right (and also Up/Down
+      // for convenience); vertical sliders treat Up as +, Down as -.
+      double delta = 0.0;
+      bool   absolute = false;
+      double abs_val = 0.0;
+
+      switch (k.key)
+      {
+         case key_code::left:
+            delta = _is_horiz ? -0.05 : -0.05;
+            break;
+         case key_code::right:
+            delta = _is_horiz ? +0.05 : +0.05;
+            break;
+         case key_code::down:
+            delta = _is_horiz ? -0.05 : -0.05;
+            break;
+         case key_code::up:
+            delta = _is_horiz ? +0.05 : +0.05;
+            break;
+         case key_code::page_down:
+            delta = -0.1;
+            break;
+         case key_code::page_up:
+            delta = +0.1;
+            break;
+         case key_code::home:
+            absolute = true;
+            abs_val = _is_horiz ? 0.0 : 1.0;
+            break;
+         case key_code::end:
+            absolute = true;
+            abs_val = _is_horiz ? 1.0 : 0.0;
+            break;
+         default:
+            return false;
+      }
+
+      double new_value = absolute ? abs_val : (value() + delta);
+      new_value = clamp(new_value, 0.0, 1.0);
+      if (new_value != value())
+      {
+         edit_value(new_value);
+         ctx.view.refresh(ctx);
+      }
+      return true;
    }
 
    void slider_base::value(double val)

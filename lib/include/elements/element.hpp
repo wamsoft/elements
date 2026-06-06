@@ -17,6 +17,7 @@
 #include <elements/element/events_intercept.hpp>
 #include <elements/element/floating.hpp>
 #include <elements/element/flow.hpp>
+#include <elements/element/focus.hpp>
 #include <elements/element/grid.hpp>
 #include <elements/element/image.hpp>
 #include <elements/element/indirect.hpp>

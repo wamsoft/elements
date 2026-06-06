@@ -50,6 +50,14 @@ namespace cycfi::elements
       void                    begin_focus() override;
       void                    end_focus() override;
       void                    relinquish_focus();
+
+      // Move keyboard focus to a specific element.
+      //
+      // The element must already be part of this view's element tree. The
+      // request is deferred to the next idle tick (mirroring view::add /
+      // view::remove), so it is safe to call from anywhere — including
+      // an element callback that itself runs inside an event dispatch.
+      void                    focus(element_ptr e);
       void                    track_drop(drop_info const& info, cursor_tracking status) override;
       bool                    drop(drop_info const& info) override;
       void                    poll() override;

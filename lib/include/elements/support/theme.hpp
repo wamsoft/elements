@@ -90,6 +90,11 @@ namespace cycfi::elements
 
       float                child_window_title_size;
       float                child_window_opacity;
+
+      // Keyboard focus ring drawn by stylers when their owning control
+      // (button / slider / dial / thumbwheel / ...) has the focus.
+      color                focus_ring_color;
+      float                focus_ring_width;
    };
 
    // Access to the global theme

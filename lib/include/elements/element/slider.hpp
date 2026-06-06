@@ -38,6 +38,13 @@ namespace cycfi::elements
       void                    keep_tracking(context const& ctx, tracker_info& track_info) override;
       void                    end_tracking(context const& ctx, tracker_info& track_info) override;
 
+      bool                    key(context const& ctx, key_info k) override;
+
+      bool                    wants_focus() const override;
+      void                    begin_focus(focus_request req) override;
+      bool                    end_focus() override;
+      bool                    focused() const { return _has_focus; }
+
       double                  value() const override;
       void                    value(double val) override;
       void                    edit(view& view_, double val) override;
@@ -56,6 +63,7 @@ namespace cycfi::elements
 
       double                  _value;
       mutable bool            _is_horiz = false;
+      bool                    _has_focus = false;
    };
 
    inline void slider_base::edit(view& view_, double val)

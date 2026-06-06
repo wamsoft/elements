@@ -5,7 +5,10 @@
 =============================================================================*/
 #include <elements/element/thumbwheel.hpp>
 #include <elements/element/traversal.hpp>
+#include <elements/support/theme.hpp>
 #include <elements/view.hpp>
+#include <algorithm>
+#include <cmath>
 
 namespace cycfi::elements
 {
@@ -97,6 +100,88 @@ namespace cycfi::elements
          }
       );
       ctx.view.refresh(ctx);
+      return true;
+   }
+
+   bool thumbwheel_base::wants_focus() const
+   {
+      return true;
+   }
+
+   void thumbwheel_base::begin_focus(focus_request /*req*/)
+   {
+      _has_focus = true;
+   }
+
+   bool thumbwheel_base::end_focus()
+   {
+      _has_focus = false;
+      return true;
+   }
+
+   void thumbwheel_base::draw(context const& ctx)
+   {
+      proxy_base::draw(ctx);
+      if (_has_focus && ctx.enabled)
+      {
+         auto&       cnv = ctx.canvas;
+         auto        state = cnv.new_state();
+         auto const& th = get_theme();
+         auto        b = ctx.bounds.inset(-2.0f, -2.0f);
+         float       r = std::min(b.width(), b.height()) * 0.25f;
+         cnv.line_width(th.focus_ring_width);
+         cnv.stroke_style(th.focus_ring_color);
+         cnv.begin_path();
+         cnv.add_round_rect(b, r);
+         cnv.stroke();
+      }
+   }
+
+   bool thumbwheel_base::key(context const& ctx, key_info k)
+   {
+      if (!ctx.enabled)
+         return false;
+      if (k.action != key_action::press && k.action != key_action::repeat)
+         return false;
+
+      point v = _value;
+      switch (k.key)
+      {
+         case key_code::left:
+            v.x -= 0.05f;
+            break;
+         case key_code::right:
+            v.x += 0.05f;
+            break;
+         case key_code::down:
+            v.y -= 0.05f;
+            break;
+         case key_code::up:
+            v.y += 0.05f;
+            break;
+         case key_code::page_down:
+            v.y -= 0.1f;
+            break;
+         case key_code::page_up:
+            v.y += 0.1f;
+            break;
+         case key_code::home:
+            v = {0.0f, 1.0f};
+            break;
+         case key_code::end:
+            v = {1.0f, 0.0f};
+            break;
+         default:
+            return false;
+      }
+
+      v.x = std::clamp(v.x, 0.0f, 1.0f);
+      v.y = std::clamp(v.y, 0.0f, 1.0f);
+      if (v != _value)
+      {
+         edit_value(this, v);
+         ctx.view.refresh(ctx);
+      }
       return true;
    }
 }

@@ -34,6 +34,14 @@ namespace cycfi::elements
       bool                 scroll(context const& ctx, point dir, point p) override;
       void                 keep_tracking(context const& ctx, tracker_info& track_info) override;
 
+      void                 draw(context const& ctx) override;
+      bool                 key(context const& ctx, key_info k) override;
+
+      bool                 wants_focus() const override;
+      void                 begin_focus(focus_request req) override;
+      bool                 end_focus() override;
+      bool                 focused() const { return _has_focus; }
+
       point                value() const override;
       void                 value(point val) override;
       void                 edit(view& view_, point val) override;
@@ -45,6 +53,7 @@ namespace cycfi::elements
       point          compute_value(context const& ctx, tracker_info& track_info);
 
       point          _value;
+      bool           _has_focus = false;
    };
 
    template <concepts::Element Subject>

@@ -48,6 +48,7 @@ namespace cycfi::elements
       bool              hilite : 1     = false;
       bool              tracking : 1   = false;
       bool              enabled : 1    = true;
+      bool              focus : 1      = false;
    };
 
    /**
@@ -78,6 +79,12 @@ namespace cycfi::elements
       bool              cursor(context const& ctx, point p, cursor_tracking status) override;
       void              drag(context const& ctx, mouse_button btn) override;
       element*          hit_test(context const& ctx, point p, bool leaf, bool control) override;
+      void              draw(context const& ctx) override;
+      bool              key(context const& ctx, key_info k) override;
+
+      bool              wants_focus() const override;
+      void              begin_focus(focus_request req) override;
+      bool              end_focus() override;
 
       void              enable(bool state = true) override;
       bool              is_enabled() const override;
@@ -86,16 +93,22 @@ namespace cycfi::elements
       bool              value() const override;
       bool              tracking() const;
       bool              hilite() const;
+      bool              focused() const;
 
       void              edit(view& view_, bool val) override;
 
       button_function   on_click;
+
+      // Overridable: derived classes implement how Space/Enter activates
+      // the button. Default in basic_button = momentary press fires on_click.
+      virtual void      activate(context const& ctx);
 
    protected:
 
       bool              set_value(bool val);
       void              tracking(bool val);
       void              hilite(bool val);
+      void              focused(bool val);
 
    private:
 
@@ -175,6 +188,18 @@ namespace cycfi::elements
    }
 
    /**
+    * \brief
+    *    Get the keyboard focus state of the button.
+    *
+    * \returns
+    *    `true` if the button currently holds keyboard focus, `false` otherwise.
+    */
+   inline bool basic_button::focused() const
+   {
+      return _state.focus;
+   }
+
+   /**
     * \class basic_toggle_button
     *
     * \brief
@@ -193,6 +218,10 @@ namespace cycfi::elements
 
       bool              click(context const& ctx, mouse_button btn) override;
       void              drag(context const& ctx, mouse_button btn) override;
+
+   protected:
+
+      void              activate(context const& ctx) override;
 
    private:
 
@@ -255,6 +284,10 @@ namespace cycfi::elements
       using basic_button::basic_button;
 
       bool              click(context const& ctx, mouse_button btn) override;
+
+   protected:
+
+      void              activate(context const& ctx) override;
    };
 
    namespace concepts
@@ -315,6 +348,10 @@ namespace cycfi::elements
       void              select(bool state) override;
       bool              is_selected() const override;
       bool              click(context const& ctx, mouse_button btn) override;
+
+   protected:
+
+      void              activate(context const& ctx) override;
    };
 
    /**
