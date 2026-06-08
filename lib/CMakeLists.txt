@@ -219,7 +219,7 @@ FetchContent_MakeAvailable(cycfi_infra)
 target_link_libraries(elements PUBLIC cycfi::infra)
 
 ###############################################################################
-# Dependencies: ThorVG (submodule), FreeType (vcpkg), HarfBuzz (FetchContent)
+# Dependencies: ThorVG (submodule), FreeType (vcpkg), HarfBuzz (via ThorVG)
 ###############################################################################
 
 # ThorVG loader options
@@ -237,49 +237,10 @@ option(TVG_FILE_IO "Enable File IO calls" ON)
 # 非エクスポートな下流ターゲットが export set に巻き込まれて失敗するのを避ける。
 set(TVG_INSTALL OFF CACHE BOOL "Generate install/export rules" FORCE)
 
-# --- FreeType (vcpkg) ---
-# ThorVG (TVG_LOADER_FT=ON) は Freetype::Freetype を要求する。vcpkg の
-# freetype CONFIG は bare `freetype` ターゲットしか提供しないので、標準
-# FindFreetype モジュールも併用して名前空間付きエイリアスを確保する。
-# 親プロジェクト側で既に提供済みなら何もしない。
-find_package(freetype CONFIG REQUIRED)
-target_link_libraries(elements PUBLIC freetype)
-if(NOT TARGET Freetype::Freetype)
-   find_package(Freetype REQUIRED)
-endif()
-
-# --- HarfBuzz 13.1.1 (FetchContent, ICU なし) ---
-# vcpkg.json から harfbuzz をはずしたので FetchContent で自前ビルドする。
-# ThorVG の add_subdirectory より先に target を作らないと
-# thorvg/CMakeLists.txt の find_package(harfbuzz CONFIG REQUIRED) が走って
-# 失敗するため、必ずこの順序で記述する。
-# 親プロジェクト (krkrz_nx 等) が先に harfbuzz ターゲットを作っている場合は
-# そちらを再利用する。
-if(NOT TARGET harfbuzz)
-   set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
-   set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
-   set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
-   set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
-   set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
-
-   FetchContent_Declare(
-      harfbuzz_source
-      GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
-      GIT_TAG 13.1.1
-      GIT_SHALLOW TRUE
-   )
-   FetchContent_MakeAvailable(harfbuzz_source)
-endif()
-# ThorVG は `harfbuzz::harfbuzz` (名前空間付き) でリンクする。upstream
-# harfbuzz の CMake は bare `harfbuzz` しか作らないのでエイリアスを足す。
-if(NOT TARGET harfbuzz::harfbuzz)
-   add_library(harfbuzz::harfbuzz ALIAS harfbuzz)
-endif()
-target_link_libraries(elements PUBLIC harfbuzz)
-
 # --- ThorVG (git submodule at external/thorvg, branch: cmake) ---
-# harfbuzz / freetype の target が見える状態で add_subdirectory する必要が
-# あるので、必ず上記ブロックの後に置く。
+# TVG_LOADER_FT=ON のとき ThorVG 側で HarfBuzz を FetchContent する
+# (external/thorvg/CMakeLists.txt 参照)。`harfbuzz` / `Freetype::Freetype`
+# の target は add_subdirectory 後に利用可能になる。
 set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
 if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
    message(FATAL_ERROR
@@ -289,6 +250,12 @@ endif()
 add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
 target_link_libraries(elements PUBLIC thorvg)
 target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
+
+# --- FreeType / HarfBuzz ---
+# どちらも ThorVG 側で setup 済み。elements も glyph_layout_ft.cpp 等で
+# 直接 API を呼ぶので PUBLIC でリンクする。
+find_package(freetype CONFIG REQUIRED)
+target_link_libraries(elements PUBLIC freetype harfbuzz)
 
 ###############################################################################
 # Asio headers
