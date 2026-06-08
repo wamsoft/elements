@@ -250,19 +250,25 @@ find_package(freetype CONFIG REQUIRED)
 target_link_libraries(elements PUBLIC freetype)
 
 # --- HarfBuzz 13.1.1 (FetchContent, ICU なし) ---
-set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
-set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
-set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
-set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
-set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
+# 親プロジェクト (krkrz_nx 等) が先に harfbuzz ターゲットを作っている場合は
+# そちらを再利用する。vcpkg の harfbuzz ポートは meson 経由で日本語ロケール
+# Windows + NX/Prospero toolchain で cp932 デコードエラーを起こすため、
+# 親プロジェクト側で FetchContent で先回り構築されているケースを想定。
+if(NOT TARGET harfbuzz)
+   set(HB_HAVE_FREETYPE ON CACHE BOOL "Enable freetype interop helpers" FORCE)
+   set(HB_HAVE_ICU OFF CACHE BOOL "Disable ICU" FORCE)
+   set(HB_BUILD_SUBSET OFF CACHE BOOL "" FORCE)
+   set(HB_BUILD_UTILS OFF CACHE BOOL "" FORCE)
+   set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 
-FetchContent_Declare(
-   harfbuzz_source
-   GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
-   GIT_TAG 13.1.1
-   GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(harfbuzz_source)
+   FetchContent_Declare(
+      harfbuzz_source
+      GIT_REPOSITORY https://github.com/harfbuzz/harfbuzz.git
+      GIT_TAG 13.1.1
+      GIT_SHALLOW TRUE
+   )
+   FetchContent_MakeAvailable(harfbuzz_source)
+endif()
 target_link_libraries(elements PUBLIC harfbuzz)
 
 ###############################################################################

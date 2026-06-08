@@ -5,6 +5,7 @@
 =============================================================================*/
 #include <elements/support/pixmap.hpp>
 #include <elements/support/resource_paths.hpp>
+#define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include <elements/support/detail/stb_image.h>
 #include <infra/assert.hpp>
