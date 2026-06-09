@@ -241,15 +241,19 @@ set(TVG_INSTALL OFF CACHE BOOL "Generate install/export rules" FORCE)
 # TVG_LOADER_FT=ON のとき ThorVG 側で HarfBuzz を FetchContent する
 # (external/thorvg/CMakeLists.txt 参照)。`harfbuzz` / `Freetype::Freetype`
 # の target は add_subdirectory 後に利用可能になる。
-set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
-if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
-   message(FATAL_ERROR
-      "ThorVG submodule is not initialized at ${_thorvg_dir}.\n"
-      "Run: git submodule update --init --recursive external/thorvg")
+# 親プロジェクトが thorvg ターゲットを既に作っているならそれを再利用する
+# (krkrz_dev umbrella で他サブが先に呼ぶケース)。
+if(NOT TARGET thorvg)
+   set(_thorvg_dir "${PROJECT_SOURCE_DIR}/external/thorvg")
+   if (NOT EXISTS "${_thorvg_dir}/CMakeLists.txt")
+      message(FATAL_ERROR
+         "ThorVG submodule is not initialized at ${_thorvg_dir}.\n"
+         "Run: git submodule update --init --recursive external/thorvg")
+   endif()
+   add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
+   target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
 endif()
-add_subdirectory("${_thorvg_dir}" "${CMAKE_CURRENT_BINARY_DIR}/thorvg" EXCLUDE_FROM_ALL)
 target_link_libraries(elements PUBLIC thorvg)
-target_include_directories(elements PUBLIC "${_thorvg_dir}/inc")
 
 # --- FreeType / HarfBuzz ---
 # どちらも ThorVG 側で setup 済み。elements も glyph_layout_ft.cpp 等で
