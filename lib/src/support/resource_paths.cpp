@@ -4,51 +4,40 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/support/resource_paths.hpp>
-#include <mutex>
-#include <vector>
+#include <elements/support/resource_loader.hpp>
 
-namespace cycfi::elements
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
+# include <elements/support/filesystem_resource_loader.hpp>
+#endif
+
+namespace cycfi { namespace elements
 {
-   std::pair<std::vector<fs::path>&, std::mutex&>
-   get_resource_paths()
-   {
-      static std::vector<fs::path> resource_paths;
-      static std::mutex resource_paths_mutex;
-      return {resource_paths, resource_paths_mutex};
-   }
-
    void add_search_path(fs::path const& path, bool search_first)
    {
-      auto [resource_paths, resource_paths_mutex] = get_resource_paths();
-      std::lock_guard<std::mutex> guard(resource_paths_mutex);
-      if (search_first)
-         resource_paths.insert(resource_paths.begin(), path);
-      else
-         resource_paths.push_back(path);
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
+      // Route to the active loader if it is a filesystem_resource_loader.
+      // Custom loaders manage their own resolution logic.
+      if (auto* fs_loader =
+             dynamic_cast<filesystem_resource_loader*>(&get_resource_loader()))
+      {
+         fs_loader->add_search_path(path, search_first);
+      }
+#else
+      (void)path; (void)search_first;
+#endif
    }
 
    fs::path find_file(fs::path const& file)
    {
-      fs::path full_path;
-      if (fs::path(file).is_absolute())
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
+      if (auto* fs_loader =
+             dynamic_cast<filesystem_resource_loader*>(&get_resource_loader()))
       {
-         if (fs::exists(file))
-            full_path = file;
+         return fs_loader->resolve(file.string());
       }
-      else
-      {
-         auto [resource_paths, resource_paths_mutex] = get_resource_paths();
-         std::lock_guard<std::mutex> guard(resource_paths_mutex);
-         for (auto const& path : resource_paths)
-         {
-            fs::path target = fs::path(path) / file;
-            if (fs::exists(target))
-            {
-               full_path = target.string();
-               break;
-            }
-         }
-      }
-      return full_path;
+#else
+      (void)file;
+#endif
+      return {};
    }
-}
+}}

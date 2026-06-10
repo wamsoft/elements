@@ -4,7 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/support/pixmap.hpp>
-#include <elements/support/resource_paths.hpp>
+#include <elements/support/resource_loader.hpp>
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include <elements/support/detail/stb_image.h>
@@ -12,11 +12,92 @@
 #include <infra/filesystem.hpp>
 
 #include <algorithm>
+#include <string>
+#include <vector>
 
 #include <thorvg.h>
 
 namespace cycfi { namespace elements
 {
+   namespace
+   {
+      std::string lower_ext(fs::path const& path)
+      {
+         auto ext = path.extension().string();
+         if (!ext.empty() && ext.front() == '.')
+            ext.erase(ext.begin());
+         std::transform(ext.begin(), ext.end(), ext.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+         return ext;
+      }
+
+      // Build a tvg::Picture from in-memory image bytes. mimeType examples:
+      // "png", "jpg", "svg". Returns nullptr on failure.
+      tvg::Picture* load_picture_from_memory(
+         std::uint8_t const* data, std::size_t size,
+         std::string const& mime, int& out_w, int& out_h)
+      {
+         auto* pic = tvg::Picture::gen();
+         if (!pic)
+            return nullptr;
+
+         if (pic->load(
+                reinterpret_cast<char const*>(data),
+                static_cast<uint32_t>(size),
+                mime.c_str(), nullptr, /*copy=*/true) == tvg::Result::Success)
+         {
+            float fw = 0, fh = 0;
+            pic->size(&fw, &fh);
+            out_w = std::max(0, int(fw));
+            out_h = std::max(0, int(fh));
+            return pic;
+         }
+
+         tvg::Paint::rel(pic);
+         return nullptr;
+      }
+
+      // Fallback: decode via stb_image (memory variant) and wrap as a
+      // tvg::Picture with ARGB8888 pixels. Returns nullptr on failure.
+      tvg::Picture* load_picture_via_stbi(
+         std::uint8_t const* data, std::size_t size,
+         int& out_w, int& out_h)
+      {
+         int w = 0, h = 0, comp = 0;
+         uint8_t* src_data = stbi_load_from_memory(
+            data, static_cast<int>(size), &w, &h, &comp, 4);
+         if (!src_data)
+            return nullptr;
+
+         std::vector<uint32_t> tmp(std::size_t(w) * std::size_t(h));
+         uint32_t* dest = tmp.data();
+         for (int y = 0; y < h; ++y)
+         {
+            uint8_t* src = src_data + (std::size_t(y) * w * 4);
+            for (int x = 0; x < w; ++x)
+            {
+               uint8_t r = src[0], g = src[1], b = src[2], a = src[3];
+               *dest++ = (uint32_t(a) << 24) | (uint32_t(r) << 16) |
+                         (uint32_t(g) << 8) | uint32_t(b);
+               src += 4;
+            }
+         }
+         stbi_image_free(src_data);
+
+         auto* pic = tvg::Picture::gen();
+         if (!pic || pic->load(tmp.data(), w, h, tvg::ColorSpace::ARGB8888,
+                /*copy=*/true) != tvg::Result::Success)
+         {
+            if (pic) tvg::Paint::rel(pic);
+            return nullptr;
+         }
+
+         out_w = w;
+         out_h = h;
+         return pic;
+      }
+   }
+
    pixmap::pixmap(point size, float scale_)
     : _width(int(size.x))
     , _height(int(size.y))
@@ -42,65 +123,32 @@ namespace cycfi { namespace elements
    pixmap::pixmap(fs::path const& path, float scale_)
     : _scale(scale_)
    {
-      fs::path full_path = find_file(path);
-      if (full_path.empty())
+      std::string name = path.string();
+      auto bytes = get_resource_loader().read(name);
+      if (bytes.empty())
          throw failed_to_load_pixmap{"File does not exist."};
 
-      auto* pic = tvg::Picture::gen();
-      if (pic && pic->load(full_path.string().c_str()) == tvg::Result::Success)
+      std::string mime = lower_ext(path);
+
+      int w = 0, h = 0;
+      if (auto* pic = load_picture_from_memory(bytes.data(), bytes.size(), mime, w, h))
       {
-         float fw = 0;
-         float fh = 0;
-         pic->size(&fw, &fh);
-         _width = std::max(0, int(fw));
-         _height = std::max(0, int(fh));
+         _width = w;
+         _height = h;
          _picture = pic;
          return;
       }
 
-      if (pic)
-         tvg::Paint::rel(pic);
-
-      // Fallback: load with stbi_image and convert to tvg::Picture
-      int w = 0;
-      int h = 0;
-      int components = 0;
-      uint8_t* src_data = stbi_load(full_path.string().c_str(), &w, &h, &components, 4);
-      if (!src_data)
-         throw failed_to_load_pixmap{"Failed to load pixmap."};
-
-      // Convert RGBA to ARGB in temporary buffer
-      std::vector<uint32_t> tmp(w * h);
-      uint32_t* dest = tmp.data();
-      for (int y = 0; y < h; ++y)
+      // Fallback: stb_image (memory) → manual ARGB8888 conversion.
+      if (auto* pic = load_picture_via_stbi(bytes.data(), bytes.size(), w, h))
       {
-         uint8_t* src = src_data + (y * w * 4);
-         for (int x = 0; x < w; ++x)
-         {
-            uint8_t r = src[0];
-            uint8_t g = src[1];
-            uint8_t b = src[2];
-            uint8_t a = src[3];
-            *dest++ = (uint32_t(a) << 24) | (uint32_t(r) << 16) |
-                      (uint32_t(g) << 8) | uint32_t(b);
-            src += 4;
-         }
-      }
-      stbi_image_free(src_data);
-
-      // Load into tvg::Picture (copy=true so tmp can be released)
-      pic = tvg::Picture::gen();
-      if (!pic || pic->load(tmp.data(), w, h, tvg::ColorSpace::ARGB8888, true)
-            != tvg::Result::Success)
-      {
-         if (pic)
-            tvg::Paint::rel(pic);
-         throw failed_to_load_pixmap{"Failed to load pixmap."};
+         _width = w;
+         _height = h;
+         _picture = pic;
+         return;
       }
 
-      _width = w;
-      _height = h;
-      _picture = pic;
+      throw failed_to_load_pixmap{"Failed to load pixmap."};
    }
 
    pixmap::~pixmap()

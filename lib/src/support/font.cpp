@@ -6,6 +6,7 @@
 =============================================================================*/
 #include <elements/support/font.hpp>
 #include <elements/support/glyph_utils.hpp>
+#include <elements/support/resource_loader.hpp>
 #include <infra/assert.hpp>
 #include <infra/filesystem.hpp>
 
@@ -18,7 +19,6 @@
 #include <sstream>
 #include <algorithm>
 #include <vector>
-#include <fstream>
 #include <cmath>
 
 namespace cycfi { namespace elements
@@ -120,17 +120,28 @@ namespace cycfi { namespace elements
       }
 
       ////////////////////////////////////////////////////////////////////////
-      // Font backend integration
+      // Derive the ThorVG font name from a file path or buffer key by
+      // stripping the directory and extension. Matches the convention used
+      // by text_backend_tvg (stem_from_path).
       ////////////////////////////////////////////////////////////////////////
-      void ensure_font_registered(std::string const& file_path)
+      std::string stem_from_path(std::string const& path)
       {
-         get_font_backend()->initialize();
-         get_font_backend()->register_font(file_path);
+         auto slash = path.find_last_of("/\\");
+         auto start = (slash != std::string::npos) ? slash + 1 : 0;
+         auto dot = path.rfind('.');
+         auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
+         return path.substr(start, end - start);
       }
    }
 
    ////////////////////////////////////////////////////////////////////////////
    // register_font — public API
+   //
+   // Reads the font bytes through the active resource_loader and registers
+   // the result via the in-memory path. This keeps a single code path for
+   // font lifetime: the buffer is owned by the FT backend and by ThorVG
+   // (via copy=true), and the loader does not need to keep the bytes
+   // around.
    ////////////////////////////////////////////////////////////////////////////
    void register_font(
       std::string const&                family,
@@ -139,7 +150,13 @@ namespace cycfi { namespace elements
       font_constants::slant_enum        slant,
       font_constants::stretch_enum      stretch)
    {
-      // Register in internal font map
+      auto bytes = get_resource_loader().read(file);
+      if (bytes.empty())
+         return;
+
+      // Register in internal font map. The file path stays the entry key
+      // so canvas state and glyph layout (which keys FT_Face by f.file())
+      // can find the registered face.
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
          font_entry entry;
@@ -150,8 +167,21 @@ namespace cycfi { namespace elements
          font_map()[family].push_back(std::move(entry));
       }
 
-      // Register with the active font backend (FreeType etc.).
-      ensure_font_registered(file);
+      // ThorVG indexes fonts by name. text_backend_tvg derives that name
+      // by stripping the directory and extension from canvas state's
+      // font_file, so register the same stem here.
+      auto thorvg_name = stem_from_path(file);
+      tvg::Text::load(
+         thorvg_name.c_str(),
+         reinterpret_cast<const char*>(bytes.data()),
+         static_cast<uint32_t>(bytes.size()),
+         "ttf",
+         /*copy=*/true);
+
+      // FreeType side uses the original file string as the cache key, to
+      // match glyph_layout_ft.cpp's get_face(f.file()) lookup.
+      get_font_backend()->initialize();
+      get_font_backend()->register_font_buffer(file, bytes.data(), bytes.size());
    }
 
    ////////////////////////////////////////////////////////////////////////////
@@ -344,6 +374,7 @@ namespace cycfi { namespace elements
 
    void load_fonts_from_directory(std::string const& dir)
    {
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
       fs::path font_dir(dir);
       if (!fs::exists(font_dir) || !fs::is_directory(font_dir))
          return;
@@ -363,11 +394,13 @@ namespace cycfi { namespace elements
 
          auto info = parse_font_filename(stem);
 
-         // Load font in ThorVG (needed for tvg::Text backend)
-         tvg::Text::load(file_path.c_str());
-
-         // Register in elements font system
+         // Register through the standard memory-based path. The active
+         // resource_loader will read the bytes (the default loader uses
+         // an absolute path, so it just reads from disk).
          register_font(info.family, file_path, info.weight, info.slant, info.stretch);
       }
+#else
+      (void)dir;
+#endif
    }
 }}

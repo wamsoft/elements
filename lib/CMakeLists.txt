@@ -58,6 +58,8 @@ set(ELEMENTS_SOURCES
    src/support/receiver.cpp
    src/support/rect.cpp
    src/support/text_utils.cpp
+   src/support/resource_loader.cpp
+   src/support/filesystem_resource_loader.cpp
    src/support/resource_paths.cpp
    src/support/task_queue.cpp
    src/support/theme.cpp
@@ -129,6 +131,7 @@ set(ELEMENTS_HEADERS
    include/elements/support/detail/scratch_context.hpp
    include/elements/support/detail/stb_image.h
    include/elements/support/draw_utils.hpp
+   include/elements/support/filesystem_resource_loader.hpp
    include/elements/support/font.hpp
    include/elements/support/glyphs.hpp
    include/elements/support/icon_ids.hpp
@@ -136,6 +139,7 @@ set(ELEMENTS_HEADERS
    include/elements/support/point.hpp
    include/elements/support/receiver.hpp
    include/elements/support/rect.hpp
+   include/elements/support/resource_loader.hpp
    include/elements/support/resource_paths.hpp
    include/elements/support/text_utils.hpp
    include/elements/support/theme.hpp
@@ -188,6 +192,15 @@ target_sources(elements
 target_include_directories(elements PUBLIC include)
 target_compile_features(elements PUBLIC cxx_std_20)
 
+# Allow the engine to read resources directly from disk. When OFF the
+# default resource_loader becomes a no-op and callers must install a
+# custom loader via set_resource_loader(). Disable for platforms without
+# a normal filesystem (e.g. Nintendo Switch).
+option(ELEMENTS_FILE_IO_SUPPORT "Allow elements to read resources from disk" ON)
+if (ELEMENTS_FILE_IO_SUPPORT)
+   target_compile_definitions(elements PUBLIC ELEMENTS_FILE_IO_SUPPORT)
+endif()
+
 if(ELEMENTS_ENABLE_LTO)
    set_target_properties(elements PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
@@ -233,7 +246,11 @@ option(TVG_LOADER_TTF "Enable TTF Loader" OFF)
 option(TVG_LOADER_FT "Enable FreeType+HarfBuzz multilingual text loader (mutually exclusive with TVG_LOADER_TTF)" ON)
 option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
 option(TVG_LOG "Enable log message" OFF)
-option(TVG_FILE_IO "Enable File IO calls" ON)
+# ThorVG のファイル I/O を撤去。elements 側で resource_loader 経由のメモリ
+# ロードに統一したため、ThorVG が直接 fopen することはなくなった。
+# option() ではなく FORCE 付き set() を使うのは、ThorVG 側 CMakeLists の
+# option(TVG_FILE_IO ON) が一度キャッシュに乗ると override 不能になるため。
+set(TVG_FILE_IO OFF CACHE BOOL "Enable File IO calls" FORCE)
 # add_subdirectory で使うため install(EXPORT) を無効化。harfbuzz など
 # 非エクスポートな下流ターゲットが export set に巻き込まれて失敗するのを避ける。
 set(TVG_INSTALL OFF CACHE BOOL "Generate install/export rules" FORCE)
