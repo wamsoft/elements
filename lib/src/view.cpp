@@ -35,7 +35,6 @@
    view::view(extent size_)
     : base_view(size_)
     , _main_element(make_scaled_content())
-    , _work(asio::make_work_guard(_io))
    {
       install_default_pad_key_bindings(*this);
    }
@@ -43,7 +42,6 @@
    view::view(host_view_handle h)
     : base_view(h)
     , _main_element(make_scaled_content())
-    , _work(asio::make_work_guard(_io))
    {
       install_default_pad_key_bindings(*this);
    }
@@ -51,7 +49,6 @@
    view::view(window& win)
     : base_view(win.host())
     , _main_element(make_scaled_content())
-    , _work(asio::make_work_guard(_io))
    {
       install_default_pad_key_bindings(*this);
       on_change_limits = [&win](view_limits limits_)
@@ -63,7 +60,7 @@
 
    view::~view()
    {
-      _io.stop();
+      _tasks.stop();
    }
 
    void view::set_limits()
@@ -163,7 +160,7 @@
    void view::refresh()
    {
       // Allow refresh to be called from another thread
-      asio::post(_io,
+      _tasks.post(
          [this]()
          {
             base_view::refresh();
@@ -174,7 +171,7 @@
    void view::refresh(rect area)
    {
       // Allow refresh to be called from another thread
-      asio::post(_io,
+      _tasks.post(
          [this, area]()
          {
             base_view::refresh(area);
@@ -194,7 +191,7 @@
       if (_current_bounds.is_empty())
          return;
 
-      asio::post(_io,
+      _tasks.post(
          [this, &element, outward]()
          {
             with_context_do(
@@ -508,10 +505,10 @@
    {
       if (!e)
          return;
-      asio::post(_io,
+      _tasks.post(
          [this, e]()
          {
-            // Bail out cleanly if the view already shut down (io_context
+            // Bail out cleanly if the view already shut down (task_queue
             // stopped during ~view).
             if (_content.empty())
                return;
@@ -755,7 +752,7 @@
    void view::fire_shortcut(shortcut_target const& t)
    {
       // Deferred so callers (key/pad event) can return cleanly first.
-      asio::post(_io,
+      _tasks.post(
          [this, t]()
          {
             if (t.callback)
@@ -1146,12 +1143,12 @@
 
    void view::poll()
    {
-      _io.poll();
+      _tasks.poll();
 
       auto now = std::chrono::steady_clock::now();
 
       // Update the inter-frame delta. Clamp big gaps (debugger pause,
-      // long ASIO work) so a single weird frame can't run a slider all
+      // long task work) so a single weird frame can't run a slider all
       // the way to its max.
       if (_last_poll_time != std::chrono::steady_clock::time_point{})
       {

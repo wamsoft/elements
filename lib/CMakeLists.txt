@@ -59,6 +59,7 @@ set(ELEMENTS_SOURCES
    src/support/rect.cpp
    src/support/text_utils.cpp
    src/support/resource_paths.cpp
+   src/support/task_queue.cpp
    src/support/theme.cpp
    src/support/payload.cpp
    src/view.cpp
@@ -262,26 +263,7 @@ find_package(freetype CONFIG REQUIRED)
 target_link_libraries(elements PUBLIC freetype harfbuzz)
 
 ###############################################################################
-# Asio headers
-
-FetchContent_Declare(
-  asio
-  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-  GIT_TAG asio-1-36-0
-  GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(asio)
-
-target_include_directories(elements PUBLIC ${asio_SOURCE_DIR}/asio/include)
-
-###############################################################################
 # Global options
-
-# Common definitions
-target_compile_definitions(elements PUBLIC
-   BOOST_DATE_TIME_NO_LIB
-   BOOST_REGEX_NO_LIB
-)
 
 ###############################################################################
 # Host-specific definitions and linking
@@ -328,7 +310,7 @@ endif()
 
 if (WIN32 AND NOT MSVC)
    find_package(Threads)
-   target_link_libraries(elements PUBLIC Threads::Threads ws2_32)
+   target_link_libraries(elements PUBLIC Threads::Threads)
 endif()
 
 if (WIN32)

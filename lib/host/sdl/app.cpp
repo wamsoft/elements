@@ -61,7 +61,7 @@ namespace cycfi::elements
             }
             dispatch_sdl_event(e);
          }
-         // Poll ASIO tasks and repaint dirty views
+         // Poll task_queue and repaint dirty views
          poll_and_repaint_all();
          SDL_Delay(1);
       }

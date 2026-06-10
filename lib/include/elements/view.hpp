@@ -20,7 +20,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-#include <asio.hpp>
+#include <elements/support/task_queue.hpp>
 #include <memory>
 #include <unordered_map>
 #include <chrono>
@@ -177,11 +177,7 @@ namespace cycfi::elements
       using change_limits_function = std::function<void(view_limits limits_)>;
       change_limits_function on_change_limits;
 
-      using io_context = asio::io_context;
-      io_context&             io();
-
-
-      using steady_timer_ptr = std::shared_ptr<asio::steady_timer>;
+      using steady_timer_ptr = std::shared_ptr<detail::timer_handle>;
 
                               template <typename T, typename F>
       steady_timer_ptr        post(T duration, F f);
@@ -264,8 +260,7 @@ namespace cycfi::elements
       undo_stack_type         _undo_stack;
       undo_stack_type         _redo_stack;
 
-      io_context              _io;
-      asio::executor_work_guard<io_context::executor_type>        _work;
+      detail::task_queue      _tasks;
 
       using time_point = std::chrono::steady_clock::time_point;
       using tracking_map = std::map<element*, time_point>;
@@ -361,7 +356,7 @@ namespace cycfi::elements
          if (std::find(_content.begin(), _content.end(), e) != _content.end())
             return;
 
-         asio::post(io(),
+         _tasks.post(
             [e, this, focus_top]
             {
                auto wants_focus = focus_top && e->wants_focus();
@@ -399,7 +394,7 @@ namespace cycfi::elements
       // post a function that is called at idle time.
       if (e)
       {
-         asio::post(io(),
+         _tasks.post(
             [e, this]
             {
                auto i = std::find(_content.begin(), _content.end(), e);
@@ -436,7 +431,7 @@ namespace cycfi::elements
    {
       if (e && _content.back() != e)
       {
-         asio::post(io(),
+         _tasks.post(
             [e, this]
             {
                auto i = std::find(_content.begin(), _content.end(), e);
@@ -457,7 +452,7 @@ namespace cycfi::elements
    {
       if (e && _content.front() != e)
       {
-         asio::post(io(),
+         _tasks.post(
             [e, this]
             {
                auto i = std::find(_content.begin(), _content.end(), e);
@@ -484,11 +479,6 @@ namespace cycfi::elements
       return _current_limits;
    }
 
-   inline view::io_context& view::io()
-   {
-      return _io;
-   }
-
    inline mouse_button view::current_button() const
    {
       return _current_button;
@@ -497,23 +487,16 @@ namespace cycfi::elements
    template <typename T, typename F>
    inline view::steady_timer_ptr view::post(T duration, F f)
    {
-      auto timer = std::make_shared<asio::steady_timer>(_io);
-      timer->expires_after(duration);
-      timer->async_wait(
-         [timer, f](auto const& err)
-         {
-            if (!err)
-               f();
-         }
+      return _tasks.post_after(
+         std::chrono::duration_cast<detail::task_queue::clock::duration>(duration),
+         std::move(f)
       );
-
-      return timer;
    }
 
    template <typename F>
    inline void view::post(F f)
    {
-      asio::post(_io, f);
+      _tasks.post(std::move(f));
    }
 }
 

@@ -58,7 +58,7 @@ Off-screen measurement uses `detail::scratch_context` (small 4×4 ThorVG canvas)
 - **HarfBuzz** (vcpkg): Used by ThorVG's FT loader. Plus HarfBuzz 13.1.1 via FetchContent for `glyph_layout_ft.cpp` (ICU disabled).
 - **SDL3** (FetchContent, release-3.4.0): Used for SDL host layer (`ELEMENTS_HOST_UI_LIBRARY=sdl`).
 - **cycfi/infra**: Utility library, fetched via FetchContent.
-- **ASIO**: Async I/O for timers/callbacks, fetched via FetchContent.
+- **In-tree task queue** (`support/task_queue.{hpp,cpp}`): Tiny `post` / `post_after` / `poll` queue driven from the UI thread (`view::poll`). Replaces the old ASIO dependency so platforms without `socketpair`/`eventfd` (e.g. Nintendo Switch) can build.
 
 ### Text Backend Interface
 
