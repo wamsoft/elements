@@ -12,6 +12,7 @@ include(FetchContent)
 # Sources (and Resources)
 
 set(ELEMENTS_SOURCES
+   src/element/arrow_button.cpp
    src/element/button.cpp
    src/element/child_window.cpp
    src/element/composite.cpp
@@ -20,12 +21,14 @@ set(ELEMENTS_SOURCES
    src/element/element.cpp
    src/element/floating.cpp
    src/element/flow.cpp
+   src/element/focus_row.cpp
    src/element/grid.cpp
    src/element/image.cpp
    src/element/label.cpp
    src/element/layer.cpp
    src/element/list.cpp
    src/element/menu.cpp
+   src/element/picker.cpp
    src/element/popup.cpp
    src/element/port.cpp
    src/element/proxy.cpp
@@ -38,6 +41,7 @@ set(ELEMENTS_SOURCES
    src/element/style/check_box.cpp
    src/element/style/grid_lines.cpp
    src/element/style/icon_button.cpp
+   src/element/style/invert_button.cpp
    src/element/style/menu.cpp
    src/element/style/misc.cpp
    src/element/style/radio_button.cpp
@@ -73,6 +77,7 @@ set(ELEMENTS_HEADERS
    include/elements/base_view.hpp
    include/elements/element.hpp
    include/elements/element/align.hpp
+   include/elements/element/arrow_button.hpp
    include/elements/element/button.hpp
    include/elements/element/collapsable.hpp
    include/elements/element/composite.hpp
@@ -82,6 +87,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/events_intercept.hpp
    include/elements/element/floating.hpp
    include/elements/element/flow.hpp
+   include/elements/element/focus_row.hpp
    include/elements/element/grid.hpp
    include/elements/element/image.hpp
    include/elements/element/indirect.hpp
@@ -92,6 +98,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/margin.hpp
    include/elements/element/menu.hpp
    include/elements/element/modal.hpp
+   include/elements/element/picker.hpp
    include/elements/element/popup.hpp
    include/elements/element/port.hpp
    include/elements/element/proxy.hpp
@@ -109,6 +116,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/style/grid_lines.hpp
    include/elements/element/style/group.hpp
    include/elements/element/style/icon_button.hpp
+   include/elements/element/style/invert_button.hpp
    include/elements/element/style/menu.hpp
    include/elements/element/style/message_box.hpp
    include/elements/element/style/misc.hpp

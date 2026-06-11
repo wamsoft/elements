@@ -7,6 +7,7 @@
 #define ELEMENTS_MAY_4_2016
 
 #include <elements/element/align.hpp>
+#include <elements/element/arrow_button.hpp>
 #include <elements/element/button.hpp>
 #include <elements/element/child_window.hpp>
 #include <elements/element/collapsable.hpp>
@@ -18,6 +19,7 @@
 #include <elements/element/floating.hpp>
 #include <elements/element/flow.hpp>
 #include <elements/element/focus.hpp>
+#include <elements/element/focus_row.hpp>
 #include <elements/element/grid.hpp>
 #include <elements/element/image.hpp>
 #include <elements/element/indirect.hpp>
@@ -27,6 +29,7 @@
 #include <elements/element/margin.hpp>
 #include <elements/element/menu.hpp>
 #include <elements/element/modal.hpp>
+#include <elements/element/picker.hpp>
 #include <elements/element/popup.hpp>
 #include <elements/element/port.hpp>
 #include <elements/element/proxy.hpp>

@@ -15,6 +15,7 @@
 #include <elements/element/style/grid_lines.hpp>
 #include <elements/element/style/group.hpp>
 #include <elements/element/style/icon_button.hpp>
+#include <elements/element/style/invert_button.hpp>
 #include <elements/element/style/menu.hpp>
 #include <elements/element/style/message_box.hpp>
 #include <elements/element/style/misc.hpp>
