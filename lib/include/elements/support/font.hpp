@@ -329,8 +329,14 @@ namespace cycfi { namespace elements
    //    register_font("Noto Sans", "resources/NotoSans-Italic.ttf",
    //       font_constants::weight_normal, font_constants::italic);
    //
+   // Returns the *embedded* font family name as extracted by ThorVG (e.g.
+   // "Noto Sans JP" for a file whose internal name table says so). The font
+   // is registered under both the caller-supplied `family` *and* the embedded
+   // name (when they differ), so callers can look up by either. Returns an
+   // empty string when the font failed to load or the loader could not
+   // report an embedded name.
    ////////////////////////////////////////////////////////////////////////////
-   void register_font(
+   std::string register_font(
       std::string const&                family,
       std::string const&                file,
       font_constants::weight_enum       weight  = font_constants::weight_normal,
@@ -348,8 +354,11 @@ namespace cycfi { namespace elements
    //
    // Both ThorVG (with copy=true) and the FreeType backend take a copy of
    // `data`, so the caller can free the buffer after this returns.
+   //
+   // Returns the embedded font family name (same semantics as the path-based
+   // `register_font` above).
    ////////////////////////////////////////////////////////////////////////////
-   void register_font_buffer(
+   std::string register_font_buffer(
       std::string const&                family,
       std::string const&                key,
       std::uint8_t const*               data,

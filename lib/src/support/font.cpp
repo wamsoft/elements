@@ -134,6 +134,42 @@ namespace cycfi { namespace elements
       }
    }
 
+   namespace
+   {
+      // Query the font that was just registered into ThorVG and return its
+      // embedded family name (from the OTF/TTF name table). Empty if ThorVG
+      // could not extract a name. Helper for both register_font variants.
+      std::string query_embedded_family(std::string const& thorvg_key)
+      {
+         tvg::TextInfo tinfo{};
+         if (tvg::Text::info(thorvg_key.c_str(), tinfo) == tvg::Result::Success
+             && tinfo.family && *tinfo.family)
+         {
+            return tinfo.family;
+         }
+         return {};
+      }
+
+      // Add an alias entry to font_map under `family_alias`, pointing to the
+      // same on-disk file/key as the original registration. Caller-side font
+      // matching (label_font etc.) can then resolve either the caller-supplied
+      // family name or the embedded one.
+      void add_family_alias(std::string const& family_alias,
+         std::string const& file_key,
+         font_constants::weight_enum weight,
+         font_constants::slant_enum slant,
+         font_constants::stretch_enum stretch)
+      {
+         std::lock_guard<std::mutex> lock(font_map_mutex());
+         font_entry entry;
+         entry.file = file_key;
+         entry.weight = uint8_t(weight);
+         entry.slant = uint8_t(slant);
+         entry.stretch = uint8_t(stretch);
+         font_map()[family_alias].push_back(std::move(entry));
+      }
+   }
+
    ////////////////////////////////////////////////////////////////////////////
    // register_font — public API
    //
@@ -143,7 +179,7 @@ namespace cycfi { namespace elements
    // (via copy=true), and the loader does not need to keep the bytes
    // around.
    ////////////////////////////////////////////////////////////////////////////
-   void register_font(
+   std::string register_font(
       std::string const&                family,
       std::string const&                file,
       font_constants::weight_enum       weight,
@@ -152,7 +188,7 @@ namespace cycfi { namespace elements
    {
       auto bytes = get_resource_loader().read(file);
       if (bytes.empty())
-         return;
+         return {};
 
       // Register in internal font map. The file path stays the entry key
       // so canvas state and glyph layout (which keys FT_Face by f.file())
@@ -178,16 +214,25 @@ namespace cycfi { namespace elements
          "ttf",
          /*copy=*/true);
 
+      // Ask ThorVG for the font's embedded family name. If it's different
+      // from the caller-supplied family, also expose it as a font_map alias
+      // so lookups by either name resolve.
+      auto embedded = query_embedded_family(thorvg_name);
+      if (!embedded.empty() && embedded != family)
+         add_family_alias(embedded, file, weight, slant, stretch);
+
       // FreeType side uses the original file string as the cache key, to
       // match glyph_layout_ft.cpp's get_face(f.file()) lookup.
       get_font_backend()->initialize();
       get_font_backend()->register_font_buffer(file, bytes.data(), bytes.size());
+
+      return embedded;
    }
 
    ////////////////////////////////////////////////////////////////////////////
    // register_font_buffer — public API (in-memory font registration)
    ////////////////////////////////////////////////////////////////////////////
-   void register_font_buffer(
+   std::string register_font_buffer(
       std::string const&                family,
       std::string const&                key,
       std::uint8_t const*               data,
@@ -197,7 +242,7 @@ namespace cycfi { namespace elements
       font_constants::stretch_enum      stretch)
    {
       if (!data || size == 0 || key.empty())
-         return;
+         return {};
 
       // Register in internal font map. `key` plays the role normally taken
       // by the file path, so canvas/text rendering will use it as identifier.
@@ -220,10 +265,18 @@ namespace cycfi { namespace elements
          "ttf",
          /*copy=*/true);
 
+      // Ask ThorVG for the embedded family name. If different from the
+      // caller-supplied family, also expose it as a font_map alias.
+      auto embedded = query_embedded_family(key);
+      if (!embedded.empty() && embedded != family)
+         add_family_alias(embedded, key, weight, slant, stretch);
+
       // Register with the active font backend (FreeType etc.). The backend
       // takes its own copy of the buffer.
       get_font_backend()->initialize();
       get_font_backend()->register_font_buffer(key, data, size);
+
+      return embedded;
    }
 
    ////////////////////////////////////////////////////////////////////////////
