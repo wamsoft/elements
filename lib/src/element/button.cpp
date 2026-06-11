@@ -118,6 +118,11 @@ namespace cycfi::elements
    bool basic_button::end_focus()
    {
       focused(false);
+      // Clear any stuck press state — keyboard activation holds value=true
+      // between key press and release, and losing focus mid-press would
+      // otherwise leave the button visually depressed forever.
+      if (value())
+         set_value(false);
       return true;
    }
 
@@ -157,15 +162,35 @@ namespace cycfi::elements
       if (!ctx.enabled || !is_enabled())
          return false;
 
-      if (k.action != key_action::press && k.action != key_action::repeat)
-         return false;
-
       if (k.key != key_code::space && k.key != key_code::enter
           && k.key != key_code::kp_enter)
          return false;
 
-      activate(ctx);
-      return true;
+      // Hold value=true between press and release so the styler paints a
+      // visible pressed frame. Fire on_click on release — matching the
+      // mouse semantic where on_click runs on mouse-up, not mouse-down.
+      // Auto-repeat is consumed but otherwise ignored.
+      if (k.action == key_action::press)
+      {
+         if (!value())
+         {
+            set_value(true);
+            ctx.view.refresh(ctx);
+         }
+         return true;
+      }
+      if (k.action == key_action::release)
+      {
+         if (value())
+         {
+            if (on_click)
+               on_click(true);
+            set_value(false);
+            ctx.view.refresh(ctx);
+         }
+         return true;
+      }
+      return true; // consume repeats so they don't bubble
    }
 
    /**
