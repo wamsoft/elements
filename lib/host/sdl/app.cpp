@@ -25,6 +25,7 @@ namespace cycfi::elements
       // Initialize ThorVG rendering engine
       tvg::Initializer::init(4);
 
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
       // Load fonts from exe-relative resources directory
       auto base_path = SDL_GetBasePath();  // SDL3: returns const char*, no free needed
       if (base_path)
@@ -39,6 +40,7 @@ namespace cycfi::elements
          if (fs::exists(res_dir))
             load_fonts_from_directory(res_dir.string());
       }
+#endif
    }
 
    app::~app()
