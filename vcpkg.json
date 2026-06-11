@@ -8,6 +8,7 @@
     "zlib",
     "libpng",
     "libjpeg-turbo",
+    "picojson",
     {
       "name": "freetype",
       "features": ["png", "zlib"]
