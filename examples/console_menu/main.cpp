@@ -1,39 +1,35 @@
 /*=============================================================================
    Console-style menu UI demo.
 
-   Demonstrates:
-   - console_button_styler: black body, white frame, white text.
+   Demonstrates the picker/styler family promoted to elements lib:
+   - invert_button_styler: black body, white frame, white text.
      When focused: white body, black text (invert).
-   - console_outline_button_styler: same body, plus an outer colored
-     ring when focused. Ring color is supplied at construction.
-   - trigger_selector: ◀ value ▶, left/right cycles through options
-     (wraps), up/down pass through to view-level focus navigation.
-   - segmented_selector: horizontal segments, left/right moves the
-     selected segment; stops at the ends so end-of-row arrows fall
-     through to focus navigation.
+   - ring_button_styler: same body, plus an outer colored ring when focused.
+     Ring color is supplied at construction.
+   - cycle_picker: < value >, left/right cycles through options (wraps),
+     up/down pass through to view-level focus navigation.
+   - segmented_picker: horizontal segments, left/right moves the selected
+     segment; stops at the ends so end-of-row arrows fall through to
+     focus navigation.
    - focus_row / labeled_row: row-wide highlight when any descendant
      holds focus. The label on the left is decorative; focus sits on
      the control on the right.
 =============================================================================*/
 #include <elements.hpp>
 
-#include "console_button_styler.hpp"
-#include "console_widgets.hpp"
-
 using namespace cycfi::elements;
-using namespace console_menu;
 
 namespace
 {
    auto constexpr bkd_color = rgba(12, 12, 16, 255);
    auto background = box(bkd_color);
 
-   // Top row: two normal-style demo buttons (invert + outline).
+   // Top row: two normal-style demo buttons (invert + ring).
    auto make_button_demo_row()
    {
-      auto b1 = console_button("INVERT");
-      auto b2 = console_outline_button("OUTLINE", colors::indian_red);
-      auto b3 = console_outline_button("OUTLINE 2", colors::dodger_blue);
+      auto b1 = invert_button("INVERT");
+      auto b2 = ring_button("OUTLINE", colors::indian_red);
+      auto b3 = ring_button("OUTLINE 2", colors::dodger_blue);
 
       return group(
          "Button styles (Space/Enter to activate)",
@@ -47,18 +43,17 @@ namespace
       );
    }
 
-   // Config rows.
    auto make_config_panel()
    {
-      // Plain inline-arrow selector.
-      auto system_sel = share(trigger_selector(
+      // Plain inline-arrow picker.
+      auto system_sel = share(cycle_picker(
          {"PC-8081 mk2SR", "PC-9801 VM", "X68000 EXPERT"}, 0
       ));
 
-      // Standalone arrow buttons driving a trigger_selector. The arrows
-      // are NOT focusable — Tab skips them, the arrow keys still target
-      // the focused selector — but they are mouse/touch operable.
-      auto bios_sel = share(trigger_selector({"NORMAL", "TURBO", "COMPAT"}, 0));
+      // Standalone arrow buttons driving a cycle_picker. The arrows are
+      // NOT focusable — Tab skips them, the arrow keys still target the
+      // focused picker — but they are mouse/touch operable.
+      auto bios_sel = share(cycle_picker({"NORMAL", "TURBO", "COMPAT"}, 0));
       auto bios_arrows = make_step_arrows(bios_sel);
       element_ptr bios_unit = share(htile_spaced(4.0f,
          hsize(36, hold(bios_arrows.first)),
@@ -76,15 +71,15 @@ namespace
          hsize(36, hold(vol_arrows.second))
       ));
 
-      auto display_mode = share(segmented_selector({"Full", "Dot by dot"}, 0));
-      auto msg_fx       = share(segmented_selector({"ON", "OFF"}, 0));
-      auto sound_fx     = share(segmented_selector({"ON", "OFF"}, 0));
-      auto fullscreen   = share(segmented_selector({"Fullscreen", "Window"}, 1));
-      auto resolution   = share(segmented_selector({"640x400", "1280x800"}, 0));
+      auto display_mode = share(segmented_picker({"Full", "Dot by dot"}, 0));
+      auto msg_fx       = share(segmented_picker({"ON", "OFF"}, 0));
+      auto sound_fx     = share(segmented_picker({"ON", "OFF"}, 0));
+      auto fullscreen   = share(segmented_picker({"Fullscreen", "Window"}, 1));
+      auto resolution   = share(segmented_picker({"640x400", "1280x800"}, 0));
 
-      // Integrated outer-arrow variant — for comparison with the
-      // composed standalone-arrows pattern above.
-      auto language = share(trigger_selector_arrows({"English", "Japanese"}, 0));
+      // Framed-arrow variant — for comparison with the composed
+      // standalone-arrows pattern above.
+      auto language = share(framed_cycle_picker({"English", "Japanese"}, 0));
 
       auto win_scale = slider_with_range(0, 100, 0.4);
 
@@ -101,13 +96,12 @@ namespace
                labeled_row("Window scale",           win_scale.widget, win_scale.focus),
                labeled_row("Resolution",             resolution),
                labeled_row("Mode",                   fullscreen),
-               labeled_row("Language (integrated)",  language)
+               labeled_row("Language (framed)",      language)
             )
          )
       );
    }
 
-   // Hint bar at the bottom: shows the key + pad equivalents.
    auto make_hint_bar()
    {
       auto hint = [](std::string text) {
@@ -138,9 +132,6 @@ int main(int /*argc*/, char* /*argv*/[])
    auto config     = make_config_panel();
    auto hints      = make_hint_bar();
 
-   // Initial focus: leave to the first focusable widget that wants_focus
-   // along the layout traversal. Pressing Tab/A on launch will land on
-   // the INVERT button.
    view_.content(
       margin({20, 20, 20, 20},
          vtile_spaced(15.0f,

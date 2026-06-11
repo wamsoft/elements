@@ -22,7 +22,6 @@ set(ELEMENTS_APP_VERSION "1.0")
 
 set(ELEMENTS_APP_SOURCES
    ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-   ${CMAKE_CURRENT_SOURCE_DIR}/console_widgets.cpp
 )
 
 include(AppIcon)
