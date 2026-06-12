@@ -40,6 +40,51 @@ struct result
 	std::map<std::string, value_t> values;
 };
 
+//---------------------------------------------------------------------------
+// 画面遷移 (JSON 駆動ランナ用)
+//---------------------------------------------------------------------------
+
+//! @brief 画面遷移 1 件分の仕様。 JSON 上の string 短縮形 ("foo" / "<back>")
+//! では target だけセットされ、 object 形式 ({"target": "...", "effect":
+//! "fade", "duration": 200}) では effect / duration_ms も埋まる。
+struct transition_spec
+{
+	//! 遷移先。 以下のいずれか:
+	//!   "<name>"         — 山括弧不要 / マニフェストの screens 登録名で push
+	//!   "<back>"         — 現画面を pop
+	//!   "<exit>"         — アプリ終了
+	//!   "<replace:name>" — 現画面を name にすげ替え (stack 不変)
+	//!   "<stay>"         — 現画面を再 enter (stack 不変)
+	std::string target;
+
+	//! 遷移エフェクト。 空文字 = なし (即切替)、 "fade" = クロスフェード。
+	//! 未対応エフェクトはホスト側で警告 + 即切替フォールバック。
+	std::string effect;
+
+	//! エフェクト所要時間 ms。 0 = ホスト既定 (= 200ms 程度)。
+	int duration_ms = 0;
+};
+
+//! @brief アプリマニフェスト (entry + 画面レジストリ)。 別途用意した
+//! app.jsonc 等から parse_app_manifest() で読み込む。
+struct app_manifest
+{
+	//! 起点画面の名前 (screens のキー)。
+	std::string entry;
+
+	//! 画面名 → JSON ファイル相対パス。 ランナはこのマップから現画面の
+	//! JSON ファイルを解決する。 相対パスは app.jsonc 自身のあるディレクト
+	//! リからの相対と解釈すること推奨。
+	std::map<std::string, std::string> screens;
+
+	//! parse 成功時 true。 失敗時は entry / screens が空のまま戻る。
+	bool ok = false;
+};
+
+//! @brief マニフェスト JSON 解析 (entry + screens レジストリ)。
+//! 失敗時は ok=false のオブジェクトを返す (詳細は SDL_Log)。
+app_manifest parse_app_manifest(const std::string& json_utf8);
+
 //! @brief id 付き widget のイベント callback。
 //!        button の click は is_button_click=true、 state widget の値変化は
 //!        is_button_click=false で呼ばれる。 button の payload は空 (default
@@ -168,6 +213,12 @@ public:
 
 	//! @brief 結果取得。 active() = false の後に意味を持つ。
 	const result& get_result() const;
+
+	//! @brief JSON の top-level "transitions" を読み取った辞書を返す。
+	//! key = action id ("" = 空 action / Esc / B 等)、 value = 遷移仕様。
+	//! ランナが get_result().action でキー lookup → 次画面を決める。
+	//! 未定義なら空 map (ランナの既定挙動 = entry なら exit / 子なら back)。
+	const std::map<std::string, transition_spec>& transitions() const;
 
 	//! @brief view extent を変更 (window resize 等)。
 	void notify_view_resize(int new_view_width, int new_view_height);

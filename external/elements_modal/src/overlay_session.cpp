@@ -112,6 +112,10 @@ struct overlay_session::impl
 	// 一切ない場合は null。
 	std::function<void()> focus_poll;
 
+	// JSON top-level "transitions" を読んだ辞書。 ランナが get_result の
+	// action と照合して次画面を決める。
+	std::map<std::string, transition_spec> transitions;
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -183,6 +187,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->scale  = pixel_scale;
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
+	_impl->transitions = std::move(layout.transitions);
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -224,6 +229,12 @@ bool overlay_session::finished() const
 const result& overlay_session::get_result() const
 {
 	return _impl->accumulated;
+}
+
+const std::map<std::string, transition_spec>&
+overlay_session::transitions() const
+{
+	return _impl->transitions;
 }
 
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)

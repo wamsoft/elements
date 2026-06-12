@@ -1555,6 +1555,32 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 		result.apply_input = build_input_applier(v->get<picojson::object>(),
 			builder.take_id_map());
 	}
+
+	// "transitions" ブロック (任意): action id → 遷移仕様。 string 形式は
+	// target だけセット、 object 形式は effect / duration_ms も読む。
+	// マニフェスト駆動ランナがこれを参照する。
+	if (auto* v = get_field(o, "transitions"); v && v->is<picojson::object>()) {
+		for (auto& kv : v->get<picojson::object>()) {
+			transition_spec ts;
+			if (kv.second.is<std::string>()) {
+				ts.target = kv.second.get<std::string>();
+			} else if (kv.second.is<picojson::object>()) {
+				const auto& obj = kv.second.get<picojson::object>();
+				ts.target = string_or(obj, "target");
+				ts.effect = string_or(obj, "effect");
+				if (auto* d = get_field(obj, "duration");
+				    d && d->is<double>()) {
+					ts.duration_ms = static_cast<int>(d->get<double>());
+				}
+			} else {
+				SDL_Log("elements_modal: transitions[\"%s\"] must be string "
+				        "or object", kv.first.c_str());
+				continue;
+			}
+			result.transitions[kv.first] = std::move(ts);
+		}
+	}
+
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();
 	return result;
@@ -1580,6 +1606,52 @@ parsed_layout parse_from_string(const std::string& json_utf8,
 		return {};
 	}
 	return build_top_level(v, std::move(cb));
+}
+
+//---------------------------------------------------------------------------
+// app_manifest 解析。 entry + screens (name → path) を読むだけのシンプル版。
+//---------------------------------------------------------------------------
+app_manifest parse_app_manifest(const std::string& json_utf8)
+{
+	app_manifest m;
+	const std::string preprocessed = preprocess_jsonc(json_utf8);
+
+	picojson::value v;
+	std::string err;
+	picojson::parse(v, preprocessed.cbegin(), preprocessed.cend(), &err);
+	if (!err.empty()) {
+		SDL_Log("elements_modal: manifest parse error: %s", err.c_str());
+		return m;
+	}
+	if (!v.is<picojson::object>()) {
+		SDL_Log("elements_modal: manifest top-level must be object");
+		return m;
+	}
+	const auto& o = v.get<picojson::object>();
+
+	m.entry = string_or(o, "entry");
+	if (m.entry.empty()) {
+		SDL_Log("elements_modal: manifest missing 'entry'");
+		return m;
+	}
+
+	if (auto* sv = get_field(o, "screens"); sv && sv->is<picojson::object>()) {
+		for (auto& kv : sv->get<picojson::object>()) {
+			if (kv.second.is<std::string>()) {
+				m.screens[kv.first] = kv.second.get<std::string>();
+			} else {
+				SDL_Log("elements_modal: manifest screens[\"%s\"] must be "
+				        "string (= JSON file path)", kv.first.c_str());
+			}
+		}
+	}
+	if (m.screens.find(m.entry) == m.screens.end()) {
+		SDL_Log("elements_modal: manifest entry '%s' not in screens map",
+		        m.entry.c_str());
+		return m;
+	}
+	m.ok = true;
+	return m;
 }
 
 } // namespace elements_modal

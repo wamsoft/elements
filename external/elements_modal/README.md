@@ -80,6 +80,7 @@ int main()
 | `content` | element | ルート要素 |
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
+| `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
 
 ### 要素タイプ (`"type"`)
 
@@ -186,6 +187,71 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 - 同じ変数に複数 label が subscribe してもよい。
 - `vars_on_focus` は dict なので 1 widget で複数変数を一度に書ける。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
+
+### 画面遷移 (`transitions` + マニフェスト)
+
+複数画面を JSON だけで切り替えたいケース向けの軽量ランナ仕様。 ホスト (例: `elements_console.exe`) は **マニフェスト JSON** (= entry 画面 + 画面名 → ファイルマップ) を読み、 各画面 JSON の top-level `"transitions"` を見て次画面を決める。 ホストには C++ で遷移を書く必要がない。
+
+#### マニフェスト JSON (例: `app.jsonc`)
+
+```jsonc
+{
+    "entry": "sysmenu",
+    "screens": {
+        "sysmenu": "sysmenu.jsonc",
+        "command": "command.jsonc",
+        "config1": "config1.jsonc"
+    }
+}
+```
+
+- `entry`: 起点画面名 (= `screens` のキー)
+- `screens`: 画面名 → JSON ファイルの相対パス。 マニフェストファイル自身のあるディレクトリ起点で解決する。
+
+公開 API: `elements_modal::parse_app_manifest(json_utf8) -> app_manifest`。 ok=true なら entry / screens が埋まる。
+
+#### `"transitions"` ブロック (各画面 JSON 内)
+
+```jsonc
+{
+    "background": [20, 18, 24, 255],
+    "vars": { ... },
+    "transitions": {
+        "command": { "target": "command", "effect": "fade", "duration": 220 },
+        "config":  "config1",
+        "quit":    "<exit>",
+        "":        "<back>"
+    },
+    "content": { ... }
+}
+```
+
+- key = action id (= `id` を持つ button や picker の id)。 空文字 `""` は Esc / B / 右クリック / `close()` 等の空 action を捕まえる。
+- value は **string** か **object**:
+  - string: target のみ短縮形 (例 `"command"` / `"<back>"` / `"<exit>"` / `"<replace:foo>"` / `"<stay>"`)
+  - object: `{"target": "...", "effect": "fade", "duration": 220}` — effect / duration を併記
+
+target syntax:
+| 値 | 動き |
+|---|---|
+| `"foo"` | マニフェストの screens に登録された `foo` を **push** |
+| `"<back>"` | 現画面を **pop** (= 1 つ戻る) |
+| `"<exit>"` | アプリ **終了** |
+| `"<replace:foo>"` | 現画面を `foo` に**すげ替え** (stack 不変) |
+| `"<stay>"` | 現画面を**再 enter** (stack 不変) |
+
+未定義 action のフォールバックはホスト側。 `elements_console` ランナは「entry なら exit / 子画面なら back」を既定とする。
+
+#### エフェクト
+
+| `effect` | 動き |
+|---|---|
+| `""` / 省略 | 即切替 (デフォルト) |
+| `"fade"` | クロスフェード (旧画面の最終フレーム ↔ 新画面を時間で lerp 混色) |
+
+`duration`: ms。 省略 / 0 でホスト既定 (= 200ms 程度)。 未対応 effect は警告 + 即切替フォールバック。
+
+公開 API: `overlay_session::transitions()` で読み取った辞書を取得できる。 ランナは `get_result().action` を key に lookup して target / effect を決める。
 
 ### `"input"` ブロック
 

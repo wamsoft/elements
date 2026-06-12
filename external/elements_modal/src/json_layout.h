@@ -12,12 +12,15 @@
 #include <elements.hpp>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
 #include <string_view>
 
 namespace elements_modal {
+
+// transition_spec / app_manifest は modal.h (public) に定義済。
 
 // event_callback は modal.h で公開定義済 (std::string id ベース)。
 // 内部 layout builder もこれと同じ型を使う。
@@ -50,12 +53,20 @@ struct parsed_layout
 	//! VariableStore に反映し、 同じ変数を "text_var" で見ている label に
 	//! set_text が走る。 ホストは render 前 or input 処理後に呼ぶ。 null 可。
 	std::function<void()> focus_poll;
+
+	//! 画面遷移定義。 key = action id (button id / picker id 等。 "" は Esc /
+	//! B / 右クリック等の空 action 用) → value = 遷移仕様。 マニフェスト駆動
+	//! ランナがこれを見て次画面を決める。 空なら遷移定義なし (ホストの既定
+	//! 挙動 = entry なら exit / 子画面なら back)。
+	std::map<std::string, transition_spec> transitions;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。
 //!        失敗時 root=nullptr。 詳細は SDL_Log に出力。
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb);
+
+// app_manifest / parse_app_manifest() は modal.h (public) に定義済。
 
 } // namespace elements_modal
 
