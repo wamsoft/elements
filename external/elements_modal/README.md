@@ -271,9 +271,60 @@ ce::load_pad_icon_fonts();
 ce::set_pad_theme(ce::pad_theme::xbox);
 ```
 
-ディレクトリ構成は `<base>/{xbox,ps,switch,keyboard}/vector/*.svg` +
-`<base>/<theme>/*.ttf`。 元 pack からの抽出スクリプト例は elements_console
-リポの `scripts/copy_kenney_assets.sh` を参照。
+### Kenney Input Prompts pack について
+
+`pad_icon` が描画する SVG / TTF は [Kenney.nl](https://kenney.nl/) が CC0
+ライセンスで配布している **Input Prompts** pack
+([https://kenney.nl/assets/input-prompts](https://kenney.nl/assets/input-prompts))
+のアセットを前提にしている。 CC0 なので商用 / 改変 / 再配布いずれも自由だが、
+本リポには含めていないので利用側で取得 → 配置する必要がある。
+
+pack は zip 1 ファイルで配布されており、 展開すると `Xbox Series` /
+`PlayStation Series` / `Nintendo Switch` / `Keyboard & Mouse` のテーマ別
+ディレクトリの下に `Vector/` (SVG) と `Fonts/` (TTF + map.txt) が並ぶ構成
+になっている。 これを `pad_icon` が読みに行く以下のレイアウトに変換する:
+
+```
+<base_dir>/
+├── xbox/
+│   ├── vector/*.svg
+│   ├── kenney_input_xbox_series.ttf
+│   └── kenney_input_xbox_series_map.txt
+├── ps/
+│   ├── vector/*.svg
+│   └── kenney_input_playstation_series.ttf + _map.txt
+├── switch/
+│   ├── vector/*.svg
+│   └── kenney_input_nintendo_switch.ttf + _map.txt
+└── keyboard/
+    ├── vector/*.svg
+    └── kenney_input_keyboard_&_mouse.ttf + _map.txt
+```
+
+### 配置スクリプト (`scripts/copy_kenney_assets.sh`)
+
+zip 展開後のディレクトリから上記レイアウトへの変換は本リポ同梱の
+`scripts/copy_kenney_assets.sh` で自動化できる (bash + msys2 / WSL 等)。
+
+```bash
+# 1. https://kenney.nl/assets/input-prompts から zip をダウンロード
+
+# 2. consuming repo の root に展開 (default src = ./kenney_input-prompts/)
+unzip kenney_input-prompts.zip -d kenney_input-prompts
+
+# 3. スクリプトを consuming repo の root から実行
+./external/elements_modal/scripts/copy_kenney_assets.sh
+# → ./resources/kenny_input_prompts/ 配下に配置される
+
+# 4. 任意の src / dst を渡したい場合
+./external/elements_modal/scripts/copy_kenney_assets.sh \
+    /path/to/kenney_input-prompts /path/to/dst
+```
+
+スクリプトは CWD を基準にデフォルトパスを組み立てるので、 consuming repo の
+root から実行するのが想定動作。 ホスト側コードでは
+`set_pad_icon_base_dir("resources/kenny_input_prompts")` のようにそのまま
+dst を指定する。 元 zip ディレクトリを `.gitignore` しておくと安全。
 
 ## ビルド
 
