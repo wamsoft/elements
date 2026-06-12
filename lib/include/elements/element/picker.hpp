@@ -49,6 +49,9 @@ namespace cycfi::elements
       void                    select(std::size_t i);
       bool                    step(int delta);
 
+      void                    font_size(float s) { _font_size = s; }
+      float                   font_size() const  { return _font_size; }
+
       on_change_function      on_change;
 
    private:
@@ -56,6 +59,7 @@ namespace cycfi::elements
       std::vector<std::string> _options;
       std::size_t             _index;
       bool                    _has_focus = false;
+      float                   _font_size = 1.0f;
       std::chrono::steady_clock::time_point _last_pad_step{};
    };
 
@@ -95,6 +99,9 @@ namespace cycfi::elements
       void                    select(std::size_t i);
       bool                    step(int delta);
 
+      void                    font_size(float s) { _font_size = s; }
+      float                   font_size() const  { return _font_size; }
+
       on_change_function      on_change;
 
       static constexpr float arrow_box_w = 36.0f;
@@ -105,6 +112,7 @@ namespace cycfi::elements
       std::vector<std::string> _options;
       std::size_t             _index;
       bool                    _has_focus = false;
+      float                   _font_size = 1.0f;
       std::chrono::steady_clock::time_point _last_pad_step{};
    };
 
@@ -141,6 +149,9 @@ namespace cycfi::elements
       void                    select(std::size_t i);
       bool                    step(int delta);
 
+      void                    font_size(float s) { _font_size = s; }
+      float                   font_size() const  { return _font_size; }
+
       on_change_function      on_change;
 
    private:
@@ -148,6 +159,7 @@ namespace cycfi::elements
       std::vector<std::string> _options;
       std::size_t             _index;
       bool                    _has_focus = false;
+      float                   _font_size = 1.0f;
       std::chrono::steady_clock::time_point _last_pad_step{};
    };
 

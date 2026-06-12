@@ -121,7 +121,8 @@ namespace cycfi::elements
       element_ptr focus;
    };
 
-   inline ranged_slider slider_with_range(int min_v, int max_v, double initial = 0.5)
+   inline ranged_slider slider_with_range(
+      int min_v, int max_v, double initial = 0.5, float font_size = 1.0f)
    {
       auto sl = share(slider(
          basic_thumb<16>(colors::white),
@@ -129,12 +130,16 @@ namespace cycfi::elements
          initial
       ));
       auto row = share(htile(
-         hsize(40, align_right(
-            label(std::to_string(min_v)).font_color(colors::white)
+         hsize(40 * font_size, align_right(
+            label(std::to_string(min_v))
+               .font_color(colors::white)
+               .relative_font_size(font_size)
          )),
          hmargin({8, 8}, hold(sl)),
-         hsize(40, align_left(
-            label(std::to_string(max_v)).font_color(colors::white)
+         hsize(40 * font_size, align_left(
+            label(std::to_string(max_v))
+               .font_color(colors::white)
+               .relative_font_size(font_size)
          ))
       ));
       return {row, sl};

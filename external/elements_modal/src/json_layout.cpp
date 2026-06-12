@@ -797,6 +797,8 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		initial = static_cast<std::size_t>(raw);
 	}
 
+	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+
 	auto cb_id = id;
 	auto user_cb = _cb;
 	auto on_change = [cb_id, user_cb](std::size_t i) {
@@ -810,14 +812,17 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	if (variant == 0) {
 		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
+		p->font_size(fs);
 		shared = p;
 	} else if (variant == 1) {
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
+		p->font_size(fs);
 		shared = p;
 	} else {
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
+		p->font_size(fs);
 		shared = p;
 	}
 	register_id(o, shared);
@@ -934,7 +939,8 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	if (pos < 0.0) pos = 0.0;
 	if (pos > 1.0) pos = 1.0;
 
-	auto rs = ce::slider_with_range(min_v, max_v, pos);
+	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+	auto rs = ce::slider_with_range(min_v, max_v, pos, fs);
 	// rs.focus は shared_ptr<element>。 on_change を仕込むには basic_slider_base
 	// に dynamic_cast する必要あり。 lib の slider() factory は
 	// basic_slider<Thumb,Track,basic_slider_base> を返すので継承関係 OK。

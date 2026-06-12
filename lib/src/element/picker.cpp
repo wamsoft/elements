@@ -119,6 +119,7 @@ namespace cycfi::elements
       float widest = 0.0f;
       float h = 0.0f;
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -143,6 +144,7 @@ namespace cycfi::elements
       draw_body(cnv, bounds, ds, enabled);
 
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       cnv.font(font);
       cnv.fill_style(ds.fg);
 
@@ -261,6 +263,7 @@ namespace cycfi::elements
       float widest = 0.0f;
       float h = 0.0f;
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -354,6 +357,7 @@ namespace cycfi::elements
       draw_right_triangle(cnv, right_r, ds.fg);
 
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       cnv.font(font);
       cnv.fill_style(ds.fg);
       cnv.text_align(cnv.center | cnv.middle);
@@ -473,6 +477,7 @@ namespace cycfi::elements
       float widest = 0.0f;
       float h = 0.0f;
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -504,6 +509,7 @@ namespace cycfi::elements
          return;
 
       auto font = label_font_descr();
+      font = font.size(font._size * _font_size);
       cnv.font(font);
 
       float seg_w = bounds.width() / float(_options.size());

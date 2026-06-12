@@ -110,11 +110,11 @@ int main()
 
 - `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (相対フォントサイズ、 default 1.0)。 button と同じく `initial_focus` / `close_on_click` をサポート。
 - `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"`。 同じく `initial_focus` / `close_on_click` をサポート。
-- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"`。 値変化で `value_t{int64_t index}` を発火。
-- `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ。
-- `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ。
+- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (内部テキストの相対サイズ、 default 1.0)。 値変化で `value_t{int64_t index}` を発火。
+- `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
+- `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
 - `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
-- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
+- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (min/max ラベルの相対サイズ、 default 1.0)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (相対、 default 1.0) + `"child"`。 child の最初の focusable を click-focus target にする。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
   - **SVG モード (default)**: `"height": logical_pixels` (default 48) + `"colored": bool` (default false、 true で `_color_` バリアントを優先 — Xbox / PS の face button のみ対応、 無ければ通常版にフォールバック)
