@@ -429,6 +429,7 @@ private:
 	element_ptr build_labeled_row (const picojson::object& o);
 	element_ptr build_pad_icon    (const picojson::object& o);
 	element_ptr build_band        (const picojson::object& o);
+	element_ptr build_tab_view    (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
 	std::vector<element_ptr> build_children(const picojson::object& o);
@@ -498,6 +499,7 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "filler")        return ce::share(ce::element{});
 	if (type == "pad_icon")      return build_pad_icon(o);
 	if (type == "band")          return build_band(o);
+	if (type == "tab_view")      return build_tab_view(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
@@ -1289,6 +1291,107 @@ element_ptr LayoutBuilder::build_band(const picojson::object& o)
 	ly.push_back(bg);
 	ly.push_back(child);
 	return ce::share(std::move(ly));
+}
+
+//---------------------------------------------------------------------------
+// tab_view — タブ + ページ (deck) を 1 要素として返す。
+//   {
+//     "type": "tab_view",
+//     "initial": 0,
+//     "tabs": [
+//       { "label": "...", "child": { ... pane ... }, "id": "..." (任意) },
+//       ...
+//     ]
+//   }
+// lib の deck_composite + ce::tab(text) (= basic_choice ベース) を組合せ。
+// クリックで該当 deck index に切替、 basic_choice の機構が兄弟タブを自動
+// deselect + view.refresh する。
+// id を付けるとタブボタンも id 解決対象 (shortcut 等で参照可)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
+{
+	const auto* tabs_arr = get_array(o, "tabs");
+	if (!tabs_arr || tabs_arr->empty()) {
+		SDL_Log("elements_modal: tab_view without 'tabs'");
+		return nullptr;
+	}
+
+	std::size_t initial = 0;
+	if (auto* v = get_field(o, "initial"); v && v->is<double>()) {
+		auto raw = static_cast<long long>(v->get<double>());
+		if (raw < 0) raw = 0;
+		if (static_cast<std::size_t>(raw) >= tabs_arr->size())
+			raw = static_cast<long long>(tabs_arr->size() - 1);
+		initial = static_cast<std::size_t>(raw);
+	}
+
+	// pages の deck と tab ボタン群を平行して構築。
+	ce::deck_composite deck;
+	std::vector<element_ptr> tab_btn_elems;
+	std::vector<std::shared_ptr<ce::basic_choice>> tab_choices;
+
+	for (auto& v : *tabs_arr) {
+		if (!v.is<picojson::object>()) continue;
+		const auto& tab_obj = v.get<picojson::object>();
+		std::string label = string_or(tab_obj, "label");
+
+		// tab(text) は内部で choice(button_styler{text}.rounded_top()...) を
+		// 返す。 = proxy<…, basic_choice>。 element_ptr に share してから
+		// dynamic_cast で basic_choice* を取り出す (on_click 仕掛け用)。
+		auto tab_btn = ce::share(ce::tab(label));
+		auto choice  = std::dynamic_pointer_cast<ce::basic_choice>(tab_btn);
+		if (!choice) {
+			SDL_Log("elements_modal: tab_view tab[%zu] choice cast failed",
+			        tab_btn_elems.size());
+			return nullptr;
+		}
+		register_id(tab_obj, tab_btn);
+		tab_btn_elems.push_back(tab_btn);
+		tab_choices.push_back(choice);
+
+		// pane を build。 child 省略時は空 element (空白 pane)。
+		auto* cv = get_field(tab_obj, "child");
+		auto pane = cv ? build(*cv) : nullptr;
+		if (!pane) pane = ce::share(ce::element{});
+		deck.push_back(pane);
+	}
+
+	if (tab_choices.empty()) {
+		SDL_Log("elements_modal: tab_view has no valid tabs");
+		return nullptr;
+	}
+
+	// deck を share して deck_element* も保持。
+	auto deck_shared = ce::share(std::move(deck));
+	auto deck_elem   = std::dynamic_pointer_cast<ce::deck_element>(deck_shared);
+	if (!deck_elem) {
+		SDL_Log("elements_modal: tab_view deck cast failed");
+		return nullptr;
+	}
+
+	// 各タブ click → deck.select(i)。 basic_choice の click 機構が兄弟タブ
+	// deselect + view.refresh をやってくれる。
+	for (std::size_t i = 0; i < tab_choices.size(); ++i) {
+		std::weak_ptr<ce::deck_element> wd = deck_elem;
+		tab_choices[i]->on_click = [i, wd](bool state) {
+			if (!state) return;
+			if (auto d = wd.lock()) d->select(i);
+		};
+	}
+
+	// 初期選択。 deck と tab choice 両方を揃える。
+	deck_elem->select(initial);
+	tab_choices[initial]->select(true);
+
+	// レイアウト: vtile(align_left(htile(tabs)), deck)。 notebook 既定と同じ。
+	ce::htile_composite tab_row;
+	for (auto& tb : tab_btn_elems) tab_row.push_back(tb);
+	auto tab_row_shared = ce::share(std::move(tab_row));
+
+	ce::vtile_composite root;
+	root.push_back(ce::share(ce::align_left(ce::hold_any(tab_row_shared))));
+	root.push_back(deck_shared);
+	return ce::share(std::move(root));
 }
 
 element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
