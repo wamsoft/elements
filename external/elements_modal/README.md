@@ -76,6 +76,7 @@ int main()
 | `size` | `[w, h]` | 推奨論理サイズ (run_modal は上限としてのみ使用、 fit-to-content で実サイズが決まる) |
 | `background` | `[r, g, b, a]` | content 描画前の塗りつぶし色 (省略時は透明 / 縁取りなし) |
 | `locale` | `"ja-JP"` 等 | label の `"locale"` 未指定時に使う既定ロケール (CJK 同形漢字の出し分け用) |
+| `pad_theme` | `"xbox"` / `"ps"` / `"switch"` / `"keyboard"` / `"none"` | content build 前に global pad theme を切り替える (任意)。 未指定なら呼出側がセットした既存値を維持。 `pad_icon` の name 解決に効く |
 | `content` | element | ルート要素 |
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 
@@ -94,6 +95,7 @@ int main()
 - `layer` — 重ね順。 `"children"`: 先頭が最前面。
 - `group` — タイトル付きフレーム。 `"title"` + `"label_size"` + `"child"`。
 - `scroller` — 縦スクロール領域。 `"child"`。
+- `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 
 #### 入力 / state widget
 - `label` — `"text"` + `"size"` (フォントサイズ比) + `"locale"`。
@@ -103,6 +105,29 @@ int main()
 - `slide_switch` — `"id"` + `"value"`。
 - `input_box` — `"placeholder"` + `"id"` + `"size"` (相対サイズ)。
 - `selection_menu` — `"id"` + `"options": [...]` + `"selected"` (初期 index)。
+
+#### console / pad 系 widget
+
+- `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (相対フォントサイズ、 default 1.0)。 button と同じく `initial_focus` / `close_on_click` をサポート。
+- `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"`。 同じく `initial_focus` / `close_on_click` をサポート。
+- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"`。 値変化で `value_t{int64_t index}` を発火。
+- `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ。
+- `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ。
+- `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
+- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
+- `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (相対、 default 1.0) + `"child"`。 child の最初の focusable を click-focus target にする。
+- `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
+  - **SVG モード (default)**: `"height": logical_pixels` (default 48) + `"colored": bool` (default false、 true で `_color_` バリアントを優先 — Xbox / PS の face button のみ対応、 無ければ通常版にフォールバック)
+  - **font モード**: `"use_font": true` + `"size": relative_size` (default 1.0) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)
+
+  theme は top-level `"pad_theme"` で切り替え。 名前 / theme で解決できない場合、 SVG モードでは灰色プレースホルダ、 font モードでは `[name]` フォールバック label を描画して layout は維持する。
+
+  `name` に使える論理名 (theme 横断):
+  - **Steam Input style**: `face_south` / `face_east` / `face_west` / `face_north` / `dpad_up` / `dpad_down` / `dpad_left` / `dpad_right` / `lb` / `rb` / `lt` / `rt` / `lstick` / `rstick` / `lstick_press` / `rstick_press` / `start` / `back` (= `select`) / `home` / `share`
+  - **theme-native** (xbox): `a` / `b` / `x` / `y` / `view` / `menu` / `share` / `guide`
+  - **theme-native** (ps): `cross` / `circle` / `square` / `triangle` / `options` / `touchpad` / `playstation` / `l1` / `r1` / `l2` / `r2` / `l3` / `r3`
+  - **theme-native** (switch): `a` / `b` / `x` / `y` / `l` / `r` / `zl` / `zr` / `plus` / `minus` / `capture` / `home` / `sl` / `sr`
+  - **theme-native** (keyboard): `keyboard_enter` / `keyboard_space` / `keyboard_escape` / `keyboard_arrow_{up,down,left,right}` / `keyboard_a`…`keyboard_z` / `keyboard_0`…`keyboard_9` 等
 
 ### Focusable / interactive 属性
 
@@ -223,6 +248,32 @@ auto const& result = sess.get_result();
 `render_to_buffer` の出力 `render_rect` は surface 論理座標での描画矩形 (中央配置済み)。 ホスト側はこの位置にテクスチャを貼る。
 
 `close_on_click=true` な button click で session が自動 finish するので、 host は `sess.finished()` でループ脱出を判定する。
+
+## pad_icon の前提セットアップ
+
+`pad_icon` を使う JSON を読む前に、 アセット配置とフォント登録をホスト側で
+済ませる必要がある (`elements_modal::init()` 自体は ThorVG init しかしない
+ので、 アセット系は呼出元の責務)。 最低限の流れ:
+
+```cpp
+#include <elements/element/pad_icon.hpp>
+
+namespace ce = cycfi::elements;
+
+// 1. Kenney Input Prompts pack を <theme>/{vector,*.ttf} の構成で配置した
+//    ベースディレクトリを設定 (default は空)
+ce::set_pad_icon_base_dir("resources/kenny_input_prompts");
+
+// 2. font モードを使う場合は TTF を elements の font system に登録
+ce::load_pad_icon_fonts();
+
+// 3. JSON 内に "pad_theme" が無い場合のデフォルトを (任意で) セット
+ce::set_pad_theme(ce::pad_theme::xbox);
+```
+
+ディレクトリ構成は `<base>/{xbox,ps,switch,keyboard}/vector/*.svg` +
+`<base>/<theme>/*.ttf`。 元 pack からの抽出スクリプト例は elements_console
+リポの `scripts/copy_kenney_assets.sh` を参照。
 
 ## ビルド
 
