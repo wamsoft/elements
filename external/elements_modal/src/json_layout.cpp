@@ -298,6 +298,12 @@ private:
 	element_ptr build_side_margin (const picojson::object& o, char side);
 	element_ptr build_hmin_size   (const picojson::object& o);
 	element_ptr build_vmin_size   (const picojson::object& o);
+	element_ptr build_cycle_picker(const picojson::object& o, int variant); // 0=cycle, 1=framed, 2=segmented
+	element_ptr build_invert_button(const picojson::object& o);
+	element_ptr build_ring_button (const picojson::object& o);
+	element_ptr build_slider      (const picojson::object& o);
+	element_ptr build_slider_with_range(const picojson::object& o);
+	element_ptr build_labeled_row (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
 	std::vector<element_ptr> build_children(const picojson::object& o);
@@ -352,6 +358,14 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "bottom_margin") return build_side_margin(o, 'b');
 	if (type == "hmin_size")     return build_hmin_size(o);
 	if (type == "vmin_size")     return build_vmin_size(o);
+	if (type == "cycle_picker")        return build_cycle_picker(o, 0);
+	if (type == "framed_cycle_picker") return build_cycle_picker(o, 1);
+	if (type == "segmented_picker")    return build_cycle_picker(o, 2);
+	if (type == "invert_button") return build_invert_button(o);
+	if (type == "ring_button")   return build_ring_button(o);
+	if (type == "slider")        return build_slider(o);
+	if (type == "slider_with_range") return build_slider_with_range(o);
+	if (type == "labeled_row")   return build_labeled_row(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
@@ -742,6 +756,214 @@ element_ptr LayoutBuilder::build_vmin_size(const picojson::object& o)
 	if (!child) return nullptr;
 	float h = static_cast<float>(number_or(o, "height", 0.0));
 	return ce::share(ce::vmin_size(h, ce::hold_any(child)));
+}
+
+//---------------------------------------------------------------------------
+// pickers — cycle / framed_cycle / segmented
+//   { "type": "cycle_picker",          "id": "...", "options": ["a","b",..], "initial": 0 }
+//   { "type": "framed_cycle_picker",   ... }
+//   { "type": "segmented_picker",      ... }
+// 選択変更時に event_callback(id, false, int64_t index)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int variant)
+{
+	std::string id = string_or(o, "id");
+	std::vector<std::string> opts;
+	if (auto* arr = get_array(o, "options")) {
+		opts.reserve(arr->size());
+		for (const auto& v : *arr) {
+			if (v.is<std::string>()) opts.push_back(v.get<std::string>());
+		}
+	}
+	if (opts.empty()) {
+		SDL_Log("elements_modal: %s without 'options'",
+			variant == 0 ? "cycle_picker"
+			: variant == 1 ? "framed_cycle_picker"
+			: "segmented_picker");
+		return nullptr;
+	}
+
+	std::size_t initial = 0;
+	if (auto* v = get_field(o, "initial"); v && v->is<double>()) {
+		auto raw = static_cast<long long>(v->get<double>());
+		if (raw < 0) raw = 0;
+		if (static_cast<size_t>(raw) >= opts.size()) raw = static_cast<long long>(opts.size() - 1);
+		initial = static_cast<std::size_t>(raw);
+	}
+
+	auto cb_id = id;
+	auto user_cb = _cb;
+	auto on_change = [cb_id, user_cb](std::size_t i) {
+		if (user_cb && !cb_id.empty()) {
+			user_cb(cb_id, /*is_button_click=*/false,
+			        value_t{static_cast<std::int64_t>(i)});
+		}
+	};
+
+	element_ptr shared;
+	if (variant == 0) {
+		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
+		p->on_change = std::move(on_change);
+		shared = p;
+	} else if (variant == 1) {
+		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
+		p->on_change = std::move(on_change);
+		shared = p;
+	} else {
+		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
+		p->on_change = std::move(on_change);
+		shared = p;
+	}
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// invert_button / ring_button — console 風スタイラ付きの momentary button
+//   { "type": "invert_button", "text": "OK", "id": "..." }
+//   { "type": "ring_button",   "text": "RUN", "id": "...", "outline": [r,g,b,a] }
+// 通常の button と同じく id があれば click で event_callback、
+// close_on_click: true で modal 終了。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
+{
+	auto text = string_or(o, "text");
+	std::string id = string_or(o, "id");
+	auto btn = ce::invert_button(text);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		btn.on_click = [cb_id, user_cb](bool) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
+		};
+	}
+	auto shared = ce::share(std::move(btn));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (!id.empty()) {
+		auto* v = get_field(o, "close_on_click");
+		if (v && v->is<bool>() && v->get<bool>()) {
+			_close_button_ids.insert(id);
+		}
+	}
+	return shared;
+}
+
+element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
+{
+	auto text = string_or(o, "text");
+	std::string id = string_or(o, "id");
+	ce::color outline = ce::colors::white;
+	if (auto* arr = get_array(o, "outline")) outline = parse_color(*arr);
+
+	auto btn = ce::ring_button(text, outline);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		btn.on_click = [cb_id, user_cb](bool) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
+		};
+	}
+	auto shared = ce::share(std::move(btn));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (!id.empty()) {
+		auto* v = get_field(o, "close_on_click");
+		if (v && v->is<bool>() && v->get<bool>()) {
+			_close_button_ids.insert(id);
+		}
+	}
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// slider — 0..1 範囲の素のスライダ
+//   { "type": "slider", "id": "...", "initial": 0.5 }
+// 値変化で event_callback(id, false, double pos)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_slider(const picojson::object& o)
+{
+	std::string id = string_or(o, "id");
+	double initial = number_or(o, "initial", 0.5);
+	if (initial < 0.0) initial = 0.0;
+	if (initial > 1.0) initial = 1.0;
+
+	auto sl = ce::slider(
+		ce::basic_thumb<16>(ce::colors::white),
+		ce::basic_track<6, false>(ce::colors::white.opacity(0.4f)),
+		initial
+	);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		sl.on_change = [cb_id, user_cb](double pos) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{pos});
+		};
+	}
+	auto shared = ce::share(std::move(sl));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// slider_with_range — min/max ラベル付き 0..1 スライダ
+//   { "type": "slider_with_range", "id": "...", "min": 0, "max": 100,
+//     "initial": 50 }
+// initial は min..max スケールで指定 (double)、 内部では 0..1 に正規化。
+// 値変化時に min + (max - min) * pos を value_t{double} で通知。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
+{
+	std::string id = string_or(o, "id");
+	int min_v = static_cast<int>(number_or(o, "min", 0.0));
+	int max_v = static_cast<int>(number_or(o, "max", 100.0));
+	if (max_v <= min_v) max_v = min_v + 1;
+	double initial_val = number_or(o, "initial", (min_v + max_v) * 0.5);
+	double span = static_cast<double>(max_v - min_v);
+	double pos = (initial_val - min_v) / span;
+	if (pos < 0.0) pos = 0.0;
+	if (pos > 1.0) pos = 1.0;
+
+	auto rs = ce::slider_with_range(min_v, max_v, pos);
+	// rs.focus は shared_ptr<element>。 on_change を仕込むには basic_slider_base
+	// に dynamic_cast する必要あり。 lib の slider() factory は
+	// basic_slider<Thumb,Track,basic_slider_base> を返すので継承関係 OK。
+	if (!id.empty()) {
+		if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(rs.focus)) {
+			auto cb_id = id;
+			auto user_cb = _cb;
+			double mn = static_cast<double>(min_v);
+			double sp = span;
+			sb->on_change = [cb_id, user_cb, mn, sp](double p) {
+				if (user_cb) user_cb(cb_id, /*is_button_click=*/false,
+				                     value_t{mn + sp * p});
+			};
+		}
+	}
+	register_id(o, rs.focus);
+	note_initial_focus(o, rs.focus);
+	return rs.widget;
+}
+
+//---------------------------------------------------------------------------
+// labeled_row — 左カラムに固定幅ラベル + 残りに child
+//   { "type": "labeled_row", "label": "Volume", "label_width": 180,
+//     "child": { ... } }
+// child の最初の要素を click-focus target にする (mouse click でラベル領域を
+// 叩いても child に focus が飛ぶ)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
+{
+	auto child = build_child(o);
+	if (!child) {
+		SDL_Log("elements_modal: labeled_row without 'child'");
+		return nullptr;
+	}
+	auto text = string_or(o, "label");
+	float lw = static_cast<float>(number_or(o, "label_width", 180.0));
+	return ce::share(ce::labeled_row(std::move(text), child, lw));
 }
 
 //---------------------------------------------------------------------------
