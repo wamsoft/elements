@@ -366,6 +366,7 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "slider")        return build_slider(o);
 	if (type == "slider_with_range") return build_slider_with_range(o);
 	if (type == "labeled_row")   return build_labeled_row(o);
+	if (type == "filler")        return ce::share(ce::element{});
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
@@ -550,14 +551,17 @@ element_ptr LayoutBuilder::build_vsize(const picojson::object& o)
 
 element_ptr LayoutBuilder::build_hspacer(const picojson::object& o)
 {
+	// horizontal fixed + vertical stretchy。 fixed_size 両軸固定にすると
+	// 親の vtile/htile が max を 0 まで縮めるので、 軸別ラッパを使う。
 	float w = static_cast<float>(number_or(o, "width", 0.0));
-	return ce::share(ce::fixed_size(ce::point{w, 0.0f}, ce::element{}));
+	return ce::share(ce::hsize(w, ce::element{}));
 }
 
 element_ptr LayoutBuilder::build_vspacer(const picojson::object& o)
 {
+	// vertical fixed + horizontal stretchy。 build_hspacer と対称。
 	float h = static_cast<float>(number_or(o, "height", 0.0));
-	return ce::share(ce::fixed_size(ce::point{0.0f, h}, ce::element{}));
+	return ce::share(ce::vsize(h, ce::element{}));
 }
 
 element_ptr LayoutBuilder::build_spacer(const picojson::object& o)
@@ -830,7 +834,8 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 {
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
-	auto btn = ce::invert_button(text);
+	float size = static_cast<float>(number_or(o, "size", 1.0));
+	auto btn = ce::invert_button(text, size);
 	if (!id.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
@@ -856,8 +861,9 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	std::string id = string_or(o, "id");
 	ce::color outline = ce::colors::white;
 	if (auto* arr = get_array(o, "outline")) outline = parse_color(*arr);
+	float size = static_cast<float>(number_or(o, "size", 1.0));
 
-	auto btn = ce::ring_button(text, outline);
+	auto btn = ce::ring_button(text, outline, size);
 	if (!id.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
@@ -963,7 +969,8 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 	}
 	auto text = string_or(o, "label");
 	float lw = static_cast<float>(number_or(o, "label_width", 180.0));
-	return ce::share(ce::labeled_row(std::move(text), child, lw));
+	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+	return ce::share(ce::labeled_row(std::move(text), child, lw, fs));
 }
 
 //---------------------------------------------------------------------------

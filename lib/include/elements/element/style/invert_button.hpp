@@ -24,8 +24,8 @@ namespace cycfi::elements
    {
       using base_type = invert_button_styler;
 
-      explicit invert_button_styler(std::string text)
-       : _text(std::move(text))
+      explicit invert_button_styler(std::string text, float size = 1.0f)
+       : _text(std::move(text)), _size(size)
       {}
 
       std::string const& get_text() const override { return _text; }
@@ -37,10 +37,13 @@ namespace cycfi::elements
       color get_active_body_color() const override   { return colors::white; }
       color get_text_color() const override          { return colors::white; }
       float get_corner_radius() const override       { return 0.0f; }
+      float get_size() const override                { return _size; }
+      void  set_size(float s)                        { _size = s; }
 
    private:
 
       std::string _text;
+      float       _size;
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -57,8 +60,8 @@ namespace cycfi::elements
       static constexpr float outline_gap   = 2.0f;
       static constexpr float reserve       = outline_width + outline_gap;
 
-      ring_button_styler(std::string text, color outline)
-       : _text(std::move(text)), _outline(outline)
+      ring_button_styler(std::string text, color outline, float size = 1.0f)
+       : _text(std::move(text)), _outline(outline), _size(size)
       {}
 
       std::string const& get_text() const override { return _text; }
@@ -71,11 +74,14 @@ namespace cycfi::elements
       color get_active_body_color() const override   { return colors::black; }
       color get_text_color() const override          { return colors::white; }
       float get_corner_radius() const override       { return 0.0f; }
+      float get_size() const override                { return _size; }
+      void  set_size(float s)                        { _size = s; }
 
    private:
 
       std::string _text;
       color       _outline;
+      float       _size;
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -83,14 +89,14 @@ namespace cycfi::elements
    //   invert_button("OK")
    //   ring_button("CANCEL", colors::indian_red)
    ////////////////////////////////////////////////////////////////////////////
-   inline auto invert_button(std::string text)
+   inline auto invert_button(std::string text, float size = 1.0f)
    {
-      return momentary_button(invert_button_styler{std::move(text)});
+      return momentary_button(invert_button_styler{std::move(text), size});
    }
 
-   inline auto ring_button(std::string text, color outline)
+   inline auto ring_button(std::string text, color outline, float size = 1.0f)
    {
-      return momentary_button(ring_button_styler{std::move(text), outline});
+      return momentary_button(ring_button_styler{std::move(text), outline, size});
    }
 }
 

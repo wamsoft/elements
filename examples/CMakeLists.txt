@@ -33,3 +33,9 @@ add_subdirectory(multilingual_widgets)
 add_subdirectory(multilingual_layout_test)
 add_subdirectory(key_driven)
 add_subdirectory(console_menu)
+
+# console_screens は elements_modal に依存するので、 そのターゲットが
+# あるとき (= ELEMENTS_HOST_UI_LIBRARY=sdl + ELEMENTS_BUILD_MODAL=ON) のみ。
+if (TARGET elements_modal)
+   add_subdirectory(console_screens)
+endif()

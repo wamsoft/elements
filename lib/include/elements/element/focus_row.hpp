@@ -71,10 +71,13 @@ namespace cycfi::elements
    inline auto labeled_row(
       std::string label_text,
       element_ptr control,
-      float       label_width = 180.0f)
+      float       label_width = 180.0f,
+      float       font_size   = 1.0f)
    {
       auto lbl = hsize(label_width, align_left(hmargin({8, 8},
-         label(std::move(label_text)).font_color(colors::white)
+         label(std::move(label_text))
+            .font_color(colors::white)
+            .relative_font_size(font_size)
       )));
       auto row = htile(
          std::move(lbl),
@@ -89,10 +92,13 @@ namespace cycfi::elements
       std::string label_text,
       element_ptr visual,
       element_ptr focus_target,
-      float       label_width = 180.0f)
+      float       label_width = 180.0f,
+      float       font_size   = 1.0f)
    {
       auto lbl = hsize(label_width, align_left(hmargin({8, 8},
-         label(std::move(label_text)).font_color(colors::white)
+         label(std::move(label_text))
+            .font_color(colors::white)
+            .relative_font_size(font_size)
       )));
       auto row = htile(
          std::move(lbl),
