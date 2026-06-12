@@ -100,7 +100,7 @@ int main()
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 
 #### 入力 / state widget
-- `label` — `"text"` + `"size"` (フォントサイズ比) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。
+- `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。
 - `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
@@ -110,17 +110,17 @@ int main()
 
 #### console / pad 系 widget
 
-- `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (相対フォントサイズ、 default 1.0)。 button と同じく `initial_focus` / `close_on_click` をサポート。
-- `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"`。 同じく `initial_focus` / `close_on_click` をサポート。
-- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (内部テキストの相対サイズ、 default 1.0)。 値変化で `value_t{int64_t index}` を発火。
+- `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (**px 絶対**) または `"size_scale"` (倍率)。 button と同じく `initial_focus` / `close_on_click` をサポート。
+- `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"` (px) / `"size_scale"` (倍率)。 同じく `initial_focus` / `close_on_click` をサポート。
+- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
 - `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
 - `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
-- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (min/max ラベルの相対サイズ、 default 1.0)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
-- `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (相対、 default 1.0) + `"child"`。 child の最初の focusable を click-focus target にする。
+- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
+- `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (**px 絶対**) または `"font_size_scale"` (倍率) + `"child"`。 child の最初の focusable を click-focus target にする。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
   - **SVG モード (default)**: `"height": logical_pixels` (default 48) + `"colored": bool` (default false、 true で `_color_` バリアントを優先 — Xbox / PS の face button のみ対応、 無ければ通常版にフォールバック)
-  - **font モード**: `"use_font": true` + `"size": relative_size` (default 1.0) + `"color": [r,g,b,a]` (任意、 default 白) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)。
+  - **font モード**: `"use_font": true` + `"size": px` (**px 絶対**) または `"size_scale"` (倍率) + `"color": [r,g,b,a]` (任意、 default 白) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)。
 
   `"color"` は **font モード時のみ反映**。 SVG モードでは元 SVG の色がそのまま出るため指定は無視され警告が出る (SVG の tint は canvas API 拡張が必要で現状未対応)。 アイコンに任意色を当てたい場合は `"use_font": true` を選ぶ。
 
@@ -132,6 +132,17 @@ int main()
   - **theme-native** (ps): `cross` / `circle` / `square` / `triangle` / `options` / `touchpad` / `playstation` / `l1` / `r1` / `l2` / `r2` / `l3` / `r3`
   - **theme-native** (switch): `a` / `b` / `x` / `y` / `l` / `r` / `zl` / `zr` / `plus` / `minus` / `capture` / `home` / `sl` / `sr`
   - **theme-native** (keyboard): `keyboard_enter` / `keyboard_space` / `keyboard_escape` / `keyboard_arrow_{up,down,left,right}` / `keyboard_a`…`keyboard_z` / `keyboard_0`…`keyboard_9` 等
+
+### フォントサイズ指定の方針
+
+ウィジェットの `size` / `font_size` は **ピクセル絶対値**。 width / height がピクセルである JSON 文化に合わせて、 文字サイズも同じ単位系。 同じウィジェットが代わりに受ける `size_scale` / `font_size_scale` はテーマ既定 (`theme.label_font._size`、 通常 14px) に対する**倍率**。
+
+- `"size": 28` → 28px
+- `"size_scale": 2.0` → テーマ既定 × 2.0 (= 28px、 既定が 14 のとき)
+- 両方指定された場合は `size` 優先 (px が勝つ)
+- 未指定はテーマ既定 (= 14px / scale 1.0)
+
+倍率を残してあるのは、 テーマを差替えたときに連動して大きくしたいケース、 もしくは「基準の何倍」と書きたいケース用。 新規 JSON は基本 px を使う。
 
 ### Focusable / interactive 属性
 

@@ -160,6 +160,51 @@ const picojson::array* get_array(const picojson::object& o, const char* key)
 	return nullptr;
 }
 
+//---------------------------------------------------------------------------
+// フォントサイズ解決ヘルパ。
+//
+// "size" / "font_size" は **絶対ピクセル**。 "size_scale" / "font_size_scale"
+// は **テーマ既定 (label_font._size、 通常 14px) に対する倍率**。 両方
+// 指定された場合は size が優先。 どちらも未指定なら theme 既定 (= 1.0
+// 倍率) と等価の px を返す。
+//
+// resolve_font_px: px 値そのまま (label.font_size() に渡す用)。
+// resolve_font_scale: lib widget が内部で `font._size * scale` を計算する
+// 都合上、 dispatch で px を scale に戻して渡すための変換。 theme の base
+// が 14 のとき "size": 28 → scale 2.0 になる。
+//---------------------------------------------------------------------------
+float resolve_font_px(const picojson::object& o,
+                      const char* size_key,
+                      const char* scale_key)
+{
+	if (auto* v = get_field(o, size_key); v && v->is<double>()) {
+		return static_cast<float>(v->get<double>());
+	}
+	float base = cycfi::elements::get_theme().label_font._size;
+	if (auto* v = get_field(o, scale_key); v && v->is<double>()) {
+		return base * static_cast<float>(v->get<double>());
+	}
+	return base;
+}
+
+float resolve_font_scale(const picojson::object& o,
+                         const char* size_key,
+                         const char* scale_key)
+{
+	float base = cycfi::elements::get_theme().label_font._size;
+	if (base <= 0.0f) base = 14.0f;  // 念のため div-by-zero 回避
+	return resolve_font_px(o, size_key, scale_key) / base;
+}
+
+// 指定の有無だけ判定。 default 適用させたくない場面用。
+bool has_font_field(const picojson::object& o,
+                    const char* size_key,
+                    const char* scale_key)
+{
+	return get_field(o, size_key) != nullptr ||
+	       get_field(o, scale_key) != nullptr;
+}
+
 int int_at(const picojson::array& arr, size_t i, int dflt = 0)
 {
 	if (i < arr.size() && arr[i].is<double>()) {
@@ -552,12 +597,10 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	}
 	std::string locale = string_or(o, "locale", _default_locale);
 
-	bool has_size = false;
-	float sz = 1.0f;
-	if (auto* v = get_field(o, "size"); v && v->is<double>()) {
-		has_size = true;
-		sz = static_cast<float>(v->get<double>());
-	}
+	// "size" = px 絶対 / "size_scale" = テーマ倍率 (両方なしなら theme 既定)。
+	// label は font_size(px) を直接呼べる API なので px 値を渡す。
+	bool has_size = has_font_field(o, "size", "size_scale");
+	float sz = resolve_font_px(o, "size", "size_scale");
 	bool has_color = false;
 	ce::color col;
 	if (auto* arr = get_array(o, "color")) {
@@ -573,7 +616,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	auto base = ce::label(text);
 	element_ptr out;
 	if (has_color && has_size) {
-		auto e = base.font_color(col).relative_font_size(sz);
+		auto e = base.font_color(col).font_size(sz);
 		if (locale.empty()) out = ce::share(std::move(e));
 		else                out = ce::share(e.locale(std::move(locale)));
 	} else if (has_color) {
@@ -581,7 +624,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		if (locale.empty()) out = ce::share(std::move(e));
 		else                out = ce::share(e.locale(std::move(locale)));
 	} else if (has_size) {
-		auto e = base.relative_font_size(sz);
+		auto e = base.font_size(sz);
 		if (locale.empty()) out = ce::share(std::move(e));
 		else                out = ce::share(e.locale(std::move(locale)));
 	} else {
@@ -971,7 +1014,8 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		initial = static_cast<std::size_t>(raw);
 	}
 
-	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+	// picker は内部で `font._size * _font_size` 計算するので scale を渡す。
+	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
 
 	auto cb_id = id;
 	auto user_cb = _cb;
@@ -1019,7 +1063,9 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 {
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
-	float size = static_cast<float>(number_or(o, "size", 1.0));
+	// lib の invert_button styler は internal で `font._size * scale` する
+	// ので、 JSON 側の px をテーマ base で割って scale 化して渡す。
+	float size = resolve_font_scale(o, "size", "size_scale");
 	auto btn = ce::invert_button(text, size);
 	if (!id.empty()) {
 		auto cb_id = id;
@@ -1050,7 +1096,7 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	std::string id = string_or(o, "id");
 	ce::color outline = ce::colors::white;
 	if (auto* arr = get_array(o, "outline")) outline = parse_color(*arr);
-	float size = static_cast<float>(number_or(o, "size", 1.0));
+	float size = resolve_font_scale(o, "size", "size_scale");
 
 	auto btn = ce::ring_button(text, outline, size);
 	if (!id.empty()) {
@@ -1129,7 +1175,9 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	if (pos < 0.0) pos = 0.0;
 	if (pos > 1.0) pos = 1.0;
 
-	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+	// slider_with_range の font_size は内部 label.relative_font_size 用なので
+	// scale で渡す。
+	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
 	auto rs = ce::slider_with_range(min_v, max_v, pos, fs);
 	// rs.focus は shared_ptr<element>。 on_change を仕込むには basic_slider_base
 	// に dynamic_cast する必要あり。 lib の slider() factory は
@@ -1197,9 +1245,9 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	}
 
 	if (use_font) {
-		float size = static_cast<float>(number_or(o, "size", 1.0));
-		// font mode のロジックは lib の pad_font_icon に集約済。 codepoint
-		// 解決失敗時の `[name]` フォールバックも内部で同じ色を適用する。
+		// pad_font_icon の size は内部で label.relative_font_size を呼ぶので
+		// scale を渡す。 JSON 側の "size" px をテーマ base で割って変換。
+		float size = resolve_font_scale(o, "size", "size_scale");
 		return ce::pad_font_icon(name, size, tint);
 	}
 	float h = static_cast<float>(number_or(o, "height", 48.0));
@@ -1252,7 +1300,8 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 	}
 	auto text = string_or(o, "label");
 	float lw = static_cast<float>(number_or(o, "label_width", 180.0));
-	float fs = static_cast<float>(number_or(o, "font_size", 1.0));
+	// labeled_row の font_size は内部 label.relative_font_size 用 scale。
+	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
 	return ce::share(ce::labeled_row(std::move(text), child, lw, fs));
 }
 
