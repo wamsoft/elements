@@ -52,6 +52,8 @@ namespace cycfi::elements
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
 
+      bool                    focused() const { return _has_focus; }
+
       on_change_function      on_change;
 
    private:
@@ -102,6 +104,8 @@ namespace cycfi::elements
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
 
+      bool                    focused() const { return _has_focus; }
+
       on_change_function      on_change;
 
       static constexpr float arrow_box_w = 36.0f;
@@ -151,6 +155,8 @@ namespace cycfi::elements
 
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
+
+      bool                    focused() const { return _has_focus; }
 
       on_change_function      on_change;
 

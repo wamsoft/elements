@@ -107,6 +107,11 @@ struct overlay_session::impl
 	// 任意の外部 callback (ホスト側の event handler ブリッジ用など)
 	event_callback external_cb;
 
+	// focus 変化に追従する「変数 → label set_text」の poll。 毎 render 前と
+	// 主要な入力イベント処理後に呼ぶ。 JSON 側に vars_on_focus / text_var が
+	// 一切ない場合は null。
+	std::function<void()> focus_poll;
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -177,6 +182,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->view_h = view_height;
 	_impl->scale  = pixel_scale;
 	_impl->close_button_ids = layout.close_button_ids;
+	_impl->focus_poll = std::move(layout.focus_poll);
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -245,6 +251,9 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 		return false;
 	}
 	if (_impl->finished_) return false;
+
+	// 描画前に focus poll: 変数連動 label の text を更新する。
+	if (_impl->focus_poll) _impl->focus_poll();
 
 	const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
 	std::fill_n(pixel_buffer, pixel_count, 0u);

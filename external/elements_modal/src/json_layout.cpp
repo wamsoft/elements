@@ -247,6 +247,45 @@ std::string preprocess_jsonc(const std::string& in)
 }
 
 //---------------------------------------------------------------------------
+// VariableStore — 名前付き文字列変数 + subscriber notify。
+// JSON top-level "vars": {name: value} で初期化、 focusable widget の
+// "vars_on_focus": {name: value} で書込、 label の "text_var": "name" で読込。
+// poll closure が focus 変化を検知して write を実行 → subscribers (label の
+// set_text closure) が呼ばれる。
+//---------------------------------------------------------------------------
+class VariableStore
+{
+public:
+	void set_initial(const std::string& name, std::string value)
+	{
+		_values[name] = std::move(value);
+	}
+	const std::string* get(const std::string& name) const
+	{
+		auto it = _values.find(name);
+		return it == _values.end() ? nullptr : &it->second;
+	}
+	void set(const std::string& name, const std::string& value)
+	{
+		auto& cur = _values[name];
+		if (cur == value) return;
+		cur = value;
+		auto it = _subs.find(name);
+		if (it == _subs.end()) return;
+		for (auto& cb : it->second) cb(cur);
+	}
+	void subscribe(const std::string& name,
+	               std::function<void(const std::string&)> cb)
+	{
+		_subs[name].push_back(std::move(cb));
+	}
+
+private:
+	std::map<std::string, std::string> _values;
+	std::map<std::string, std::vector<std::function<void(const std::string&)>>> _subs;
+};
+
+//---------------------------------------------------------------------------
 // LayoutBuilder — element ツリーを再帰生成
 //---------------------------------------------------------------------------
 class LayoutBuilder
@@ -267,12 +306,51 @@ public:
 	// "close_on_click": true が指定された button の id 集合。
 	std::set<std::string> take_close_button_ids() { return std::move(_close_button_ids); }
 
+	// VariableStore は labels の subscribers が参照するので shared_ptr で持つ。
+	// 親 (top-level) が "vars" 初期値を流し込むために借用 setter。
+	std::shared_ptr<VariableStore> vars() { return _vars; }
+
+	// focus poll クロージャを生成。 毎フレーム呼ぶと現在の focus を見て
+	// vars_on_focus を _vars に流し込み、 subscribers (label set_text) を発火。
+	// take 系メソッドなので 1 回しか呼ばない。
+	std::function<void()> take_focus_poll();
+
 private:
 	event_callback _cb;
 	std::string _default_locale;
 	element_ptr _initial_focus;
 	std::map<std::string, element_ptr> _id_to_element;
 	std::set<std::string> _close_button_ids;
+	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
+	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
+	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
+
+	// focusable build site で、 id と「現在 focus されているか」を返す
+	// closure を _focusables に積む。 typed shared_ptr を weak_ptr で保持。
+	template <typename P>
+	void note_focusable(const std::string& id, std::shared_ptr<P> ptr)
+	{
+		if (id.empty() || !ptr) return;
+		std::weak_ptr<P> w = ptr;
+		_focusables.emplace_back(id, [w]() {
+			auto p = w.lock();
+			return p && p->focused();
+		});
+	}
+
+	// "vars_on_focus": {name: value} を JSON object から読んで _vars_on_focus[id]
+	// に登録。 値が文字列でない要素は無視。
+	void note_vars_on_focus(const picojson::object& o, const std::string& id)
+	{
+		if (id.empty()) return;
+		auto* v = get_field(o, "vars_on_focus");
+		if (!v || !v->is<picojson::object>()) return;
+		const auto& obj = v->get<picojson::object>();
+		auto& m = _vars_on_focus[id];
+		for (auto& kv : obj) {
+			if (kv.second.is<std::string>()) m[kv.first] = kv.second.get<std::string>();
+		}
+	}
 
 	// type ごとのビルダ
 	element_ptr build_label       (const picojson::object& o);
@@ -305,6 +383,7 @@ private:
 	element_ptr build_slider_with_range(const picojson::object& o);
 	element_ptr build_labeled_row (const picojson::object& o);
 	element_ptr build_pad_icon    (const picojson::object& o);
+	element_ptr build_band        (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
 	std::vector<element_ptr> build_children(const picojson::object& o);
@@ -337,9 +416,13 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "margin")        return build_margin(o);
 	if (type == "box")           return build_box(o);
 	if (type == "layer")         return build_layer(o);
-	if (type == "align_center")  return build_align(o, "center");
-	if (type == "align_left")    return build_align(o, "left");
-	if (type == "align_right")   return build_align(o, "right");
+	if (type == "align_center")        return build_align(o, "center");
+	if (type == "align_left")          return build_align(o, "left");
+	if (type == "align_right")         return build_align(o, "right");
+	if (type == "align_top")           return build_align(o, "top");
+	if (type == "align_middle")        return build_align(o, "middle");
+	if (type == "align_bottom")        return build_align(o, "bottom");
+	if (type == "align_center_middle") return build_align(o, "center_middle");
 	if (type == "hsize")         return build_hsize(o);
 	if (type == "vsize")         return build_vsize(o);
 	if (type == "hspacer")       return build_hspacer(o);
@@ -369,6 +452,7 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "labeled_row")   return build_labeled_row(o);
 	if (type == "filler")        return ce::share(ce::element{});
 	if (type == "pad_icon")      return build_pad_icon(o);
+	if (type == "band")          return build_band(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
@@ -422,21 +506,107 @@ void LayoutBuilder::register_id(const picojson::object& o,
 }
 
 //---------------------------------------------------------------------------
+// take_focus_poll — 毎フレーム呼ぶ closure を生成して返す。
+// 内部状態 (vars / vars_on_focus / focusables / last_focused) を closure に
+// move + shared 取込。 LayoutBuilder 死亡後も生存する。
+//---------------------------------------------------------------------------
+std::function<void()> LayoutBuilder::take_focus_poll()
+{
+	auto vars            = _vars;
+	auto vars_on_focus   = std::move(_vars_on_focus);
+	auto focusables      = std::move(_focusables);
+	auto last_focused_id = std::make_shared<std::string>();
+	// "" は「何も focus されていない」を表す sentinel。 初回はその状態と
+	// 比較されるので、 初回 focus に対して必ず 1 回 set される。
+	return [vars, vars_on_focus, focusables, last_focused_id]() {
+		std::string current;
+		for (auto& kv : focusables) {
+			if (kv.second()) { current = kv.first; break; }
+		}
+		if (current == *last_focused_id) return;
+		*last_focused_id = current;
+		if (current.empty()) return;
+		auto it = vars_on_focus.find(current);
+		if (it == vars_on_focus.end()) return;
+		for (auto& var_kv : it->second) {
+			vars->set(var_kv.first, var_kv.second);
+		}
+	};
+}
+
+//---------------------------------------------------------------------------
 // 各 element 種別
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_label(const picojson::object& o)
 {
-	auto text = string_or(o, "text");
+	// "text_var": "varname" 指定があれば初期 text は VariableStore から取得し、
+	// 同時に subscriber を仕掛けて変数更新で set_text が呼ばれるようにする。
+	// "text" が併記されていれば fallback として使う。
+	std::string text_var = string_or(o, "text_var");
+	std::string text;
+	if (!text_var.empty()) {
+		if (auto* init = _vars->get(text_var)) text = *init;
+		else                                    text = string_or(o, "text");
+	} else {
+		text = string_or(o, "text");
+	}
 	std::string locale = string_or(o, "locale", _default_locale);
 
-	auto base = ce::label(text);
+	bool has_size = false;
+	float sz = 1.0f;
 	if (auto* v = get_field(o, "size"); v && v->is<double>()) {
-		auto sized = base.relative_font_size(static_cast<float>(v->get<double>()));
-		if (!locale.empty()) return ce::share(sized.locale(std::move(locale)));
-		return ce::share(std::move(sized));
+		has_size = true;
+		sz = static_cast<float>(v->get<double>());
 	}
-	if (!locale.empty()) return ce::share(base.locale(std::move(locale)));
-	return ce::share(std::move(base));
+	bool has_color = false;
+	ce::color col;
+	if (auto* arr = get_array(o, "color")) {
+		has_color = true;
+		col = parse_color(*arr);
+	}
+
+	// label builder API は font_color / relative_font_size を呼ぶごとに
+	// ラッパ型が変わるチェーン。 直接代入で繋げないので分岐する。
+	// locale は文字列空なら付けない (default_locale 含む)。
+	// 三項演算子 ?: は両 branch の shared_ptr 型が違うとマッチ失敗するので
+	// if/else で element_ptr 代入する。
+	auto base = ce::label(text);
+	element_ptr out;
+	if (has_color && has_size) {
+		auto e = base.font_color(col).relative_font_size(sz);
+		if (locale.empty()) out = ce::share(std::move(e));
+		else                out = ce::share(e.locale(std::move(locale)));
+	} else if (has_color) {
+		auto e = base.font_color(col);
+		if (locale.empty()) out = ce::share(std::move(e));
+		else                out = ce::share(e.locale(std::move(locale)));
+	} else if (has_size) {
+		auto e = base.relative_font_size(sz);
+		if (locale.empty()) out = ce::share(std::move(e));
+		else                out = ce::share(e.locale(std::move(locale)));
+	} else {
+		if (locale.empty()) out = ce::share(std::move(base));
+		else                out = ce::share(base.locale(std::move(locale)));
+	}
+
+	// text_var 指定があれば、 VariableStore の更新で label を set_text する
+	// subscriber を仕掛ける。 label は default_label_styler (element +
+	// text_reader) + basic_label_styler_base (Base + text_writer) なので、
+	// text_writer インタフェース (set_text 持ち) に dynamic_cast する。
+	// static_text_box ではない (text_box は別系統)。
+	if (!text_var.empty()) {
+		if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(out)) {
+			std::weak_ptr<ce::text_writer> w = sp;
+			_vars->subscribe(text_var, [w](const std::string& v) {
+				if (auto p = w.lock()) p->set_text(v);
+			});
+		} else {
+			SDL_Log("elements_modal: label with text_var=\"%s\" — "
+			        "text_writer 未継承で set_text 仕掛け失敗",
+			        text_var.c_str());
+		}
+	}
+	return out;
 }
 
 element_ptr LayoutBuilder::build_button(const picojson::object& o)
@@ -529,9 +699,13 @@ element_ptr LayoutBuilder::build_align(const picojson::object& o, const std::str
 {
 	auto child = build_child(o);
 	if (!child) return nullptr;
-	if (kind == "center") return ce::share(ce::align_center(ce::hold_any(child)));
-	if (kind == "left")   return ce::share(ce::align_left(ce::hold_any(child)));
-	if (kind == "right")  return ce::share(ce::align_right(ce::hold_any(child)));
+	if (kind == "center")        return ce::share(ce::align_center(ce::hold_any(child)));
+	if (kind == "left")          return ce::share(ce::align_left(ce::hold_any(child)));
+	if (kind == "right")         return ce::share(ce::align_right(ce::hold_any(child)));
+	if (kind == "top")           return ce::share(ce::align_top(ce::hold_any(child)));
+	if (kind == "middle")        return ce::share(ce::align_middle(ce::hold_any(child)));
+	if (kind == "bottom")        return ce::share(ce::align_bottom(ce::hold_any(child)));
+	if (kind == "center_middle") return ce::share(ce::align_center_middle(ce::hold_any(child)));
 	return child;
 }
 
@@ -813,20 +987,24 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		note_focusable(id, p);
 		shared = p;
 	} else if (variant == 1) {
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		note_focusable(id, p);
 		shared = p;
 	} else {
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		note_focusable(id, p);
 		shared = p;
 	}
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	note_vars_on_focus(o, id);
 	return shared;
 }
 
@@ -853,6 +1031,10 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	note_vars_on_focus(o, id);
 	if (!id.empty()) {
 		auto* v = get_field(o, "close_on_click");
 		if (v && v->is<bool>() && v->get<bool>()) {
@@ -881,6 +1063,10 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	note_vars_on_focus(o, id);
 	if (!id.empty()) {
 		auto* v = get_field(o, "close_on_click");
 		if (v && v->is<bool>() && v->get<bool>()) {
@@ -917,6 +1103,10 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	auto shared = ce::share(std::move(sl));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
+		note_focusable(id, sb);
+	}
+	note_vars_on_focus(o, id);
 	return shared;
 }
 
@@ -958,6 +1148,10 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	}
 	register_id(o, rs.focus);
 	note_initial_focus(o, rs.focus);
+	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(rs.focus)) {
+		note_focusable(id, sb);
+	}
+	note_vars_on_focus(o, id);
 	return rs.widget;
 }
 
@@ -1036,6 +1230,33 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 		colored = v->get<bool>();
 	}
 	return ce::share(ce::pad_icon(name, h, colored));
+}
+
+//---------------------------------------------------------------------------
+// band — 単色背景帯。 child があれば帯の上に重ねる。
+//   { "type": "band", "color": [r,g,b,a], "child": { ... } }
+// child を省略すると単に塗りつぶし矩形。 高さや幅は親の vsize / hsize で
+// 制御する想定 (band 自体はサイズ持たず、 親の枠を埋める)。
+// 将来拡張ポイント: "gradient": {...} / "image": "path" などを足すときも
+// この dispatch 内で背景生成を分岐する。 単色 default は color。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_band(const picojson::object& o)
+{
+	ce::color c = ce::rgba(0, 0, 0, 255);
+	if (auto* arr = get_array(o, "color")) c = parse_color(*arr);
+
+	auto bg = ce::share(ce::box(c));
+
+	auto child = build_child(o);
+	if (!child) return bg;
+
+	// layer_composite は push 順末尾が最前面 (build_layer も rbegin..rend で
+	// 逆順 push して JSON children[0] を最後に push している)。 ここでは
+	// bg → child の順に push して child を前面に。
+	ce::layer_composite ly;
+	ly.push_back(bg);
+	ly.push_back(child);
+	return ce::share(std::move(ly));
 }
 
 element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
@@ -1264,6 +1485,17 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 		builder.set_default_locale(v->get<std::string>());
 	}
 
+	// "vars": {name: value} — VariableStore に初期値を登録。 build_label
+	// の text_var が参照する。 build より先に流し込んでおく。
+	if (auto* v = get_field(o, "vars"); v && v->is<picojson::object>()) {
+		auto vars = builder.vars();
+		for (auto& kv : v->get<picojson::object>()) {
+			if (kv.second.is<std::string>()) {
+				vars->set_initial(kv.first, kv.second.get<std::string>());
+			}
+		}
+	}
+
 	element_ptr content;
 	if (auto* v = get_field(o, "content")) content = builder.build(*v);
 
@@ -1290,6 +1522,8 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 		result.apply_input = build_input_applier(v->get<picojson::object>(),
 			builder.take_id_map());
 	}
+	// take 系は最後に。 内部 state を move する。
+	result.focus_poll = builder.take_focus_poll();
 	return result;
 }
 

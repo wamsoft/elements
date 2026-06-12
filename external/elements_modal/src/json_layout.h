@@ -45,6 +45,11 @@ struct parsed_layout
 	//! ホスト collector はこの set に id が含まれる button click でのみ
 	//! 終了フラグを立てる。 含まれない button click は外部 callback だけ発火。
 	std::set<std::string> close_button_ids;
+
+	//! 毎フレーム呼ぶと現在 focus されている要素の "vars_on_focus" を JSON 内
+	//! VariableStore に反映し、 同じ変数を "text_var" で見ている label に
+	//! set_text が走る。 ホストは render 前 or input 処理後に呼ぶ。 null 可。
+	std::function<void()> focus_poll;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。

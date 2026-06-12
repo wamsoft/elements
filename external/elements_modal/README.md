@@ -79,6 +79,7 @@ int main()
 | `pad_theme` | `"xbox"` / `"ps"` / `"switch"` / `"keyboard"` / `"none"` | content build 前に global pad theme を切り替える (任意)。 未指定なら呼出側がセットした既存値を維持。 `pad_icon` の name 解決に効く |
 | `content` | element | ルート要素 |
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
+| `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
 
 ### 要素タイプ (`"type"`)
 
@@ -90,15 +91,16 @@ int main()
 - `hmin_size` / `vmin_size` — 最小サイズ制約。 `"width"` / `"height"` + `"child"`。
 - `hspacer` / `vspacer` — 固定スペーサ。 `"width"` / `"height"`。
 - `spacer` — 2D 固定スペーサ。 `"size": [w, h]` または `"width"` / `"height"`。
-- `align_center` / `align_left` / `align_right` — 子要素の整列。 `"child"`。
+- `align_center` / `align_left` / `align_right` / `align_top` / `align_middle` / `align_bottom` / `align_center_middle` — 子要素の整列。 `"child"`。 X 軸 = `left/center/right`、 Y 軸 = `top/middle/bottom`、 両軸中央 = `align_center_middle`。
 - `box` — 単色塗り。 `"color": [r, g, b, a]`。
+- `band` — 単色背景帯 + child の重ね合わせ (= `layer` のショートカット)。 `"color": [r, g, b, a]` + 任意 `"child"`。 child 省略時は `box` 相当。 footer 帯やタイトルバーなど、 背景を引きつつ中身を上に乗せたい局所要素に使う。 将来 `gradient` / `image` フィールドを追加予定。
 - `layer` — 重ね順。 `"children"`: 先頭が最前面。
 - `group` — タイトル付きフレーム。 `"title"` + `"label_size"` + `"child"`。
 - `scroller` — 縦スクロール領域。 `"child"`。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 
 #### 入力 / state widget
-- `label` — `"text"` + `"size"` (フォントサイズ比) + `"locale"`。
+- `label` — `"text"` + `"size"` (フォントサイズ比) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。
 - `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
@@ -138,6 +140,39 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 | `id` | string | event_callback / result.values のキー、 shortcut の `target` 参照先 |
 | `initial_focus` | bool | true なら起動時にこの要素にフォーカス (複数あれば build 順で先勝ち) |
 | `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / `Dialog.onAction`) を発火するだけ |
+| `vars_on_focus` | `{name: string, ...}` | この要素が focus を得たときに変数 store に書き込む値の dict。 同じ変数を `text_var` で見ている label に自動反映 (focus 連動ヘルプテキスト等) |
+
+### 変数 store (`vars` / `text_var` / `vars_on_focus`)
+
+軽量な「変数設定 + 参照 + 更新通知」機構。 lib に侵襲しない方式で、 runtime が focus 変化を毎フレーム poll し、 focused 要素の `vars_on_focus` を変数 store に書き込み、 同名の `text_var` を持つ label に自動で `set_text` する。
+
+```jsonc
+{
+    "vars": { "current_help": "セーブします。" },   // 初期値
+
+    "content": {
+        "type": "vtile",
+        "children": [
+            // writer: focus されたら "current_help" を書き換える
+            { "type": "invert_button", "id": "save",
+              "text": "SAVE", "initial_focus": true,
+              "vars_on_focus": { "current_help": "ゲームデータをセーブします。" } },
+            { "type": "invert_button", "id": "load",
+              "text": "LOAD",
+              "vars_on_focus": { "current_help": "セーブデータをロードします。" } },
+
+            // reader: 現在の "current_help" を表示
+            { "type": "label", "text_var": "current_help",
+              "size": 1.6, "color": [255, 255, 255, 255] }
+        ]
+    }
+}
+```
+
+- 値型は string のみ (将来拡張余地あり)。
+- 同じ変数に複数 label が subscribe してもよい。
+- `vars_on_focus` は dict なので 1 widget で複数変数を一度に書ける。
+- 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
 
 ### `"input"` ブロック
 
