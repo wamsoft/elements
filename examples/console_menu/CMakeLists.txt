@@ -26,3 +26,9 @@ set(ELEMENTS_APP_SOURCES
 
 include(AppIcon)
 include(ElementsConfigApp)
+
+# pad_icon: Kenney pack 配置の絶対パスを compile def で注入。
+# 配置が無くても build できるよう pad_icon 側で fallback プレースホルダを描く。
+target_compile_definitions(${ELEMENTS_APP_PROJECT} PRIVATE
+   CONSOLE_MENU_PAD_BASE_DIR="${ELEMENTS_ROOT}/resources/kenny_input_prompts"
+)

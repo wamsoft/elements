@@ -14,6 +14,11 @@
    - focus_row / labeled_row: row-wide highlight when any descendant
      holds focus. The label on the left is decorative; focus sits on
      the control on the right.
+   - pad_icon: SVG / Font 両対応の Kenney input-prompts コントローラ
+     アイコン (Xbox / PlayStation / Switch / Keyboard 4 テーマ)。 ベース
+     dir は CONSOLE_MENU_PAD_BASE_DIR (CMake から compile def 注入) で
+     指定する。 resources/kenny_input_prompts/ に Kenney pack を配置して
+     いない環境では灰色プレースホルダで描画。
 =============================================================================*/
 #include <elements.hpp>
 
@@ -47,18 +52,18 @@ namespace
    {
       // Plain inline-arrow picker.
       auto system_sel = share(cycle_picker(
-         {"PC-8081 mk2SR", "PC-9801 VM", "X68000 EXPERT"}, 0
+         {"System 1", "System 2", "System 3"}, 0
       ));
 
       // Standalone arrow buttons driving a cycle_picker. The arrows are
       // NOT focusable — Tab skips them, the arrow keys still target the
       // focused picker — but they are mouse/touch operable.
-      auto bios_sel = share(cycle_picker({"NORMAL", "TURBO", "COMPAT"}, 0));
-      auto bios_arrows = make_step_arrows(bios_sel);
-      element_ptr bios_unit = share(htile_spaced(4.0f,
-         hsize(36, hold(bios_arrows.first)),
-         hold(bios_sel),
-         hsize(36, hold(bios_arrows.second))
+      auto mode_sel = share(cycle_picker({"EASY", "NORMAL", "HARD"}, 1));
+      auto mode_arrows = make_step_arrows(mode_sel);
+      element_ptr mode_unit = share(htile_spaced(4.0f,
+         hsize(36, hold(mode_arrows.first)),
+         hold(mode_sel),
+         hsize(36, hold(mode_arrows.second))
       ));
 
       // Standalone arrow buttons driving a slider — same pattern.
@@ -88,7 +93,7 @@ namespace
          margin({10, 35, 10, 10},
             vtile_spaced(6.0f,
                labeled_row("System (inline)",        system_sel),
-               labeled_row("BIOS (arrow parts)",     bios_unit,     bios_sel),
+               labeled_row("Mode (arrow parts)",     mode_unit,     mode_sel),
                labeled_row("Display mode",           display_mode),
                labeled_row("Message FX",             msg_fx),
                labeled_row("Sound FX",               sound_fx),
@@ -117,6 +122,38 @@ namespace
          )
       );
    }
+
+   // 4 テーマの face_south を並べて pad_icon の SVG 描画と theme 切替を
+   // 示す。 ベース dir 未設定 / Kenney pack 未配置の環境では灰色プレース
+   // ホルダで描画される (lib 内 fallback)。
+   auto make_pad_icon_demo_row()
+   {
+      auto cell = [](pad_theme theme, char const* caption, bool colored)
+      {
+         set_pad_theme(theme);
+         auto icon = share(pad_icon("face_south", 56.0f, colored));
+         return vtile_spaced(4.0f,
+            align_center(hold(icon)),
+            align_center(
+               label(caption)
+                  .font_color(colors::white.opacity(0.85f))
+                  .font_size(11.0f)
+            )
+         );
+      };
+
+      return group(
+         "Pad icons (Kenney pack — colored where available)",
+         margin({10, 35, 10, 10},
+            htile_spaced(28.0f,
+               cell(pad_theme::xbox,     "Xbox",      true),
+               cell(pad_theme::ps,       "PS",        true),
+               cell(pad_theme::switch_,  "Switch",    false),
+               cell(pad_theme::keyboard, "Keyboard",  false)
+            )
+         )
+      );
+   }
 }
 
 int main(int /*argc*/, char* /*argv*/[])
@@ -125,10 +162,19 @@ int main(int /*argc*/, char* /*argv*/[])
    window _win(_app.name());
    _win.on_close = [&_app]() { _app.stop(); };
 
+   // pad_icon: ベース dir + 全テーマフォントを起動時に登録。 dir 未設定
+   // (CMake compile def 無し) や Kenney pack 未配置のとき pad_icon は
+   // 灰色プレースホルダで描画される。
+#ifdef CONSOLE_MENU_PAD_BASE_DIR
+   set_pad_icon_base_dir(CONSOLE_MENU_PAD_BASE_DIR);
+   load_pad_icon_fonts();
+#endif
+
    view view_(_win);
    view_.arrow_focus_navigation(true);
 
    auto top_row    = make_button_demo_row();
+   auto pad_row    = make_pad_icon_demo_row();
    auto config     = make_config_panel();
    auto hints      = make_hint_bar();
 
@@ -136,6 +182,7 @@ int main(int /*argc*/, char* /*argv*/[])
       margin({20, 20, 20, 20},
          vtile_spaced(15.0f,
             std::move(top_row),
+            std::move(pad_row),
             std::move(config),
             std::move(hints)
          )
