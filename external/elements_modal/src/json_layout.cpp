@@ -304,6 +304,7 @@ private:
 	element_ptr build_slider      (const picojson::object& o);
 	element_ptr build_slider_with_range(const picojson::object& o);
 	element_ptr build_labeled_row (const picojson::object& o);
+	element_ptr build_pad_icon    (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
 	std::vector<element_ptr> build_children(const picojson::object& o);
@@ -367,6 +368,7 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "slider_with_range") return build_slider_with_range(o);
 	if (type == "labeled_row")   return build_labeled_row(o);
 	if (type == "filler")        return ce::share(ce::element{});
+	if (type == "pad_icon")      return build_pad_icon(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
@@ -960,6 +962,76 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 // child の最初の要素を click-focus target にする (mouse click でラベル領域を
 // 叩いても child に focus が飛ぶ)。
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// pad_icon — Kenney input prompts のコントローラアイコン。
+//   { "type": "pad_icon", "name": "face_south", "height": 48 }
+//   { "type": "pad_icon", "name": "a",          "use_font": true, "size": 1.5 }
+//
+// SVG 版 (デフォルト): tvg::Picture で SVG を描画。 height は logical 高さ。
+// font 版 (use_font: true): Kenney font + codepoint で label として出す。
+//   size は label の relative_font_size。
+// theme は global state (parse_top_level で top-level "pad_theme" を見て
+// 切り替え済み)。 名前 / theme で解決できなければ pad_icon::draw が灰色
+// プレースホルダを出すか、 use_font 時は空 label。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
+{
+	auto name = string_or(o, "name");
+	if (name.empty()) {
+		SDL_Log("elements_modal: pad_icon without 'name'");
+		return nullptr;
+	}
+	bool use_font = false;
+	if (auto* v = get_field(o, "use_font"); v && v->is<bool>()) {
+		use_font = v->get<bool>();
+	}
+	if (use_font) {
+		float size = static_cast<float>(number_or(o, "size", 1.0));
+		auto cp = ce::resolve_pad_icon_codepoint(name);
+		auto fam = ce::pad_icon_font_family();
+		if (cp == 0 || fam.empty()) {
+			// Fallback: render the logical name as a regular label so layout
+			// stays valid.
+			return ce::share(ce::label("[" + name + "]")
+				.relative_font_size(size)
+				.font_color(ce::colors::white));
+		}
+		// Embed codepoint as a UTF-8 string into a label and set its font.
+		char buf[8] = {0};
+		int n = 0;
+		if (cp < 0x80) {
+			buf[n++] = static_cast<char>(cp);
+		} else if (cp < 0x800) {
+			buf[n++] = static_cast<char>(0xC0 | (cp >> 6));
+			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+		} else if (cp < 0x10000) {
+			buf[n++] = static_cast<char>(0xE0 | (cp >> 12));
+			buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+		} else {
+			buf[n++] = static_cast<char>(0xF0 | (cp >> 18));
+			buf[n++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+			buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+		}
+		// fam は pad_icon_font_family() の戻りで program-lifetime な
+		// std::string を指す string_view なので、 font_descr の string_view
+		// メンバに直接乗せて OK。
+		ce::font_descr fd{fam};
+		auto lbl = ce::label(std::string(buf, n))
+			.relative_font_size(size)
+			.font_color(ce::colors::white)
+			.font(fd);
+		return ce::share(std::move(lbl));
+	}
+	float h = static_cast<float>(number_or(o, "height", 48.0));
+	bool colored = false;
+	if (auto* v = get_field(o, "colored"); v && v->is<bool>()) {
+		colored = v->get<bool>();
+	}
+	return ce::share(ce::pad_icon(name, h, colored));
+}
+
 element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 {
 	auto child = build_child(o);
@@ -1167,6 +1239,18 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 	if (auto* arr = get_array(o, "size")) {
 		result.width  = int_at(*arr, 0, result.width);
 		result.height = int_at(*arr, 1, result.height);
+	}
+
+	// "pad_theme": "xbox"|"ps"|"switch"|"keyboard"|"none" — 任意。 指定が
+	// あれば content build 前に global pad theme を切り替え、 build_pad_icon
+	// 内の resolve が新 theme で走る。 指定なしの場合は呼出側 (argv 等) で
+	// セットされた既存値を維持。
+	if (auto* v = get_field(o, "pad_theme"); v && v->is<std::string>()) {
+		auto t = ce::parse_pad_theme(v->get<std::string>());
+		if (t != ce::pad_theme::none ||
+		    v->get<std::string>() == "none") {
+			ce::set_pad_theme(t);
+		}
 	}
 
 	LayoutBuilder builder(std::move(cb));

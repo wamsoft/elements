@@ -29,6 +29,7 @@
 #include <elements/element/margin.hpp>
 #include <elements/element/menu.hpp>
 #include <elements/element/modal.hpp>
+#include <elements/element/pad_icon.hpp>
 #include <elements/element/picker.hpp>
 #include <elements/element/popup.hpp>
 #include <elements/element/port.hpp>

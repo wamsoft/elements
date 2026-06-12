@@ -28,6 +28,7 @@ set(ELEMENTS_SOURCES
    src/element/layer.cpp
    src/element/list.cpp
    src/element/menu.cpp
+   src/element/pad_icon.cpp
    src/element/picker.cpp
    src/element/popup.cpp
    src/element/port.cpp
@@ -98,6 +99,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/margin.hpp
    include/elements/element/menu.hpp
    include/elements/element/modal.hpp
+   include/elements/element/pad_icon.hpp
    include/elements/element/picker.hpp
    include/elements/element/popup.hpp
    include/elements/element/port.hpp
@@ -246,7 +248,7 @@ target_link_libraries(elements PUBLIC cycfi::infra)
 
 # ThorVG loader options
 option(TVG_BUILD_SHARED "Build shared library" OFF)
-option(TVG_LOADER_SVG "Enable SVG Loader" OFF)
+option(TVG_LOADER_SVG "Enable SVG Loader" ON)
 option(TVG_LOADER_PNG "Enable PNG Loader" ON)
 option(TVG_LOADER_JPG "Enable JPG Loader" ON)
 option(TVG_LOADER_LOTTIE "Enable Lottie Loader" OFF)

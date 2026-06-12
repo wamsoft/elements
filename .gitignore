@@ -36,3 +36,7 @@ xcuserdata/
 /.cache/
 .claude
 build
+
+# Kenney input-prompts assets (CC0, fetched/copied locally; not vendored)
+/kenney_input-prompts/
+/resources/kenny_input_prompts/
