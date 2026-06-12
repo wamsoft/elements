@@ -154,6 +154,40 @@ namespace
          )
       );
    }
+
+   // 同じ Switch face_south を font mode で並べて色違いを示す。 pad_font_icon
+   // (lib helper) の color 引数 = label.font_color。 font mode は Kenney 同梱
+   // TTF + codepoint なので、 SVG mode と違って tint がそのまま効く。
+   //
+   // pad theme は Switch に固定。 codepoint / fontfamily 未解決のときは
+   // `[face_south]` フォールバックが同じ色で出る。
+   auto make_pad_icon_color_demo_row()
+   {
+      set_pad_theme(pad_theme::switch_);
+      auto cell = [](char const* caption, color c)
+      {
+         return vtile_spaced(4.0f,
+            align_center(hold(pad_font_icon("face_south", 2.4f, c))),
+            align_center(
+               label(caption)
+                  .font_color(colors::white.opacity(0.85f))
+                  .font_size(11.0f)
+            )
+         );
+      };
+
+      return group(
+         "Pad icons (font mode — color override)",
+         margin({10, 35, 10, 10},
+            htile_spaced(28.0f,
+               cell("white",  colors::white),
+               cell("black",  colors::black),
+               cell("red",    colors::indian_red),
+               cell("yellow", colors::gold)
+            )
+         )
+      );
+   }
 }
 
 int main(int /*argc*/, char* /*argv*/[])
@@ -175,6 +209,7 @@ int main(int /*argc*/, char* /*argv*/[])
 
    auto top_row    = make_button_demo_row();
    auto pad_row    = make_pad_icon_demo_row();
+   auto pad_color  = make_pad_icon_color_demo_row();
    auto config     = make_config_panel();
    auto hints      = make_hint_bar();
 
@@ -183,6 +218,7 @@ int main(int /*argc*/, char* /*argv*/[])
          vtile_spaced(15.0f,
             std::move(top_row),
             std::move(pad_row),
+            std::move(pad_color),
             std::move(config),
             std::move(hints)
          )

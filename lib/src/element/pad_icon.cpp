@@ -4,6 +4,7 @@
 =============================================================================*/
 #include <elements/element/pad_icon.hpp>
 #include <elements/element/element.hpp>
+#include <elements/element/label.hpp>
 #include <elements/support/canvas.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/font.hpp>
@@ -489,6 +490,54 @@ namespace cycfi::elements
       auto const& cm = g_runtime[idx].codepoints;
       auto it = cm.find(basename);
       return (it != cm.end()) ? it->second : 0;
+   }
+
+   //---------------------------------------------------------------------
+   // pad_font_icon — font-mode pad アイコンを 1 element として組む helper。
+   // 内部は label + Kenney 同梱 TTF + UTF-8 化した codepoint。 codepoint /
+   // family が解決できなければ `[name]` フォールバックを同じ色で返す。
+   //
+   // 元々 elements_modal の dispatch 内に同じロジックがあったが、 サンプル /
+   // 直接 lib 利用側でも同じものを呼べるよう外出し。
+   //---------------------------------------------------------------------
+   std::shared_ptr<element>
+   pad_font_icon(std::string_view name, float size, color c)
+   {
+      auto cp  = resolve_pad_icon_codepoint(name);
+      auto fam = pad_icon_font_family();
+      if (cp == 0 || fam.empty())
+      {
+         // Fallback: `[name]` の素 label。 codepoint 不在でも layout は維持。
+         return share(label("[" + std::string(name) + "]")
+            .relative_font_size(size)
+            .font_color(c));
+      }
+
+      // codepoint を UTF-8 化して 1 文字 string にする。
+      char buf[8] = {0};
+      int n = 0;
+      if (cp < 0x80) {
+         buf[n++] = static_cast<char>(cp);
+      } else if (cp < 0x800) {
+         buf[n++] = static_cast<char>(0xC0 | (cp >> 6));
+         buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+      } else if (cp < 0x10000) {
+         buf[n++] = static_cast<char>(0xE0 | (cp >> 12));
+         buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+         buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+      } else {
+         buf[n++] = static_cast<char>(0xF0 | (cp >> 18));
+         buf[n++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+         buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+         buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+      }
+      // fam は pad_icon_font_family() の program-lifetime な std::string を
+      // 指す string_view なので font_descr の string_view メンバに乗せて OK。
+      font_descr fd{fam};
+      return share(label(std::string(buf, n))
+         .relative_font_size(size)
+         .font_color(c)
+         .font(fd));
    }
 
    //---------------------------------------------------------------------

@@ -120,7 +120,9 @@ int main()
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (相対、 default 1.0) + `"child"`。 child の最初の focusable を click-focus target にする。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
   - **SVG モード (default)**: `"height": logical_pixels` (default 48) + `"colored": bool` (default false、 true で `_color_` バリアントを優先 — Xbox / PS の face button のみ対応、 無ければ通常版にフォールバック)
-  - **font モード**: `"use_font": true` + `"size": relative_size` (default 1.0) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)
+  - **font モード**: `"use_font": true` + `"size": relative_size` (default 1.0) + `"color": [r,g,b,a]` (任意、 default 白) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)。
+
+  `"color"` は **font モード時のみ反映**。 SVG モードでは元 SVG の色がそのまま出るため指定は無視され警告が出る (SVG の tint は canvas API 拡張が必要で現状未対応)。 アイコンに任意色を当てたい場合は `"use_font": true` を選ぶ。
 
   theme は top-level `"pad_theme"` で切り替え。 名前 / theme で解決できない場合、 SVG モードでは灰色プレースホルダ、 font モードでは `[name]` フォールバック label を描画して layout は維持する。
 

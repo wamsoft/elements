@@ -1185,49 +1185,33 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	if (auto* v = get_field(o, "use_font"); v && v->is<bool>()) {
 		use_font = v->get<bool>();
 	}
+
+	// "color": [r,g,b,a] (任意) — font mode のみ反映。 既定は白。 SVG mode
+	// では現状無視 (Kenney 元 SVG の色がそのまま出る)。 SVG への tint は
+	// canvas API の拡張要なので future work。
+	bool has_color = false;
+	ce::color tint = ce::colors::white;
+	if (auto* arr = get_array(o, "color")) {
+		has_color = true;
+		tint = parse_color(*arr);
+	}
+
 	if (use_font) {
 		float size = static_cast<float>(number_or(o, "size", 1.0));
-		auto cp = ce::resolve_pad_icon_codepoint(name);
-		auto fam = ce::pad_icon_font_family();
-		if (cp == 0 || fam.empty()) {
-			// Fallback: render the logical name as a regular label so layout
-			// stays valid.
-			return ce::share(ce::label("[" + name + "]")
-				.relative_font_size(size)
-				.font_color(ce::colors::white));
-		}
-		// Embed codepoint as a UTF-8 string into a label and set its font.
-		char buf[8] = {0};
-		int n = 0;
-		if (cp < 0x80) {
-			buf[n++] = static_cast<char>(cp);
-		} else if (cp < 0x800) {
-			buf[n++] = static_cast<char>(0xC0 | (cp >> 6));
-			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-		} else if (cp < 0x10000) {
-			buf[n++] = static_cast<char>(0xE0 | (cp >> 12));
-			buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-		} else {
-			buf[n++] = static_cast<char>(0xF0 | (cp >> 18));
-			buf[n++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-			buf[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-			buf[n++] = static_cast<char>(0x80 | (cp & 0x3F));
-		}
-		// fam は pad_icon_font_family() の戻りで program-lifetime な
-		// std::string を指す string_view なので、 font_descr の string_view
-		// メンバに直接乗せて OK。
-		ce::font_descr fd{fam};
-		auto lbl = ce::label(std::string(buf, n))
-			.relative_font_size(size)
-			.font_color(ce::colors::white)
-			.font(fd);
-		return ce::share(std::move(lbl));
+		// font mode のロジックは lib の pad_font_icon に集約済。 codepoint
+		// 解決失敗時の `[name]` フォールバックも内部で同じ色を適用する。
+		return ce::pad_font_icon(name, size, tint);
 	}
 	float h = static_cast<float>(number_or(o, "height", 48.0));
 	bool colored = false;
 	if (auto* v = get_field(o, "colored"); v && v->is<bool>()) {
 		colored = v->get<bool>();
+	}
+	if (has_color) {
+		// SVG mode は現状 tint 不可。 指定があれば一度だけ警告。
+		SDL_Log("elements_modal: pad_icon \"%s\" — \"color\" は SVG mode "
+		        "では現状無視されます (use_font: true でのみ反映)",
+		        name.c_str());
 	}
 	return ce::share(ce::pad_icon(name, h, colored));
 }

@@ -6,6 +6,7 @@
 #define ELEMENTS_PAD_ICON_JUNE_12_2026
 
 #include <elements/element/element.hpp>
+#include <elements/support/color.hpp>
 #include <elements/support/pixmap.hpp>
 #include <cstdint>
 #include <memory>
@@ -88,6 +89,20 @@ namespace cycfi::elements
    {
       return pad_icon_font_family(get_pad_theme());
    }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // pad_font_icon — font-mode pad アイコンを 1 つの element として返すヘルパ。
+   // 内部は Kenney 同梱 TTF + 解決した codepoint を label として描く。
+   // size = 相対フォントサイズ (default 1.0)、 c = 文字色 (default white)。
+   //
+   // codepoint 解決失敗 / theme 未登録のときは `[name]` フォールバック label
+   // を返してレイアウトを維持する (色は同じ c を使う)。
+   //
+   // 戻りは shared_ptr<element>。 lib の他の factory と異なり typed proxy で
+   // はなく element_ptr 直なのは、 fallback と通常で内部型が違うため。
+   ////////////////////////////////////////////////////////////////////////////
+   std::shared_ptr<element>
+   pad_font_icon(std::string_view name, float size = 1.0f, color c = colors::white);
 
    ////////////////////////////////////////////////////////////////////////////
    // pad_icon — SVG-backed element.
