@@ -373,6 +373,16 @@
 
          if (auto* p = dynamic_cast<proxy_base*>(&current))
          {
+            // proxy が wants_control() == false の場合は subtree ごと無視。
+            // hidable が is_hidden 時に true を返さなくなるので、 非表示 pane
+            // 内の widget を arrow nav / TAB cycle に拾わなくする。
+            // 注意: wants_focus ではなく wants_control を見ること。
+            // focus_row_element (= labeled_row のベース) のように
+            // 「自分自身は focusable ではないが children は focusable」な
+            // 装飾系 proxy は wants_control=true / wants_focus=false で
+            // 区別される。 ここで wants_focus を見ると装飾系ごと脱落する。
+            if (!current.wants_control())
+               return;
             if (proxy_chain_has_composite(&p->subject()))
             {
                context sctx{ctx, &p->subject(), ctx.bounds};

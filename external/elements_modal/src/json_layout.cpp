@@ -345,8 +345,17 @@ public:
 	// build() 完了後、 ホストが view.focus(...) に渡すために取得する。
 	element_ptr take_initial_focus() { return std::move(_initial_focus); }
 
-	// id 付き要素 → element_ptr のマップ。 shortcut の "target": "<id>" 解決用。
+	// id 付き要素 → element_ptr のマップ。 shortcut の "target": "<id>" 解決
+	// + ホスト側 focus_by_id 用。 ランタイム複数参照ありうるので shared で
+	// 渡せるラップ版も提供。
 	std::map<std::string, element_ptr> take_id_map() { return std::move(_id_to_element); }
+	const std::map<std::string, element_ptr>& id_map() const { return _id_to_element; }
+
+	// focus poll クロージャが内部で更新する「現在 focused id」スロット。
+	// LayoutBuilder と take_focus_poll() のクロージャで shared (= 共有
+	// shared_ptr<string>)。 ホストは parsed_layout 経由でこの slot を覗いて
+	// "今 focus されてる id" を得る。
+	std::shared_ptr<std::string> focused_id_slot() { return _focused_id_slot; }
 
 	// "close_on_click": true が指定された button の id 集合。
 	std::set<std::string> take_close_button_ids() { return std::move(_close_button_ids); }
@@ -360,6 +369,19 @@ public:
 	// take 系メソッドなので 1 回しか呼ばない。
 	std::function<void()> take_focus_poll();
 
+	// build 中に install する「view& を引数に取る」追加 set-up クロージャ。
+	// 主に bind_shortcut を仕掛けたい widget (tab_view など) が使う。
+	// build_top_level でこれらを apply_input にチェーンして公開する。
+	void add_deferred_view_callback(std::function<void(cycfi::elements::view&)> cb)
+	{
+		_deferred_view_cbs.push_back(std::move(cb));
+	}
+	std::vector<std::function<void(cycfi::elements::view&)>>
+	take_deferred_view_callbacks()
+	{
+		return std::move(_deferred_view_cbs);
+	}
+
 private:
 	event_callback _cb;
 	std::string _default_locale;
@@ -369,6 +391,8 @@ private:
 	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
 	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
+	std::vector<std::function<void(cycfi::elements::view&)>> _deferred_view_cbs;
+	std::shared_ptr<std::string> _focused_id_slot = std::make_shared<std::string>();
 
 	// focusable build site で、 id と「現在 focus されているか」を返す
 	// closure を _focusables に積む。 typed shared_ptr を weak_ptr で保持。
@@ -562,7 +586,7 @@ std::function<void()> LayoutBuilder::take_focus_poll()
 	auto vars            = _vars;
 	auto vars_on_focus   = std::move(_vars_on_focus);
 	auto focusables      = std::move(_focusables);
-	auto last_focused_id = std::make_shared<std::string>();
+	auto last_focused_id = _focused_id_slot;  // ホストと共有 (focused_id() 用)
 	// "" は「何も focus されていない」を表す sentinel。 初回はその状態と
 	// 比較されるので、 初回 focus に対して必ず 1 回 set される。
 	return [vars, vars_on_focus, focusables, last_focused_id]() {
@@ -1257,13 +1281,20 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	if (auto* v = get_field(o, "colored"); v && v->is<bool>()) {
 		colored = v->get<bool>();
 	}
+	// "outline": true で *_outline.svg バリアントを優先して試す。 colored と
+	// 併用すると _color_xxx_outline.svg → _color_xxx.svg → xxx_outline.svg →
+	// xxx.svg の順でフォールバック。
+	bool outline = false;
+	if (auto* v = get_field(o, "outline"); v && v->is<bool>()) {
+		outline = v->get<bool>();
+	}
 	if (has_color) {
 		// SVG mode は現状 tint 不可。 指定があれば一度だけ警告。
 		SDL_Log("elements_modal: pad_icon \"%s\" — \"color\" は SVG mode "
 		        "では現状無視されます (use_font: true でのみ反映)",
 		        name.c_str());
 	}
-	return ce::share(ce::pad_icon(name, h, colored));
+	return ce::share(ce::pad_icon(name, h, colored, outline));
 }
 
 //---------------------------------------------------------------------------
@@ -1294,19 +1325,26 @@ element_ptr LayoutBuilder::build_band(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
-// tab_view — タブ + ページ (deck) を 1 要素として返す。
+// tab_view — タブ + ページを 1 要素として返す。
 //   {
 //     "type": "tab_view",
 //     "initial": 0,
+//     "tab_size": px (任意, または tab_size_scale),
 //     "tabs": [
 //       { "label": "...", "child": { ... pane ... }, "id": "..." (任意) },
 //       ...
 //     ]
 //   }
-// lib の deck_composite + ce::tab(text) (= basic_choice ベース) を組合せ。
-// クリックで該当 deck index に切替、 basic_choice の機構が兄弟タブを自動
-// deselect + view.refresh する。
-// id を付けるとタブボタンも id 解決対象 (shortcut 等で参照可)。
+//
+// 実装は **layer_composite + hidable** ベース。 当初 deck_composite を試した
+// が、 deck は draw / hit / focus chain を _selected_index でしか辿らない
+// 一方で composite_base::key の TAB 循環や view の 2D arrow nav は children
+// 全部を巡るので、 非表示 pane の widget に focus が落ちる問題があった。
+// layer + 各 pane を hidable で wrap して、 非選択 pane は wants_focus() /
+// wants_control() が false → focus 循環の対象外、 となるようにしている。
+//
+// PageUp/Down + LB/RB は apply_input phase で bind_shortcut。 tab on_click
+// も view& 取得のため deferred 側で仕掛ける。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 {
@@ -1325,20 +1363,32 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 		initial = static_cast<std::size_t>(raw);
 	}
 
-	// pages の deck と tab ボタン群を平行して構築。
-	ce::deck_composite deck;
+	float tab_scale = resolve_font_scale(o, "tab_size", "tab_size_scale");
+
+	// hidable で wrap した pane と tab choice を平行して構築。 hidable の
+	// テンプレ Subject は ce::hold_any() で統一型 (indirect<shared_element
+	// <element>>) になるので、 全 pane で同じ leaf 型に揃う。
+	using HidablePane = ce::hidable_element<
+		ce::indirect<ce::shared_element<ce::element>>>;
+	auto hidables_owner =
+		std::make_shared<std::vector<std::shared_ptr<HidablePane>>>();
+	auto choices_owner =
+		std::make_shared<std::vector<std::shared_ptr<ce::basic_choice>>>();
+
+	ce::layer_composite pane_layer;
 	std::vector<element_ptr> tab_btn_elems;
-	std::vector<std::shared_ptr<ce::basic_choice>> tab_choices;
 
 	for (auto& v : *tabs_arr) {
 		if (!v.is<picojson::object>()) continue;
 		const auto& tab_obj = v.get<picojson::object>();
 		std::string label = string_or(tab_obj, "label");
 
-		// tab(text) は内部で choice(button_styler{text}.rounded_top()...) を
-		// 返す。 = proxy<…, basic_choice>。 element_ptr に share してから
-		// dynamic_cast で basic_choice* を取り出す (on_click 仕掛け用)。
-		auto tab_btn = ce::share(ce::tab(label));
+		// tab ボタン: ce::tab(text) を手動展開 (size() を挟む)。
+		auto styler = ce::button_styler{label}.size(tab_scale).rounded_top()
+		                .active_body_color(
+		                    ce::get_theme().active_tab_color.opacity(0.5f));
+		auto wrapped = ce::hmin(ce::hmin_pad(20.0f, std::move(styler)));
+		auto tab_btn = ce::share(ce::choice(std::move(wrapped)));
 		auto choice  = std::dynamic_pointer_cast<ce::basic_choice>(tab_btn);
 		if (!choice) {
 			SDL_Log("elements_modal: tab_view tab[%zu] choice cast failed",
@@ -1347,50 +1397,98 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 		}
 		register_id(tab_obj, tab_btn);
 		tab_btn_elems.push_back(tab_btn);
-		tab_choices.push_back(choice);
+		choices_owner->push_back(choice);
 
-		// pane を build。 child 省略時は空 element (空白 pane)。
+		// pane build → hold_any → hidable で wrap。
 		auto* cv = get_field(tab_obj, "child");
 		auto pane = cv ? build(*cv) : nullptr;
 		if (!pane) pane = ce::share(ce::element{});
-		deck.push_back(pane);
+		auto h_shared = ce::share(ce::hidable(ce::hold_any(pane)));
+		hidables_owner->push_back(h_shared);
+		pane_layer.push_back(h_shared);
 	}
 
-	if (tab_choices.empty()) {
+	if (choices_owner->empty()) {
 		SDL_Log("elements_modal: tab_view has no valid tabs");
 		return nullptr;
 	}
 
-	// deck を share して deck_element* も保持。
-	auto deck_shared = ce::share(std::move(deck));
-	auto deck_elem   = std::dynamic_pointer_cast<ce::deck_element>(deck_shared);
-	if (!deck_elem) {
-		SDL_Log("elements_modal: tab_view deck cast failed");
-		return nullptr;
+	// 初期可視 / 選択状態。 initial pane だけ表示、 残りは hidden。
+	for (std::size_t i = 0; i < hidables_owner->size(); ++i) {
+		(*hidables_owner)[i]->is_hidden = (i != initial);
+	}
+	(*choices_owner)[initial]->select(true);
+
+	auto pane_layer_shared = ce::share(std::move(pane_layer));
+
+	// tab on_click + PageUp/Down + LB/RB を apply_input phase でまとめて
+	// 仕掛ける (view& 必要)。 select 時は view.refresh() で全体再描画。
+	//
+	// !!! 重要 !!! hidables_owner / choices_owner は build_tab_view ローカルで
+	// strong ref を保持しているが、 関数 return 後はその ref が消える。 weak で
+	// 捕まえると activate() 内 lock() が null になりタブが効かなくなる。 strong
+	// (shared_ptr by value) で捕まえること。 on_click closure / bind_shortcut
+	// closure の lifetime と心中する形にする。
+	{
+		add_deferred_view_callback(
+			[hidables_owner, choices_owner](ce::view& vw) {
+				auto activate =
+					[hidables_owner, choices_owner, &vw](std::size_t target) {
+						std::size_t n = hidables_owner->size();
+						if (target >= n) return;
+						for (std::size_t j = 0; j < n; ++j) {
+							(*hidables_owner)[j]->is_hidden = (j != target);
+							(*choices_owner)[j]->select(j == target);
+						}
+						vw.refresh();
+					};
+
+				// tab on_click はこの phase で全部設定する。 build 時には
+				// view 不在のため click ハンドラを仕込めない。
+				for (std::size_t i = 0; i < choices_owner->size(); ++i) {
+					(*choices_owner)[i]->on_click =
+						[i, activate](bool state) {
+							if (state) activate(i);
+						};
+				}
+
+				auto step = [hidables_owner, activate](int delta) {
+					std::size_t n = hidables_owner->size();
+					if (n == 0) return;
+					int cur = 0;
+					for (std::size_t i = 0; i < n; ++i) {
+						if (!(*hidables_owner)[i]->is_hidden) {
+							cur = static_cast<int>(i); break;
+						}
+					}
+					int ni = static_cast<int>(n);
+					int next = ((cur + delta) % ni + ni) % ni;
+					if (next != cur) activate(static_cast<std::size_t>(next));
+				};
+
+				ce::key_info pgup{ce::key_code::page_up,
+				                  ce::key_action::press, 0};
+				ce::key_info pgdn{ce::key_code::page_down,
+				                  ce::key_action::press, 0};
+				vw.bind_shortcut(pgup,
+				    [step]() { step(-1); }, /*force=*/true);
+				vw.bind_shortcut(pgdn,
+				    [step]() { step(+1); }, /*force=*/true);
+				vw.bind_shortcut(ce::pad_button::lb,
+				    [step]() { step(-1); }, /*force=*/true);
+				vw.bind_shortcut(ce::pad_button::rb,
+				    [step]() { step(+1); }, /*force=*/true);
+			});
 	}
 
-	// 各タブ click → deck.select(i)。 basic_choice の click 機構が兄弟タブ
-	// deselect + view.refresh をやってくれる。
-	for (std::size_t i = 0; i < tab_choices.size(); ++i) {
-		std::weak_ptr<ce::deck_element> wd = deck_elem;
-		tab_choices[i]->on_click = [i, wd](bool state) {
-			if (!state) return;
-			if (auto d = wd.lock()) d->select(i);
-		};
-	}
-
-	// 初期選択。 deck と tab choice 両方を揃える。
-	deck_elem->select(initial);
-	tab_choices[initial]->select(true);
-
-	// レイアウト: vtile(align_left(htile(tabs)), deck)。 notebook 既定と同じ。
+	// レイアウト: vtile(align_left(htile(tabs)), layer(hidable panes))。
 	ce::htile_composite tab_row;
 	for (auto& tb : tab_btn_elems) tab_row.push_back(tb);
 	auto tab_row_shared = ce::share(std::move(tab_row));
 
 	ce::vtile_composite root;
 	root.push_back(ce::share(ce::align_left(ce::hold_any(tab_row_shared))));
-	root.push_back(deck_shared);
+	root.push_back(pane_layer_shared);
 	return ce::share(std::move(root));
 }
 
@@ -1652,11 +1750,28 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 	result.initial_focus = builder.take_initial_focus();
 	result.close_button_ids = builder.take_close_button_ids();
 
+	// id_map と focused_id_slot をホスト公開用に取得。 input ブロックの
+	// shortcut 解決でも id_map を使うので、 takeMove する前にコピーを保存。
+	result.id_map = builder.id_map();
+	result.focused_id_slot = builder.focused_id_slot();
+
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /
 	// pad bindings / shortcuts を設定するクロージャを作る。
+	std::function<void(ce::view&)> input_cb;
 	if (auto* v = get_field(o, "input"); v && v->is<picojson::object>()) {
-		result.apply_input = build_input_applier(v->get<picojson::object>(),
+		input_cb = build_input_applier(v->get<picojson::object>(),
 			builder.take_id_map());
+	}
+	// deferred_view_cbs: build 中に積まれた追加 view-setup (例: tab_view
+	// の PageUp/Down + LB/RB バインド)。 input_cb の後に順次実行する。
+	auto deferred_cbs = builder.take_deferred_view_callbacks();
+	if (input_cb || !deferred_cbs.empty()) {
+		result.apply_input =
+			[input_cb = std::move(input_cb),
+			 deferred = std::move(deferred_cbs)](ce::view& vw) {
+				if (input_cb) input_cb(vw);
+				for (auto& cb : deferred) cb(vw);
+			};
 	}
 
 	// "transitions" ブロック (任意): action id → 遷移仕様。 string 形式は

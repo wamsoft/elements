@@ -122,7 +122,8 @@ namespace cycfi::elements
 
       explicit                pad_icon(std::string logical_name,
                                        float target_height = 64.0f,
-                                       bool  colored = false);
+                                       bool  colored = false,
+                                       bool  outline = false);
 
       view_limits             limits(basic_context const&) const override;
       void                    draw(context const&) override;
@@ -131,6 +132,7 @@ namespace cycfi::elements
       float                   target_height() const { return _target_height; }
       void                    target_height(float h) { _target_height = h; }
       bool                    colored() const { return _colored; }
+      bool                    outline() const { return _outline; }
 
    private:
 
@@ -139,6 +141,7 @@ namespace cycfi::elements
       std::string             _name;
       float                   _target_height;
       bool                    _colored;
+      bool                    _outline;
       pad_theme               _theme_at_construct;
       mutable pixmap_ptr      _pixmap;
       mutable bool            _tried = false;

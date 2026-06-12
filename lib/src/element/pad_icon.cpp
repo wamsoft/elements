@@ -543,10 +543,12 @@ namespace cycfi::elements
    //---------------------------------------------------------------------
    // pad_icon element
    //---------------------------------------------------------------------
-   pad_icon::pad_icon(std::string logical_name, float target_height, bool colored)
+   pad_icon::pad_icon(std::string logical_name, float target_height,
+                      bool colored, bool outline)
     : _name(std::move(logical_name))
     , _target_height(target_height)
     , _colored(colored)
+    , _outline(outline)
     , _theme_at_construct(get_pad_theme())
    {}
 
@@ -577,6 +579,21 @@ namespace cycfi::elements
          return pm != nullptr;
       };
 
+      // outline フラグ用に「<stem>_outline.svg」を試すヘルパ。 try したいベース
+      // path に対し、 outline が要求されていれば *_outline.svg → ベースの順で
+      // 試す。 outline 非要求ならそのままベースを試す。
+      auto try_with_outline = [this, &try_load](std::string const& base_path) -> bool {
+         if (_outline) {
+            auto dot = base_path.rfind(".svg");
+            if (dot != std::string::npos) {
+               std::string outline_path =
+                  base_path.substr(0, dot) + "_outline.svg";
+               if (outline_path != base_path && try_load(outline_path)) return true;
+            }
+         }
+         return try_load(base_path);
+      };
+
       if (_colored) {
          // resolve_pad_icon_svg_path で組まれたフルパスから basename だけ
          // 抽出して color 化、 残りを再構成。
@@ -588,9 +605,9 @@ namespace cycfi::elements
          auto dot = base.rfind(".svg");
          std::string stem = (dot == std::string::npos) ? base : base.substr(0, dot);
          std::string colored_path = dir + to_color_basename(stem) + ".svg";
-         if (colored_path != path && try_load(colored_path)) return;
+         if (colored_path != path && try_with_outline(colored_path)) return;
       }
-      try_load(path);
+      try_with_outline(path);
    }
 
    view_limits pad_icon::limits(basic_context const&) const

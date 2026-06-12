@@ -220,6 +220,16 @@ public:
 	//! 未定義なら空 map (ランナの既定挙動 = entry なら exit / 子なら back)。
 	const std::map<std::string, transition_spec>& transitions() const;
 
+	//! @brief 直前まで focus されていた id を返す。 何も focus されていない /
+	//! focus poll 未稼働なら空文字列。 画面 close 時にホストが記録すれば、
+	//! 再入時に focus_by_id() で復元できる。
+	const std::string& focused_id() const;
+
+	//! @brief 指定 id の要素に focus を移す。 id が見つからなければ no-op。
+	//! 起動直後 (start() 直後 / initial_focus を上書きしたい場面) や、
+	//! ホスト主導の focus 復元に使う。
+	void focus_by_id(const std::string& id);
+
 	//! @brief view extent を変更 (window resize 等)。
 	void notify_view_resize(int new_view_width, int new_view_height);
 

@@ -59,6 +59,15 @@ struct parsed_layout
 	//! ランナがこれを見て次画面を決める。 空なら遷移定義なし (ホストの既定
 	//! 挙動 = entry なら exit / 子画面なら back)。
 	std::map<std::string, transition_spec> transitions;
+
+	//! id 付き要素 → element_ptr のマップ。 shortcut の "target" 解決と、
+	//! ホスト側の focus_by_id() で参照。
+	std::map<std::string, std::shared_ptr<cycfi::elements::element>> id_map;
+
+	//! focus_poll が更新する「現在 focus されている id」スロット。 ホストは
+	//! このポインタの中身を読めば現在の focused id を取れる。 focus poll を
+	//! 一度も呼んでない / 何も focus されてない場合は空文字列。
+	std::shared_ptr<std::string> focused_id_slot;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。

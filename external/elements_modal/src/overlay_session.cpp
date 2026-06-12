@@ -116,6 +116,14 @@ struct overlay_session::impl
 	// action と照合して次画面を決める。
 	std::map<std::string, transition_spec> transitions;
 
+	// id 解決テーブル (= parsed_layout.id_map のコピー)。 focus_by_id で
+	// element を引くのに使う。
+	std::map<std::string, std::shared_ptr<ce::element>> id_map;
+
+	// focus poll が更新する「現在 focus されている id」スロット。 ホストが
+	// focused_id() で読む。
+	std::shared_ptr<std::string> focused_id_slot;
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -188,6 +196,8 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
 	_impl->transitions = std::move(layout.transitions);
+	_impl->id_map = std::move(layout.id_map);
+	_impl->focused_id_slot = layout.focused_id_slot;
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -235,6 +245,25 @@ const std::map<std::string, transition_spec>&
 overlay_session::transitions() const
 {
 	return _impl->transitions;
+}
+
+const std::string& overlay_session::focused_id() const
+{
+	static const std::string empty;
+	if (!_impl || !_impl->focused_id_slot) return empty;
+	return *_impl->focused_id_slot;
+}
+
+void overlay_session::focus_by_id(const std::string& id)
+{
+	if (!_impl || !_impl->view || id.empty()) return;
+	auto it = _impl->id_map.find(id);
+	if (it == _impl->id_map.end()) {
+		SDL_Log("overlay_session::focus_by_id: id '%s' not found",
+		        id.c_str());
+		return;
+	}
+	_impl->view->focus(it->second);
 }
 
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)

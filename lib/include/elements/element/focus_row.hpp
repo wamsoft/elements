@@ -44,7 +44,12 @@ namespace cycfi::elements
       bool                    click(context const& ctx, mouse_button btn) override;
 
       bool                    wants_control() const override { return true; }
-      bool                    wants_focus() const override   { return false; }
+      // wants_focus はあえて override しない (= proxy_base 既定 = subject.wants_focus
+      // に forward)。 「自分自身は focus 受け先にしない」つもりで false を返すと、
+      // 親 composite の TAB 循環が「ここは focusable がない」と判断して subtree
+      // 全部スキップしてしまう。 begin_focus は proxy_base 既定でそのまま subject
+      // に流れるので、 focus 経路としては subject (= htile/picker) に着地して
+      // 期待挙動になる。
 
       void                    target(element_ptr t) { _target = t; }
 
