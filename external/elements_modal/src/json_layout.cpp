@@ -339,7 +339,21 @@ public:
 	explicit LayoutBuilder(event_callback cb) : _cb(std::move(cb)) {}
 
 	void set_default_locale(std::string locale) { _default_locale = std::move(locale); }
+	void set_resource_base(std::string base) { _resource_base = std::move(base); }
 	element_ptr build(const picojson::value& v);
+
+	// 相対パスを resource_base (= ホストが指定するベースディレクトリ) で
+	// 解決して fs::path にする。 path が絶対ならそのまま。
+	cycfi::fs::path resolve_resource(const std::string& path) const
+	{
+		if (path.empty()) return {};
+		bool absolute = (path[0] == '/' || path[0] == '\\'
+		                 || (path.size() > 1 && path[1] == ':'));
+		if (absolute || _resource_base.empty()) {
+			return cycfi::fs::path(path);
+		}
+		return cycfi::fs::path(_resource_base + path);
+	}
 
 	// "initial_focus": true が指定された要素 (なければ nullptr)。
 	// build() 完了後、 ホストが view.focus(...) に渡すために取得する。
@@ -385,6 +399,7 @@ public:
 private:
 	event_callback _cb;
 	std::string _default_locale;
+	std::string _resource_base;
 	element_ptr _initial_focus;
 	std::map<std::string, element_ptr> _id_to_element;
 	std::set<std::string> _close_button_ids;
@@ -453,6 +468,10 @@ private:
 	element_ptr build_labeled_row (const picojson::object& o);
 	element_ptr build_pad_icon    (const picojson::object& o);
 	element_ptr build_band        (const picojson::object& o);
+	element_ptr build_sprite_button(const picojson::object& o);
+	element_ptr build_gizmo_image (const picojson::object& o);
+	element_ptr build_floating    (const picojson::object& o);
+	element_ptr build_canvas      (const picojson::object& o);
 	element_ptr build_tab_view    (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
@@ -523,6 +542,10 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "filler")        return ce::share(ce::element{});
 	if (type == "pad_icon")      return build_pad_icon(o);
 	if (type == "band")          return build_band(o);
+	if (type == "sprite_button") return build_sprite_button(o);
+	if (type == "gizmo_image")   return build_gizmo_image(o);
+	if (type == "floating")      return build_floating(o);
+	if (type == "canvas")        return build_canvas(o);
 	if (type == "tab_view")      return build_tab_view(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
@@ -1325,6 +1348,194 @@ element_ptr LayoutBuilder::build_band(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// sprite_button — lib の basic_sprite (= 1 枚画像を縦に frame_height 単位で
+// スライス) を sprite_button_styler に通した momentary button。
+//   { "type": "sprite_button",
+//     "image": "resources/buttons.png", "frame_height": 80,
+//     "scale": 1.0, "id": "..." }
+// 画像サイズは固定 (width = pixmap.width, height = frame_height)。 自動
+// リサイズはしない。 lib の既存 file-based sprite を使うので path 指定のみ。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_sprite_button(const picojson::object& o)
+{
+	auto image_str = string_or(o, "image");
+	if (image_str.empty()) {
+		SDL_Log("elements_modal: sprite_button without 'image'");
+		return nullptr;
+	}
+	float frame_height = static_cast<float>(number_or(o, "frame_height", 0.0));
+	if (frame_height <= 0.0f) {
+		SDL_Log("elements_modal: sprite_button \"%s\" needs 'frame_height'",
+		        image_str.c_str());
+		return nullptr;
+	}
+	float scale = static_cast<float>(number_or(o, "scale", 1.0));
+	auto full = resolve_resource(image_str);
+
+	std::string id = string_or(o, "id");
+
+	try {
+		auto sprite = ce::basic_sprite(full.string().c_str(),
+		                              frame_height, scale);
+		auto btn = ce::momentary_button(std::move(sprite));
+		if (!id.empty()) {
+			auto cb_id = id;
+			auto user_cb = _cb;
+			btn.on_click = [cb_id, user_cb](bool) {
+				if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
+			};
+		}
+		auto shared = ce::share(std::move(btn));
+		register_id(o, shared);
+		note_initial_focus(o, shared);
+		if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+			note_focusable(id, bp);
+		}
+		note_vars_on_focus(o, id);
+		if (!id.empty()) {
+			auto* v = get_field(o, "close_on_click");
+			if (v && v->is<bool>() && v->get<bool>()) {
+				_close_button_ids.insert(id);
+			}
+		}
+		return shared;
+	} catch (std::exception const& e) {
+		SDL_Log("elements_modal: sprite_button failed to load \"%s\": %s",
+		        full.string().c_str(), e.what());
+		return nullptr;
+	}
+}
+
+//---------------------------------------------------------------------------
+// gizmo_image — lib の gizmo / hgizmo / vgizmo (9-patch / 3-patch) を JSON
+// から組む。 PSD ベース UI では普通サイズ固定だが、 比較用 + フレキシブル
+// 背景用途で。
+//   { "type": "gizmo_image",
+//     "image": "resources/test_gizmo.png",
+//     "axis": "9" | "h" | "v",   // 既定 "9"
+//     "scale": 1.0 }
+// 自動リサイズ: 親レイアウト (htile / floating 等) が与える bounds に
+// 合わせて中央部分が伸縮する。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_gizmo_image(const picojson::object& o)
+{
+	auto image_str = string_or(o, "image");
+	if (image_str.empty()) {
+		SDL_Log("elements_modal: gizmo_image without 'image'");
+		return nullptr;
+	}
+	float scale = static_cast<float>(number_or(o, "scale", 1.0));
+	auto full = resolve_resource(image_str);
+	auto axis = string_or(o, "axis", "9");
+
+	try {
+		if (axis == "h") {
+			return ce::share(ce::hgizmo(full.string().c_str(), scale));
+		} else if (axis == "v") {
+			return ce::share(ce::vgizmo(full.string().c_str(), scale));
+		} else {
+			return ce::share(ce::gizmo(full.string().c_str(), scale));
+		}
+	} catch (std::exception const& e) {
+		SDL_Log("elements_modal: gizmo_image failed to load \"%s\": %s",
+		        full.string().c_str(), e.what());
+		return nullptr;
+	}
+}
+
+//---------------------------------------------------------------------------
+// floating — child を指定矩形に固定配置する。 lib の floating_element の
+// 薄いラッパ。 layer の中に複数並べて canvas 風に絶対座標配置できる。
+//   { "type": "floating", "at": [x, y, w, h], "child": {...} }
+// 親の bounds に関係なく ctx.bounds = (x, y) - (x+w, y+h) になる。 PSD で
+// デザインされたレイアウトをそのまま JSON 化する用途向け。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_floating(const picojson::object& o)
+{
+	auto* arr = get_array(o, "at");
+	if (!arr || arr->size() < 4) {
+		SDL_Log("elements_modal: floating requires 'at': [x, y, w, h]");
+		return nullptr;
+	}
+	float x = static_cast<float>(int_at(*arr, 0, 0));
+	float y = static_cast<float>(int_at(*arr, 1, 0));
+	float w = static_cast<float>(int_at(*arr, 2, 0));
+	float h = static_cast<float>(int_at(*arr, 3, 0));
+
+	auto child = build_child(o);
+	if (!child) {
+		SDL_Log("elements_modal: floating without valid 'child'");
+		return nullptr;
+	}
+	return ce::share(ce::floating(ce::rect{x, y, x + w, y + h},
+	                              ce::hold_any(child)));
+}
+
+//---------------------------------------------------------------------------
+// canvas — 複数の絶対座標配置を一括宣言する糖衣。 内部は layer_composite に
+// floating(rect, widget) を積んだだけ。 ホストの view extent (= 画面論理
+// サイズ 1920x1080 など) を canvas の固定サイズとして覆い、 子の at で
+// 内側の絶対座標を指定する。
+//   { "type": "canvas",
+//     "width": 1920, "height": 1080,           ← 任意 (省略時は view extent)
+//     "children": [
+//       { "at": [100, 200, 200, 80],
+//         "type": "sprite_button", "image": "...", ... },
+//       { "at": [350, 200, 200, 80],
+//         "type": "invert_button", "text": "...", ... },
+//       ...
+//     ] }
+// 各 child は通常の dispatch object に "at" を加えるだけ。 widget 自身の
+// "type" / その他フィールドはそのまま。 build 時に "at" を抜いて widget を
+// 組み、 floating(rect, widget) で wrap して layer に積む。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
+{
+	const auto* children = get_array(o, "children");
+	if (!children) {
+		SDL_Log("elements_modal: canvas requires 'children'");
+		return nullptr;
+	}
+
+	float width  = static_cast<float>(number_or(o, "width", 0.0));
+	float height = static_cast<float>(number_or(o, "height", 0.0));
+
+	ce::layer_composite layer;
+	for (auto& v : *children) {
+		if (!v.is<picojson::object>()) continue;
+		const auto& co = v.get<picojson::object>();
+
+		auto* at = get_array(co, "at");
+		if (!at || at->size() < 4) {
+			SDL_Log("elements_modal: canvas child missing 'at': [x,y,w,h]");
+			continue;
+		}
+		float x = static_cast<float>(int_at(*at, 0, 0));
+		float y = static_cast<float>(int_at(*at, 1, 0));
+		float w = static_cast<float>(int_at(*at, 2, 0));
+		float h = static_cast<float>(int_at(*at, 3, 0));
+
+		// child widget を build (v 全体を build に渡す。 "at" は dispatch 側
+		// で見ないので無害)。
+		auto widget = build(v);
+		if (!widget) continue;
+
+		auto wrapped = ce::share(
+			ce::floating(ce::rect{x, y, x + w, y + h}, ce::hold_any(widget)));
+		layer.push_back(wrapped);
+	}
+
+	element_ptr root = ce::share(std::move(layer));
+	if (width > 0.0f) {
+		root = ce::share(ce::hmin_size(width, ce::hold_any(root)));
+	}
+	if (height > 0.0f) {
+		root = ce::share(ce::vmin_size(height, ce::hold_any(root)));
+	}
+	return root;
+}
+
+//---------------------------------------------------------------------------
 // tab_view — タブ + ページを 1 要素として返す。
 //   {
 //     "type": "tab_view",
@@ -1688,7 +1899,8 @@ std::function<void(ce::view&)> build_input_applier(
 //---------------------------------------------------------------------------
 // Top level parsing
 //---------------------------------------------------------------------------
-parsed_layout build_top_level(const picojson::value& root, event_callback cb)
+parsed_layout build_top_level(const picojson::value& root, event_callback cb,
+                              const std::string& resource_base)
 {
 	parsed_layout result;
 	if (!root.is<picojson::object>()) {
@@ -1715,6 +1927,9 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 	}
 
 	LayoutBuilder builder(std::move(cb));
+	if (!resource_base.empty()) {
+		builder.set_resource_base(resource_base);
+	}
 	if (auto* v = get_field(o, "locale"); v && v->is<std::string>()) {
 		builder.set_default_locale(v->get<std::string>());
 	}
@@ -1810,7 +2025,8 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb)
 // 公開 API
 //---------------------------------------------------------------------------
 parsed_layout parse_from_string(const std::string& json_utf8,
-                                event_callback cb)
+                                event_callback cb,
+                                const std::string& resource_base)
 {
 	// JSONC 前処理 (const + cbegin/cend で渡す。 non-const iterator だと
 	// picojson の template instance の都合で parse 結果が破壊されるケースがある)。
@@ -1823,7 +2039,7 @@ parsed_layout parse_from_string(const std::string& json_utf8,
 		SDL_Log("elements_modal: parse error: %s", err.c_str());
 		return {};
 	}
-	return build_top_level(v, std::move(cb));
+	return build_top_level(v, std::move(cb), resource_base);
 }
 
 //---------------------------------------------------------------------------

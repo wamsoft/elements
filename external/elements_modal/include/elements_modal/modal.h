@@ -199,7 +199,8 @@ public:
 	bool start(const std::string& json_utf8,
 	           int view_width, int view_height,
 	           float pixel_scale = 1.0f,
-	           event_callback external_cb = {});
+	           event_callback external_cb = {},
+	           const std::string& resource_base = {});
 
 	//! @brief 外部からの強制終了要求。 active() → false に。
 	//!        action は呼出側が指定 (空文字なら通常の Esc 相当)。

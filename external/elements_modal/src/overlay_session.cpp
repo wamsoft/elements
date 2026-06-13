@@ -161,7 +161,8 @@ overlay_session::~overlay_session() = default;
 bool overlay_session::start(const std::string& json_utf8,
                             int view_width, int view_height,
                             float pixel_scale,
-                            event_callback external_cb)
+                            event_callback external_cb,
+                            const std::string& resource_base)
 {
 	_impl->external_cb = std::move(external_cb);
 
@@ -182,7 +183,8 @@ bool overlay_session::start(const std::string& json_utf8,
 	auto layout = parse_from_string(json_utf8,
 		[p](std::string_view id, bool is_btn, const value_t& v) {
 			p->fire(id, is_btn, v);
-		});
+		},
+		resource_base);
 
 	if (!layout.root) {
 		SDL_Log("overlay_session::start: layout parse failed");

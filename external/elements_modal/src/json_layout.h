@@ -72,8 +72,11 @@ struct parsed_layout
 
 //! @brief JSON 文字列を Elements ツリーに変換する。
 //!        失敗時 root=nullptr。 詳細は SDL_Log に出力。
+//! @param resource_base 画像など外部リソースの相対パスを解決するベース
+//!                       ディレクトリ (末尾 '/' 推奨)。 空のときは CWD 解決。
 parsed_layout parse_from_string(const std::string& json_utf8,
-                                event_callback cb);
+                                event_callback cb,
+                                const std::string& resource_base = {});
 
 // app_manifest / parse_app_manifest() は modal.h (public) に定義済。
 
