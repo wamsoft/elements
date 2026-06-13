@@ -82,6 +82,39 @@ namespace cycfi::elements
 
       std::vector<rect>       _frames;
    };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // atlas_progress — ゲージ / HP バー用、 非インタラクティブ。
+   // アトラスの track 矩形を背景として全幅に、 fill 矩形を value (0..1) 分の
+   // 長さだけ前景として描画する。
+   //
+   //   vertical=false (水平、 既定): fill は左から右に value 分伸びる
+   //   vertical=true  (垂直):        fill は下から上に value 分伸びる
+   //
+   // limits / size は track の矩形を採用する (= 描画サイズは track と同じ)。
+   // set_value() で値を 0..1 にクランプして更新。 次フレームで反映される。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_progress : public element
+   {
+   public:
+                              atlas_progress(pixmap_ptr atlas, rect track,
+                                             rect fill, double value = 0.0,
+                                             bool vertical = false);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      void                    draw(context const& ctx) override;
+
+      double                  value() const { return _value; }
+      void                    set_value(double v);
+
+   private:
+
+      pixmap_ptr              _atlas;
+      rect                    _track;
+      rect                    _fill;
+      double                  _value;
+      bool                    _vertical;
+   };
 }
 
 #endif

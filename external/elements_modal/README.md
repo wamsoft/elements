@@ -188,7 +188,25 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 
 - `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+- `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。
+- `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。
 - `atlas_slider` — `"atlas": name` + `"track": [x,y,w,h]` + `"thumb": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 値変化で `value_t{double pos}` を発火。
+- `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
+
+##### atlas_button / atlas_toggle / atlas_choice の text overlay
+
+`"text"` (+ 任意 `"text_size"` / `"text_color"` / `"text_offset": [dx, dy]` / `"locale"`) を指定すると button の上にラベルを重ねる。 内部実装は **非 composite な proxy_base 派生ラッパ** (`label_decoration`) で button (subject) + label (overlay) を保持し、 draw/layout で両方に同じ bounds を流す。
+
+非 composite ラッパであることが atlas_choice の排他動作を維持する鍵:
+- `basic_choice::activate/click` は `find_composite` で**親 composite** を取得して兄弟全部の selectable を deselect する
+- もし button + label を `layer_composite` 等の composite で wrap すると、 find_composite はそこで止まってしまい、 兄弟 (他の atlas_choice) が見えなくなって排他が壊れる
+- proxy_base 派生は composite_base ではないので find_composite が素通りし、 canvas layer まで届く
+
+#### テキスト版 radio_button
+
+lib 既定の塗りつぶし円 + テキスト styler を使ったテキスト版排他ボタン。 atlas を使わない普通の UI 用:
+
+- `radio_button` — `"text": "Easy"` + `"id"` + `"selected": bool` (既定 false)。 同じ親 composite に並べた radio_button 群は atlas_choice と同じ仕組みで自動排他。 値変化で `value_t{bool true}` を発火。
 
 #### resource_base (相対パスの解決起点)
 

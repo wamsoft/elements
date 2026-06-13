@@ -480,7 +480,11 @@ private:
 	element_ptr build_canvas      (const picojson::object& o);
 	element_ptr build_atlas_image (const picojson::object& o);
 	element_ptr build_atlas_button(const picojson::object& o);
+	element_ptr build_atlas_toggle(const picojson::object& o);
+	element_ptr build_atlas_choice(const picojson::object& o);
 	element_ptr build_atlas_slider(const picojson::object& o);
+	element_ptr build_atlas_progress(const picojson::object& o);
+	element_ptr build_radio_button (const picojson::object& o);
 
 	// 名前 → pixmap_ptr 解決。 未登録ならログ + nullptr。
 	cycfi::elements::pixmap_ptr lookup_atlas(const std::string& name);
@@ -558,9 +562,15 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "gizmo_image")   return build_gizmo_image(o);
 	if (type == "floating")      return build_floating(o);
 	if (type == "canvas")        return build_canvas(o);
-	if (type == "atlas_image")   return build_atlas_image(o);
-	if (type == "atlas_button")  return build_atlas_button(o);
-	if (type == "atlas_slider")  return build_atlas_slider(o);
+	if (type == "atlas_image")    return build_atlas_image(o);
+	if (type == "atlas_button")   return build_atlas_button(o);
+	if (type == "atlas_toggle")   return build_atlas_toggle(o);
+	if (type == "atlas_check")    return build_atlas_toggle(o);  // alias
+	if (type == "atlas_choice")   return build_atlas_choice(o);
+	if (type == "atlas_radio")    return build_atlas_choice(o);  // alias
+	if (type == "atlas_slider")   return build_atlas_slider(o);
+	if (type == "atlas_progress") return build_atlas_progress(o);
+	if (type == "radio_button")   return build_radio_button(o);
 	if (type == "tab_view")      return build_tab_view(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
@@ -1551,7 +1561,8 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
-// atlas_image / atlas_button / atlas_slider 共通ユーティリティ
+// atlas_image / atlas_button / atlas_toggle / atlas_slider / atlas_progress
+// 共通ユーティリティ
 //---------------------------------------------------------------------------
 namespace
 {
@@ -1564,6 +1575,35 @@ namespace
 		float w = static_cast<float>(int_at(arr, 2, 0));
 		float h = static_cast<float>(int_at(arr, 3, 0));
 		return ce::rect{x, y, x + w, y + h};
+	}
+
+	// frames 指定 (object or array) を std::vector<rect> にパース。
+	// object 版: 状態名キーで {normal, hilite, pressed, pressed_hilite, disabled}
+	//   の順に値があるところまで使う (途中で抜けたら break)。
+	// array 版:  [[x,y,w,h], ...] そのまま順番固定。
+	bool parse_frames(const picojson::value* fv,
+	                  const char* const* state_names,  // null 終端の配列
+	                  std::vector<ce::rect>& out)
+	{
+		if (!fv) return false;
+		if (fv->is<picojson::object>()) {
+			const auto& fo = fv->get<picojson::object>();
+			for (auto p = state_names; *p; ++p) {
+				auto it = fo.find(*p);
+				if (it == fo.end() || !it->second.is<picojson::array>()) break;
+				out.push_back(parse_xywh(it->second.get<picojson::array>()));
+			}
+			return !out.empty();
+		}
+		if (fv->is<picojson::array>()) {
+			const auto& fa = fv->get<picojson::array>();
+			for (auto& el : fa) {
+				if (el.is<picojson::array>())
+					out.push_back(parse_xywh(el.get<picojson::array>()));
+			}
+			return !out.empty();
+		}
+		return false;
 	}
 }
 
@@ -1611,14 +1651,162 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// テキスト overlay — atlas_button / atlas_toggle / atlas_choice の上に
+// ラベルを重ねる。
+//
+// 初期実装は `layer_composite{button, label}` を返していたが、 これは
+// atlas_choice の排他動作 (= `basic_choice::activate`/`click` が
+// `find_composite` で親 composite を取り、 兄弟全部の selectable を
+// scan して deselect する仕組み) を壊す。 find_composite はこの inner
+// layer_composite で止まってしまい、 そこには自分しか居ない → 他の
+// choice 群が deselect されない。
+//
+// 解決: **非 composite** な proxy_base 派生で button (subject) と label
+// (overlay) を保持し、 draw/layout で両方に同じ ctx.bounds を流す。
+// proxy_base は composite_base ではないので find_composite はこれを
+// 素通りして canvas_layer (外側 composite) を見つける = 排他動作が
+// 正しく動く。 hit_test も proxy_base 既定の subject() 委譲なので click
+// は button に届く。 label は draw で重ね描きされるだけ。
+//---------------------------------------------------------------------------
+namespace
+{
+	// label_decoration — proxy_base 派生で button + overlay label を保持。
+	// 単一 subject (button) を持つ "proxy" として振る舞いつつ、 draw/layout で
+	// label も同じ bounds で描く。
+	class label_decoration : public ce::proxy_base
+	{
+	public:
+		label_decoration(element_ptr subject_, element_ptr label_)
+		 : _subject(std::move(subject_))
+		 , _label(std::move(label_))
+		{}
+
+		// proxy_base 純粋仮想: subject 取得
+		ce::element const& subject() const override { return *_subject; }
+		ce::element&       subject() override       { return *_subject; }
+
+		void draw(ce::context const& ctx) override
+		{
+			// (1) subject (button) を通常描画。 sprite_button_styler 経由で
+			//     frame index 計算 + sprite 描画が走る。
+			ce::proxy_base::draw(ctx);
+			// (2) overlay (label) を同じ bounds で重ね描き。 label 自身は
+			//     align_center_middle 等で整列を持つので bounds 内で位置を
+			//     計算してくれる。
+			if (_label) {
+				ce::context lctx{ctx, _label.get(), ctx.bounds};
+				_label->draw(lctx);
+			}
+		}
+
+		void layout(ce::context const& ctx) override
+		{
+			// 両方に同じ bounds を渡してレイアウトさせる。 通常 layout は
+			// resize 時にしか走らないが、 label の align/margin が正しい
+			// 内部 bounds を持つために必要。
+			ce::proxy_base::layout(ctx);
+			if (_label) {
+				ce::context lctx{ctx, _label.get(), ctx.bounds};
+				_label->layout(lctx);
+			}
+		}
+
+	private:
+		element_ptr _subject;
+		element_ptr _label;
+	};
+}
+
+//---------------------------------------------------------------------------
+// テキスト overlay ビルダ
+//---------------------------------------------------------------------------
+namespace
+{
+	element_ptr build_text_overlay_label(const picojson::object& o,
+	                                     const std::string& default_locale)
+	{
+		auto text   = string_or(o, "text");
+		auto locale = string_or(o, "locale", default_locale);
+		float sz = static_cast<float>(number_or(o, "text_size", 0.0));
+
+		ce::color col{1.0f, 1.0f, 1.0f, 1.0f};
+		bool has_color = false;
+		if (auto* arr = get_array(o, "text_color")) {
+			col = parse_color(*arr);
+			has_color = true;
+		}
+
+		auto base = ce::label(text);
+		element_ptr lab;
+		if (has_color && sz > 0.0f) {
+			auto e = base.font_color(col).font_size(sz);
+			if (locale.empty()) lab = ce::share(std::move(e));
+			else                lab = ce::share(e.locale(std::move(locale)));
+		} else if (has_color) {
+			auto e = base.font_color(col);
+			if (locale.empty()) lab = ce::share(std::move(e));
+			else                lab = ce::share(e.locale(std::move(locale)));
+		} else if (sz > 0.0f) {
+			auto e = base.font_size(sz);
+			if (locale.empty()) lab = ce::share(std::move(e));
+			else                lab = ce::share(e.locale(std::move(locale)));
+		} else {
+			if (locale.empty()) lab = ce::share(std::move(base));
+			else                lab = ce::share(base.locale(std::move(locale)));
+		}
+
+		// align_center_middle で button の中央に位置決め
+		element_ptr aligned = ce::share(ce::align_center_middle(ce::hold_any(lab)));
+
+		// "text_offset": [dx, dy] があれば margin で上下左右にずらす。
+		// 正の dx で右、 正の dy で下に動く。 align は中央維持なので margin で
+		// 周囲の bound を非対称にすれば実質オフセット。
+		if (auto* off = get_array(o, "text_offset"); off && off->size() >= 2) {
+			float dx = static_cast<float>(int_at(*off, 0, 0));
+			float dy = static_cast<float>(int_at(*off, 1, 0));
+			// (l, t, r, b) を (max(0,dx), max(0,dy), max(0,-dx), max(0,-dy))
+			float l = dx > 0 ?  dx : 0;
+			float t = dy > 0 ?  dy : 0;
+			float r = dx < 0 ? -dx : 0;
+			float b = dy < 0 ? -dy : 0;
+			aligned = ce::share(ce::margin({l, t, r, b}, ce::hold_any(aligned)));
+		}
+		return aligned;
+	}
+
+	// btn_shared を非 composite な label_decoration で包み、 label を overlay
+	// として上から描く。 "text" が空 (= overlay 不要) なら btn_shared を
+	// そのまま返す。
+	// 旧実装は layer_composite で button + label を兄弟として積んでいたが、
+	// それだと find_composite が inner layer で止まり basic_choice の排他が
+	// 効かなくなる。 label_decoration は proxy_base 派生で composite_base
+	// ではないので、 find_composite が素通りして外側 (canvas layer) を
+	// 見つけられる。
+	element_ptr maybe_wrap_text_overlay(const picojson::object& o,
+	                                    element_ptr btn_shared,
+	                                    const std::string& default_locale)
+	{
+		auto text = string_or(o, "text");
+		if (text.empty()) return btn_shared;
+
+		auto label_elem = build_text_overlay_label(o, default_locale);
+		return ce::share(label_decoration(std::move(btn_shared),
+		                                  std::move(label_elem)));
+	}
+}
+
+//---------------------------------------------------------------------------
 // atlas_button — アトラスから状態別 sub-rect を sprite_button_styler に乗せて
 // momentary button にする。
 //   { "type": "atlas_button", "atlas": "ui", "id": "ok",
 //     "frames": { "normal": [...], "hilite": [...], "pressed": [...],
-//                 "pressed_hilite": [...], "disabled": [...] } }
+//                 "pressed_hilite": [...], "disabled": [...] },
+//     "text": "OK", "text_size": 24,            // 任意: ラベル overlay
+//     "text_color": [r,g,b,a], "text_offset": [dx, dy] }
 // frames は object (名前→rect、 normal/hilite/pressed/pressed_hilite/disabled
 // の順で値があるところまで使う) または array (順番固定 0..N) を受ける。
 // 通常は 4 つ以上揃える (= sprite_button_styler の既定計算が 4 frame を仮定)。
+// "text" が指定されれば maybe_wrap_text_overlay で label を上面に重ねる。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 {
@@ -1631,42 +1819,13 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 	if (!pm) return nullptr;
 
 	std::vector<ce::rect> frames;
+	static const char* btn_states[] = {
+		"normal", "hilite", "pressed", "pressed_hilite", "disabled", nullptr
+	};
 	auto* fv = get_field(o, "frames");
-	if (!fv) {
-		SDL_Log("elements_modal: atlas_button \"%s\" missing 'frames'",
+	if (!parse_frames(fv, btn_states, frames)) {
+		SDL_Log("elements_modal: atlas_button \"%s\" missing or invalid 'frames'",
 		        atlas_name.c_str());
-		return nullptr;
-	}
-	if (fv->is<picojson::object>()) {
-		const auto& fo = fv->get<picojson::object>();
-		static const char* names[] = {
-			"normal", "hilite", "pressed", "pressed_hilite", "disabled"
-		};
-		for (auto* n : names) {
-			auto* r = get_array(fo, n);
-			if (!r) break;
-			frames.push_back(parse_xywh(*r));
-		}
-		if (frames.empty()) {
-			SDL_Log("elements_modal: atlas_button \"%s\" frames object has "
-			        "no 'normal' entry", atlas_name.c_str());
-			return nullptr;
-		}
-	} else if (fv->is<picojson::array>()) {
-		const auto& fa = fv->get<picojson::array>();
-		for (auto& el : fa) {
-			if (el.is<picojson::array>()) {
-				frames.push_back(parse_xywh(el.get<picojson::array>()));
-			}
-		}
-		if (frames.empty()) {
-			SDL_Log("elements_modal: atlas_button \"%s\" frames array empty",
-			        atlas_name.c_str());
-			return nullptr;
-		}
-	} else {
-		SDL_Log("elements_modal: atlas_button \"%s\" 'frames' must be "
-		        "object or array", atlas_name.c_str());
 		return nullptr;
 	}
 
@@ -1694,7 +1853,148 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 			_close_button_ids.insert(id);
 		}
 	}
-	return shared;
+	return maybe_wrap_text_overlay(o, shared, _default_locale);
+}
+
+//---------------------------------------------------------------------------
+// atlas_toggle — 2 値保持型のアトラス button (lib の toggle_button(sprite)
+// 経由)。 frame index = (value ? 2 : 0) + hilite の計算を共有するため、
+// frames は off_normal / off_hilite / on_normal / on_hilite (+ disabled) の
+// 順 (object キー) または同順 array で受ける。 atlas_check は同 builder の
+// 別名 alias。
+//   { "type": "atlas_toggle", "atlas": "ui", "id": "music",
+//     "initial": false,
+//     "frames": {
+//       "off_normal":    [...], "off_hilite": [...],
+//       "on_normal":     [...], "on_hilite":  [...],
+//       "disabled":      [...]
+//     },
+//     "text": "MUSIC", "text_size": 22 }   // overlay 同様
+// 値変化で value_t{bool} を発火。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_toggle without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	std::vector<ce::rect> frames;
+	static const char* toggle_states[] = {
+		"off_normal", "off_hilite", "on_normal", "on_hilite", "disabled", nullptr
+	};
+	auto* fv = get_field(o, "frames");
+	if (!parse_frames(fv, toggle_states, frames)) {
+		SDL_Log("elements_modal: atlas_toggle \"%s\" missing or invalid 'frames'",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+
+	std::string id = string_or(o, "id");
+	bool init = false;
+	if (auto* v = get_field(o, "initial"); v && v->is<bool>()) init = v->get<bool>();
+	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+
+	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	auto tb = ce::toggle_button(std::move(sprite));
+	tb.value(init);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		tb.on_click = [cb_id, user_cb](bool state) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		};
+	}
+	auto shared = ce::share(std::move(tb));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	note_vars_on_focus(o, id);
+	return maybe_wrap_text_overlay(o, shared, _default_locale);
+}
+
+//---------------------------------------------------------------------------
+// atlas_choice — 排他選択 (ラジオボタン) のアトラス版。
+// 仕組み: lib の `basic_choice` (= basic_latching_button + selectable) は
+// activate / click 時に find_composite で親 composite を取得 → 兄弟全部に対し
+// find_element<selectable*> を試して、 自分以外を select(false) する。 これに
+// よって同じ composite に並ぶ atlas_choice 群が自動で排他動作する。
+//
+// canvas 内では各 child が floating で wrap されるが、 find_element は proxy
+// 鎖を辿るので floating(basic_choice) でも selectable* を見つけられる。
+// vtile / htile 等の通常 composite に直接並べても OK。
+//
+// frame 名は atlas_toggle と同じ (off_normal / off_hilite / on_normal /
+// on_hilite + 任意 disabled)。 SpriteSubject 制約は `is_sprite` が派生対応
+// 済みなので `latching_button<basic_choice>(atlas_sprite)` で
+// `proxy<atlas_sprite, sprite_button_styler<basic_choice>>` が組まれる
+// (= sprite 描画 + 排他 + 状態別 frame 切替が一気にまとまる)。
+//
+//   { "type": "atlas_choice", "atlas": "ui", "id": "diff_easy",
+//     "selected": false,        // 初期状態 (1 グループ内で 1 つだけ true 推奨)
+//     "frames": {
+//       "off_normal": [...], "off_hilite": [...],
+//       "on_normal":  [...], "on_hilite":  [...]
+//     },
+//     "text": "EASY", "text_size": 18 }
+// `atlas_radio` は同 builder の別名 alias。
+// 値変化で value_t{bool true} を発火 (新しく選ばれた側のみ。 deselect される
+// 側は select(false) 経由なので on_click は走らない)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_choice without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	std::vector<ce::rect> frames;
+	static const char* toggle_states[] = {
+		"off_normal", "off_hilite", "on_normal", "on_hilite", "disabled", nullptr
+	};
+	auto* fv = get_field(o, "frames");
+	if (!parse_frames(fv, toggle_states, frames)) {
+		SDL_Log("elements_modal: atlas_choice \"%s\" missing or invalid 'frames'",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+
+	std::string id = string_or(o, "id");
+	bool init = false;
+	if (auto* v = get_field(o, "selected"); v && v->is<bool>()) init = v->get<bool>();
+	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+
+	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	// latching_button<basic_choice>(sprite) → proxy<sprite, sprite_button_styler<basic_choice>>
+	// 排他は basic_choice::activate/click の find_composite + 兄弟スキャン
+	// による (atlas_choice 群を同じ composite=canvas layer に並べる前提)。
+	// text overlay は label_decoration (非 composite proxy_base 派生) で
+	// 包むので、 find_composite はそれを素通りして canvas layer まで届く。
+	auto ch = ce::latching_button<ce::basic_choice>(std::move(sprite));
+	ch.value(init);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		ch.on_click = [cb_id, user_cb](bool state) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		};
+	}
+	auto shared = ce::share(std::move(ch));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	note_vars_on_focus(o, id);
+	return maybe_wrap_text_overlay(o, shared, _default_locale);
 }
 
 //---------------------------------------------------------------------------
@@ -1756,6 +2056,124 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
+	}
+	note_vars_on_focus(o, id);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// atlas_progress — アトラスの track + fill 2 矩形を使うゲージ。
+// 非インタラクティブ。 value (0..1) で fill の幅 (vertical=true なら高さ) が
+// 変わる。 "value_var" を指定すると変数 store から動的に値を取得 +
+// subscriber で変更を反映 (PSD UI で HP バーや volume gauge を変数連動)。
+//   { "type": "atlas_progress", "atlas": "ui",
+//     "track": [x, y, w, h], "fill": [x, y, w, h],
+//     "value": 0.5,                   // 初期値 (静的) または fallback
+//     "value_var": "hp_pct",          // 任意: 変数 store キー (string→double)
+//     "vertical": false }
+// 変数の値は文字列で持つ (text_var と同じ store)。 "0.75" のような 10 進
+// 文字列を std::stod でパース、 失敗時は 0 にフォールバック。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_progress without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	auto* tr = get_array(o, "track");
+	auto* fl = get_array(o, "fill");
+	if (!tr || !fl || tr->size() < 4 || fl->size() < 4) {
+		SDL_Log("elements_modal: atlas_progress \"%s\" needs 'track' and 'fill' "
+		        "as [x, y, w, h]", atlas_name.c_str());
+		return nullptr;
+	}
+	ce::rect track_src = parse_xywh(*tr);
+	ce::rect fill_src  = parse_xywh(*fl);
+
+	bool vertical = false;
+	if (auto* v = get_field(o, "vertical"); v && v->is<bool>()) vertical = v->get<bool>();
+
+	double init = number_or(o, "value", 0.0);
+
+	std::string value_var = string_or(o, "value_var");
+	if (!value_var.empty()) {
+		// 変数の現在値があれば init を上書き
+		if (auto* cur = _vars->get(value_var)) {
+			try { init = std::stod(*cur); } catch (...) { /* fallback */ }
+		}
+	}
+
+	auto pg = ce::atlas_progress(pm, track_src, fill_src, init, vertical);
+	auto shared = ce::share(std::move(pg));
+
+	if (!value_var.empty()) {
+		// subscriber で変更時に set_value
+		auto sp = std::dynamic_pointer_cast<ce::atlas_progress>(shared);
+		if (sp) {
+			std::weak_ptr<ce::atlas_progress> w = sp;
+			_vars->subscribe(value_var, [w](const std::string& v) {
+				if (auto p = w.lock()) {
+					try { p->set_value(std::stod(v)); }
+					catch (...) { /* 値不正は無視 */ }
+				}
+			});
+		} else {
+			SDL_Log("elements_modal: atlas_progress value_var=\"%s\" — "
+			        "dynamic_cast 失敗 (share された型が違う?)",
+			        value_var.c_str());
+		}
+	}
+
+	register_id(o, shared);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// radio_button — テキスト版の排他選択 (lib 既定 styler の塗りつぶし円 + text)。
+// 仕組みは atlas_choice と同じ basic_choice 経由 (lib の `radio_button(text)`
+// は `choice(radio_button_styler{text})`)。 兄弟全部に対し select(false) を
+// 呼ぶので、 同じ composite に並べた radio_button 群は自動排他。
+//   { "type": "radio_button", "text": "Easy", "id": "diff_easy",
+//     "selected": false,
+//     "size": 24,                  // 任意: テキスト font_size (px) または size_scale
+//     "size_scale": 1.5 }
+// 値変化で value_t{bool true} を発火 (atlas_choice と同じ semantics)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
+{
+	auto text = string_or(o, "text");
+	std::string id = string_or(o, "id");
+	bool init = false;
+	if (auto* v = get_field(o, "selected"); v && v->is<bool>()) init = v->get<bool>();
+	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+
+	// lib 側の `radio_button(std::string)` は `choice(radio_button_styler{text})`
+	// を返す = proxy<radio_button_styler, basic_choice>。
+	auto rb = ce::radio_button(text);
+	rb.value(init);
+
+	// font_size 指定があれば styler 側に伝える。 lib の radio_button_styler は
+	// toggle_selector 継承で text() / relative_font_size() / font_size() を
+	// 持つ。 ただ proxy 越しのアクセスは subject() 経由になる。
+	// シンプルさ優先で size 指定は今のところ対応せず (将来必要なら styler に
+	// font_size を flowed する API を足す)。
+
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		rb.on_click = [cb_id, user_cb](bool state) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		};
+	}
+	auto shared = ce::share(std::move(rb));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
 	}
 	note_vars_on_focus(o, id);
 	return shared;
