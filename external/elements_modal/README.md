@@ -81,6 +81,7 @@ int main()
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
 | `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
+| `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有 / 絶対座標配置」節) |
 
 ### 要素タイプ (`"type"`)
 
@@ -99,6 +100,8 @@ int main()
 - `group` — タイトル付きフレーム。 `"title"` + `"label_size"` + `"child"`。
 - `scroller` — 縦スクロール領域。 `"child"`。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
+- `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
+- `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 build 時に `floating` で wrap して layer に積まれる (= 複数 floating の糖衣)。 PSD ベース UI の主役。
 
 #### 入力 / state widget
 - `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。
@@ -134,6 +137,62 @@ int main()
   - **theme-native** (ps): `cross` / `circle` / `square` / `triangle` / `options` / `touchpad` / `playstation` / `l1` / `r1` / `l2` / `r2` / `l3` / `r3`
   - **theme-native** (switch): `a` / `b` / `x` / `y` / `l` / `r` / `zl` / `zr` / `plus` / `minus` / `capture` / `home` / `sl` / `sr`
   - **theme-native** (keyboard): `keyboard_enter` / `keyboard_space` / `keyboard_escape` / `keyboard_arrow_{up,down,left,right}` / `keyboard_a`…`keyboard_z` / `keyboard_0`…`keyboard_9` 等
+
+#### 画像 / sprite / 9-patch 系
+
+PSD でデザインされた固定サイズ / 固定位置のビットマップ UI を JSON 化する用途向け。 通常は `canvas` + `at` で絶対座標配置する。 ファイル単位で 1 枚画像を読む素直な版と、 1 枚のアトラス画像を共有する版があり、 後者は別セクション (「アトラス共有」) で扱う。
+
+- `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+- `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
+
+#### アトラス共有 (`atlases` / `atlas_image` / `atlas_button` / `atlas_slider`)
+
+1 枚のテクスチャアトラス画像を pixmap として共有し、 sub-rect 切り出しで複数の要素を構築する。 同じ画面で何度も使う部品はアトラスにまとめると I/O とメモリが減り、 PSD/Photoshop で 1 シートに描いた UI をそのまま読み込めるようになる。
+
+top-level の `"atlases"` でアトラスを名前付きで事前ロードしておき、 個々の要素で `"atlas": "<name>"` で参照する:
+
+```jsonc
+{
+    "atlases": {
+        "ui": { "path": "resources/ui_atlas.png", "scale": 1.0 },
+        // 短縮形: "ui": "resources/ui_atlas.png"  (= scale 1.0)
+    },
+    "content": {
+        "type": "canvas", "width": 1920, "height": 1080,
+        "children": [
+            { "at": [80, 160, 200, 80],
+              "type": "atlas_button", "atlas": "ui", "id": "ok",
+              "frames": {
+                "normal":         [0,   0, 200, 80],
+                "hilite":         [0,  80, 200, 80],
+                "pressed":        [0, 160, 200, 80],
+                "pressed_hilite": [0, 240, 200, 80],
+                "disabled":       [0, 320, 200, 80]
+              } },
+            { "at": [580, 140, 128, 128],
+              "type": "atlas_image", "atlas": "ui", "rect": [220, 0, 128, 128] },
+            { "at": [80, 360, 400, 32],
+              "type": "atlas_slider", "atlas": "ui", "id": "vol",
+              "track": [220, 140, 256, 16],
+              "thumb": [220, 170,  32, 32], "initial": 0.5 }
+        ]
+    }
+}
+```
+
+- `atlases` の値は string (= path 短縮形) または `{path, scale}` object。 path は `resource_base` 起点で解決 (絶対パスはそのまま)。
+- `atlases` は content build より**先に**解決されるので、 同じ JSON 内のどこから参照しても OK。
+- 名前未登録のアトラスを参照すると build エラーログを出して該当要素はスキップ。
+
+各要素タイプ:
+
+- `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。
+- `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+- `atlas_slider` — `"atlas": name` + `"track": [x,y,w,h]` + `"thumb": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 値変化で `value_t{double pos}` を発火。
+
+#### resource_base (相対パスの解決起点)
+
+`sprite_button` / `gizmo_image` / `atlases` などが受け取る相対パスは、 `overlay_session::start(..., resource_base)` (または `run_modal` のホスト側設定) で渡された **resource_base** ディレクトリを起点に resolve される。 絶対パスはそのまま使用。 マニフェスト駆動の elements_console ランナは exe のあるディレクトリ (または `--base` 指定) を resource_base として渡す。
 
 ### フォントサイズ指定の方針
 
