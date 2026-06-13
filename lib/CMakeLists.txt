@@ -13,6 +13,7 @@ include(FetchContent)
 
 set(ELEMENTS_SOURCES
    src/element/arrow_button.cpp
+   src/element/atlas.cpp
    src/element/button.cpp
    src/element/child_window.cpp
    src/element/composite.cpp
@@ -79,6 +80,7 @@ set(ELEMENTS_HEADERS
    include/elements/element.hpp
    include/elements/element/align.hpp
    include/elements/element/arrow_button.hpp
+   include/elements/element/atlas.hpp
    include/elements/element/button.hpp
    include/elements/element/collapsable.hpp
    include/elements/element/composite.hpp

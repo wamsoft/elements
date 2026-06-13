@@ -340,6 +340,7 @@ public:
 
 	void set_default_locale(std::string locale) { _default_locale = std::move(locale); }
 	void set_resource_base(std::string base) { _resource_base = std::move(base); }
+	std::map<std::string, cycfi::elements::pixmap_ptr>& atlases() { return _atlases; }
 	element_ptr build(const picojson::value& v);
 
 	// 相対パスを resource_base (= ホストが指定するベースディレクトリ) で
@@ -400,6 +401,11 @@ private:
 	event_callback _cb;
 	std::string _default_locale;
 	std::string _resource_base;
+
+	// アトラス画像 (atlas_image / atlas_button / atlas_slider 用) を JSON
+	// top-level "atlases" で名前→pixmap_ptr に解決する。 同名 atlas が複数
+	// widget で参照されたら同じ pixmap_ptr を共有。
+	std::map<std::string, cycfi::elements::pixmap_ptr> _atlases;
 	element_ptr _initial_focus;
 	std::map<std::string, element_ptr> _id_to_element;
 	std::set<std::string> _close_button_ids;
@@ -472,6 +478,12 @@ private:
 	element_ptr build_gizmo_image (const picojson::object& o);
 	element_ptr build_floating    (const picojson::object& o);
 	element_ptr build_canvas      (const picojson::object& o);
+	element_ptr build_atlas_image (const picojson::object& o);
+	element_ptr build_atlas_button(const picojson::object& o);
+	element_ptr build_atlas_slider(const picojson::object& o);
+
+	// 名前 → pixmap_ptr 解決。 未登録ならログ + nullptr。
+	cycfi::elements::pixmap_ptr lookup_atlas(const std::string& name);
 	element_ptr build_tab_view    (const picojson::object& o);
 
 	element_ptr build_child(const picojson::object& o);
@@ -546,6 +558,9 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (type == "gizmo_image")   return build_gizmo_image(o);
 	if (type == "floating")      return build_floating(o);
 	if (type == "canvas")        return build_canvas(o);
+	if (type == "atlas_image")   return build_atlas_image(o);
+	if (type == "atlas_button")  return build_atlas_button(o);
+	if (type == "atlas_slider")  return build_atlas_slider(o);
 	if (type == "tab_view")      return build_tab_view(o);
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
@@ -1536,6 +1551,217 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// atlas_image / atlas_button / atlas_slider 共通ユーティリティ
+//---------------------------------------------------------------------------
+namespace
+{
+	// JSON の [x, y, w, h] 配列 → ce::rect。 4 要素未満は空矩形。
+	ce::rect parse_xywh(const picojson::array& arr)
+	{
+		if (arr.size() < 4) return ce::rect{};
+		float x = static_cast<float>(int_at(arr, 0, 0));
+		float y = static_cast<float>(int_at(arr, 1, 0));
+		float w = static_cast<float>(int_at(arr, 2, 0));
+		float h = static_cast<float>(int_at(arr, 3, 0));
+		return ce::rect{x, y, x + w, y + h};
+	}
+}
+
+ce::pixmap_ptr LayoutBuilder::lookup_atlas(const std::string& name)
+{
+	auto it = _atlases.find(name);
+	if (it == _atlases.end()) {
+		SDL_Log("elements_modal: atlas \"%s\" not registered "
+		        "(missing top-level \"atlases\" entry?)", name.c_str());
+		return nullptr;
+	}
+	return it->second;
+}
+
+//---------------------------------------------------------------------------
+// atlas_image — アトラスから単一 sub-rect を切り出して描く飾り要素。
+//   { "type": "atlas_image", "atlas": "ui", "rect": [x, y, w, h] }
+// 既定は固定サイズ (= 飾り用)。 "stretch_h"/"stretch_v": true で当該軸を
+// stretchable に (= 親 layout の bounds に合わせて伸縮、 9-patch 的)。
+// PSD ベース UI では canvas+floating で絶対座標配置するので stretch は不要。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_image without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	auto* arr = get_array(o, "rect");
+	if (!arr || arr->size() < 4) {
+		SDL_Log("elements_modal: atlas_image \"%s\" missing 'rect': [x,y,w,h]",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+	ce::rect src = parse_xywh(*arr);
+
+	bool stretch_h = false, stretch_v = false;
+	if (auto* v = get_field(o, "stretch_h"); v && v->is<bool>()) stretch_h = v->get<bool>();
+	if (auto* v = get_field(o, "stretch_v"); v && v->is<bool>()) stretch_v = v->get<bool>();
+
+	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
+}
+
+//---------------------------------------------------------------------------
+// atlas_button — アトラスから状態別 sub-rect を sprite_button_styler に乗せて
+// momentary button にする。
+//   { "type": "atlas_button", "atlas": "ui", "id": "ok",
+//     "frames": { "normal": [...], "hilite": [...], "pressed": [...],
+//                 "pressed_hilite": [...], "disabled": [...] } }
+// frames は object (名前→rect、 normal/hilite/pressed/pressed_hilite/disabled
+// の順で値があるところまで使う) または array (順番固定 0..N) を受ける。
+// 通常は 4 つ以上揃える (= sprite_button_styler の既定計算が 4 frame を仮定)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_button without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	std::vector<ce::rect> frames;
+	auto* fv = get_field(o, "frames");
+	if (!fv) {
+		SDL_Log("elements_modal: atlas_button \"%s\" missing 'frames'",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+	if (fv->is<picojson::object>()) {
+		const auto& fo = fv->get<picojson::object>();
+		static const char* names[] = {
+			"normal", "hilite", "pressed", "pressed_hilite", "disabled"
+		};
+		for (auto* n : names) {
+			auto* r = get_array(fo, n);
+			if (!r) break;
+			frames.push_back(parse_xywh(*r));
+		}
+		if (frames.empty()) {
+			SDL_Log("elements_modal: atlas_button \"%s\" frames object has "
+			        "no 'normal' entry", atlas_name.c_str());
+			return nullptr;
+		}
+	} else if (fv->is<picojson::array>()) {
+		const auto& fa = fv->get<picojson::array>();
+		for (auto& el : fa) {
+			if (el.is<picojson::array>()) {
+				frames.push_back(parse_xywh(el.get<picojson::array>()));
+			}
+		}
+		if (frames.empty()) {
+			SDL_Log("elements_modal: atlas_button \"%s\" frames array empty",
+			        atlas_name.c_str());
+			return nullptr;
+		}
+	} else {
+		SDL_Log("elements_modal: atlas_button \"%s\" 'frames' must be "
+		        "object or array", atlas_name.c_str());
+		return nullptr;
+	}
+
+	std::string id = string_or(o, "id");
+
+	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	auto btn = ce::momentary_button(std::move(sprite));
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		btn.on_click = [cb_id, user_cb](bool) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
+		};
+	}
+	auto shared = ce::share(std::move(btn));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	note_vars_on_focus(o, id);
+	if (!id.empty()) {
+		auto* v = get_field(o, "close_on_click");
+		if (v && v->is<bool>() && v->get<bool>()) {
+			_close_button_ids.insert(id);
+		}
+	}
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// atlas_slider — track + thumb をアトラスの sub-rect で構築する 0..1 スライダ。
+//   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
+//     "track": [x, y, w, h], "thumb": [x, y, w, h],
+//     "initial": 0.5, "vertical": false }
+// track はスライダ軸方向に stretchable (親 floating の bounds に合わせる)。
+// thumb は固定サイズ。 値変化で value_t{double pos} を発火。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: atlas_slider without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	auto* tr = get_array(o, "track");
+	auto* th = get_array(o, "thumb");
+	if (!tr || !th || tr->size() < 4 || th->size() < 4) {
+		SDL_Log("elements_modal: atlas_slider \"%s\" needs 'track' and 'thumb' "
+		        "as [x, y, w, h]", atlas_name.c_str());
+		return nullptr;
+	}
+	ce::rect track_src = parse_xywh(*tr);
+	ce::rect thumb_src = parse_xywh(*th);
+
+	bool vertical = false;
+	if (auto* v = get_field(o, "vertical"); v && v->is<bool>()) vertical = v->get<bool>();
+
+	double initial = number_or(o, "initial", 0.5);
+	if (initial < 0.0) initial = 0.0;
+	if (initial > 1.0) initial = 1.0;
+
+	std::string id = string_or(o, "id");
+
+	// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
+	auto track_img = ce::share(ce::atlas_image(pm, track_src,
+	                                          /*stretch_h=*/!vertical,
+	                                          /*stretch_v=*/ vertical));
+	auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
+	                                          /*stretch_h=*/false,
+	                                          /*stretch_v=*/false));
+
+	auto sl = ce::slider(ce::hold(thumb_img), ce::hold(track_img), initial);
+	if (!id.empty()) {
+		auto cb_id = id;
+		auto user_cb = _cb;
+		sl.on_change = [cb_id, user_cb](double pos) {
+			if (user_cb) user_cb(cb_id, /*is_button_click=*/false,
+			                     value_t{pos});
+		};
+	}
+	auto shared = ce::share(std::move(sl));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
+		note_focusable(id, sb);
+	}
+	note_vars_on_focus(o, id);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
 // tab_view — タブ + ページを 1 要素として返す。
 //   {
 //     "type": "tab_view",
@@ -1941,6 +2167,48 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		for (auto& kv : v->get<picojson::object>()) {
 			if (kv.second.is<std::string>()) {
 				vars->set_initial(kv.first, kv.second.get<std::string>());
+			}
+		}
+	}
+
+	// "atlases" ブロック (任意): name → { path, scale }。 atlas_image /
+	// atlas_button / atlas_slider が参照する pixmap_ptr を名前で共有可能に
+	// するための事前ロード。 path は LayoutBuilder の resource_base を
+	// 起点にして resolve_resource() で解決 (絶対パスはそのまま)。
+	// !!! content build より先に解決すること。 そうしないと content 中の
+	// atlas_* dispatch が "atlas not registered" になる。
+	if (auto* v = get_field(o, "atlases"); v && v->is<picojson::object>()) {
+		for (auto& kv : v->get<picojson::object>()) {
+			const std::string& name = kv.first;
+			const auto& spec = kv.second;
+			std::string path_str;
+			float scale = 1.0f;
+			if (spec.is<std::string>()) {
+				path_str = spec.get<std::string>();
+			} else if (spec.is<picojson::object>()) {
+				const auto& so = spec.get<picojson::object>();
+				path_str = string_or(so, "path");
+				scale = static_cast<float>(number_or(so, "scale", 1.0));
+			} else {
+				SDL_Log("elements_modal: atlases[\"%s\"] must be string or object",
+				        name.c_str());
+				continue;
+			}
+			if (path_str.empty()) {
+				SDL_Log("elements_modal: atlases[\"%s\"] missing path",
+				        name.c_str());
+				continue;
+			}
+			auto full = builder.resolve_resource(path_str);
+			try {
+				auto pm = std::make_shared<ce::pixmap>(full, scale);
+				builder.atlases()[name] = pm;
+				SDL_Log("elements_modal: loaded atlas \"%s\" from \"%s\"",
+				        name.c_str(), full.string().c_str());
+			} catch (std::exception const& e) {
+				SDL_Log("elements_modal: failed to load atlas \"%s\" "
+				        "from \"%s\": %s",
+				        name.c_str(), full.string().c_str(), e.what());
 			}
 		}
 	}

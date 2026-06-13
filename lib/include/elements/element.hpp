@@ -22,6 +22,7 @@
 #include <elements/element/focus_row.hpp>
 #include <elements/element/grid.hpp>
 #include <elements/element/image.hpp>
+#include <elements/element/atlas.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/element/hidable.hpp>
 #include <elements/element/label.hpp>

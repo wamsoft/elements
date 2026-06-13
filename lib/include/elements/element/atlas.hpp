@@ -1,0 +1,87 @@
+/*=============================================================================
+   Copyright (c) 2026 Cycfi Research
+   Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
+=============================================================================*/
+#if !defined(ELEMENTS_ATLAS_JUNE_13_2026)
+#define ELEMENTS_ATLAS_JUNE_13_2026
+
+#include <elements/element/image.hpp>
+#include <vector>
+
+namespace cycfi::elements
+{
+   ////////////////////////////////////////////////////////////////////////////
+   // atlas_image — 1 枚画像 (= pixmap) の任意の sub-rect を 1 要素として
+   // 表示する。 pixmap_ptr は外部所有 / 他要素と共有可能 (= テクスチャ
+   // アトラスのシェア)。
+   //
+   //   stretch_h: 横方向にストレッチを許可 (max.x = full_extent)。
+   //              スライダ track / 9-patch 風背景用途。
+   //   stretch_v: 縦方向にストレッチを許可。
+   //   両方 false (既定): 固定サイズ。 飾り画像、 スライダ thumb 用。
+   //
+   // PSD ベース UI では canvas + floating で絶対座標配置するのが普通なので、
+   // stretch は false で十分。 stretch_h=true 等は flex layout (htile) 等に
+   // 入れる場合のオプション。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_image : public image
+   {
+   public:
+                              atlas_image(pixmap_ptr atlas, rect src,
+                                          bool stretch_h = false,
+                                          bool stretch_v = false);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      point                   size() const override;
+      rect                    source_rect(context const& ctx) const override;
+
+      rect const&             sub_rect() const { return _src; }
+
+   private:
+
+      rect                    _src;
+      bool                    _stretch_h;
+      bool                    _stretch_v;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // atlas_sprite — テクスチャアトラスから複数 sub-rect を状態別 frame と
+   // して持つ sprite。 basic_sprite を継承して sprite_button_styler の
+   // find_subject<sprite*> が dynamic_cast で拾えるようにしている。
+   //
+   // basic_sprite は 1 枚画像を縦に等高さスライスする前提だが、 atlas_sprite
+   // は任意の sub-rect を frame 配列で受ける → アトラス共有 + 状態別矩形を
+   // 自由配置できる。 関連メソッド (num_frames / index / source_rect / size /
+   // limits) を override してアトラスベースの計算で置き換える。
+   //
+   //   frame index と sprite_button_styler のマッピング (lib 既存仕様):
+   //     0 = normal (value=false, hilite=false)
+   //     1 = hilite (value=false, hilite=true)
+   //     2 = pressed (value=true, hilite=false)
+   //     3 = pressed_hilite (value=true, hilite=true)
+   //     4 = disabled (任意、 num_frames>4 のときだけ使う)
+   //
+   // limits / size は frame 0 の矩形を採用する。 全 frame で同寸法を前提と
+   // する (ボタンの状態切替で見た目サイズは普通変えない)。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_sprite : public basic_sprite
+   {
+   public:
+                              atlas_sprite(pixmap_ptr atlas,
+                                           std::vector<rect> frames);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      point                   size() const override;
+      rect                    source_rect(context const& ctx) const override;
+
+      std::size_t             num_frames() const override { return _frames.size(); }
+      std::size_t             index() const override      { return _index; }
+      void                    index(std::size_t i) override;
+
+   private:
+
+      std::vector<rect>       _frames;
+   };
+}
+
+#endif

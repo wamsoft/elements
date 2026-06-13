@@ -237,6 +237,12 @@ namespace cycfi::elements
     , _height(height)
    {}
 
+   basic_sprite::basic_sprite(pixmap_ptr pm)
+    : image(std::move(pm))
+    , _index(0)
+    , _height(0)
+   {}
+
    view_limits basic_sprite::limits(basic_context const& /* ctx */) const
    {
       auto width = pixmap().size().x;

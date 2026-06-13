@@ -131,17 +131,22 @@ namespace cycfi::elements
    {
    public:
                               basic_sprite(char const* filename, float height, float scale = 1);
+                              // pixmap_ptr 直渡しコンストラクタ。 atlas_sprite 等が
+                              // 継承する用。 _height は派生クラスが limits / size /
+                              // source_rect を override する前提で 0 にしておく
+                              // (= ベースの strip ベース計算は使わない)。
+      explicit                basic_sprite(pixmap_ptr pm);
 
       view_limits             limits(basic_context const& ctx) const override;
 
-      std::size_t             num_frames() const;
-      std::size_t             index() const;
-      void                    index(std::size_t index_);
+      virtual std::size_t     num_frames() const;
+      virtual std::size_t     index() const;
+      virtual void            index(std::size_t index_);
       point                   size() const override;
 
       rect                    source_rect(context const& ctx) const override;
 
-   private:
+   protected:
 
       size_t                  _index;
       float                   _height;
@@ -156,6 +161,12 @@ namespace cycfi::elements
       {
          if constexpr (std::is_base_of_v<proxy_base, T>)
             return is_sprite<typename T::subject_type>();
+         else if constexpr (std::is_base_of_v<basic_sprite, T>)
+            // basic_sprite 派生 (atlas_sprite 等) も sprite 扱い。 これが
+            // ないと派生クラスを momentary_button() に渡したとき
+            // sprite_button_styler に被せず単なる proxy<...,basic_button>
+            // になってしまい、 状態別 frame 切替が動かない。
+            return std::true_type{};
          else
             return std::false_type{};
       }
