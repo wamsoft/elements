@@ -81,7 +81,7 @@ int main()
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
 | `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
-| `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有 / 絶対座標配置」節) |
+| `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
 
 ### 要素タイプ (`"type"`)
 
@@ -101,7 +101,7 @@ int main()
 - `scroller` — 縦スクロール領域。 `"child"`。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 - `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
-- `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 build 時に `floating` で wrap して layer に積まれる (= 複数 floating の糖衣)。 PSD ベース UI の主役。
+- `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 内部の composite が **親 bounds の origin に rect をオフセット** して子を配置する (= 親 bounds の左上を基準とする相対座標)。 root に置けば bounds origin = (0, 0) なので絶対座標に見えるが、 別 canvas にネストすると外側 canvas が割り当てた領域の中で相対配置になる (排他グループの分離等で nested canvas を使う場面で重要)。 PSD ベース UI の主役。
 
 #### 入力 / state widget
 - `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。
@@ -140,7 +140,7 @@ int main()
 
 #### 画像 / sprite / 9-patch 系
 
-PSD でデザインされた固定サイズ / 固定位置のビットマップ UI を JSON 化する用途向け。 通常は `canvas` + `at` で絶対座標配置する。 ファイル単位で 1 枚画像を読む素直な版と、 1 枚のアトラス画像を共有する版があり、 後者は別セクション (「アトラス共有」) で扱う。
+PSD でデザインされた固定サイズ / 固定位置のビットマップ UI を JSON 化する用途向け。 通常は `canvas` + `at` で配置する (canvas 内では `at` は canvas 自身の bounds 左上を原点とする相対座標)。 ファイル単位で 1 枚画像を読む素直な版と、 1 枚のアトラス画像を共有する版があり、 後者は別セクション (「アトラス共有」) で扱う。
 
 - `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
@@ -189,7 +189,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 - `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。
-- `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。
+- `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — `"atlas": name` + `"track": [x,y,w,h]` + `"thumb": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 値変化で `value_t{double pos}` を発火。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 
@@ -207,6 +207,46 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 lib 既定の塗りつぶし円 + テキスト styler を使ったテキスト版排他ボタン。 atlas を使わない普通の UI 用:
 
 - `radio_button` — `"text": "Easy"` + `"id"` + `"selected": bool` (既定 false)。 同じ親 composite に並べた radio_button 群は atlas_choice と同じ仕組みで自動排他。 値変化で `value_t{bool true}` を発火。
+
+#### 排他グループの分離 (atlas_choice / radio_button)
+
+`basic_choice` の排他は **「自分の直近の親 composite に並ぶ兄弟 selectable 全部」** を対象にする。 つまり 1 つの `canvas` (= 1 つの layer_composite) に radio_button 群と atlas_choice 群を直接並べると、 両者が**同じグループ**として相互排他になる (片方を click すると他方も全部 OFF)。
+
+複数の独立した排他グループを 1 画面に置きたい場合、 **各グループを別々の composite に入れて分離**する。 一番素直なのはネストした `canvas`:
+
+```jsonc
+{ "type": "canvas",
+  "children": [
+    // 難易度グループ (= 内側 canvas の layer_composite が排他スコープ)
+    { "at": [80, 700, 600, 32],
+      "type": "canvas", "width": 600, "height": 32,
+      "children": [
+        { "at": [  0, 0, 150, 32], "type": "radio_button", "text": "EASY",   "id": "diff_easy",   "selected": true },
+        { "at": [160, 0, 150, 32], "type": "radio_button", "text": "NORMAL", "id": "diff_normal" },
+        { "at": [320, 0, 150, 32], "type": "radio_button", "text": "HARD",   "id": "diff_hard"   }
+      ] },
+    // 言語グループ (= 別の内側 canvas、 排他は内側のみ)
+    { "at": [80, 790, 600, 40],
+      "type": "canvas", "width": 600, "height": 40,
+      "children": [
+        { "at": [  0, 0, 160, 40], "type": "atlas_choice", "atlas": "ui", "id": "lang_ja", "selected": true, "text": "JA", "frames": { ... } },
+        { "at": [170, 0, 160, 40], "type": "atlas_choice", "atlas": "ui", "id": "lang_en",                   "text": "EN", "frames": { ... } },
+        { "at": [340, 0, 160, 40], "type": "atlas_choice", "atlas": "ui", "id": "lang_ko",                   "text": "KO", "frames": { ... } }
+      ] }
+  ] }
+```
+
+`canvas` 以外の composite (`layer` / `htile` / `vtile` 等) でも同じ効果になる。 atlas/text を混在させる場合は **composite を分けないと両方が同一グループ**になる点に注意。
+
+##### 排他スコープの実装メモ (なぜ「直近の親 composite」?)
+
+lib の `basic_choice::activate / click` は次の処理をする:
+1. 自分を `value(true)` にして `on_click(true)` 発火
+2. `find_composite(ctx)` で親 context 鎖を辿り、 最初に出てくる `composite_base` を取得
+3. その composite の全 children に対し `find_element<selectable*>` を試し、 自分以外の selected な selectable を `select(false)` (= deselect)
+4. composite の context を refresh
+
+つまり「**find_composite が最初に当たる composite**」が排他スコープ。 atlas_button / atlas_toggle の text overlay は `label_decoration` (proxy_base 派生、 composite ではない) を使うので find_composite を素通りする — find_composite はあくまで **canvas / layer / htile / vtile / 内側 canvas** などの composite_base 派生で止まる。
 
 #### resource_base (相対パスの解決起点)
 

@@ -166,10 +166,13 @@ namespace cycfi::elements
           && k.key != key_code::kp_enter)
          return false;
 
-      // Hold value=true between press and release so the styler paints a
-      // visible pressed frame. Fire on_click on release — matching the
-      // mouse semantic where on_click runs on mouse-up, not mouse-down.
-      // Auto-repeat is consumed but otherwise ignored.
+      // Momentary semantics: press で value=true (= styler が押下フレームを
+      // 描画)、 release で on_click(true) → value=false (= 押下フレーム解除)。
+      // この経路は **momentary 専用**。 latching / toggle / choice などの
+      // 「値を保持・トグルする系」 は key を override して activate() 委譲に
+      // 切替えること (release の set_value(false) で選択が解除される問題を
+      // 避けるため)。
+      // auto-repeat は黙って消費。
       if (k.action == key_action::press)
       {
          if (!value())
@@ -279,6 +282,35 @@ namespace cycfi::elements
       ctx.view.refresh(ctx);
    }
 
+   bool basic_toggle_button::key(context const& ctx, key_info k)
+   {
+      // toggle 用キー処理: momentary の press/release 表示遷移を使わず
+      // (= 押下中に value を弄ると release で戻すときに toggle のロジックと
+      // 衝突する)、 release で activate() を呼んで flip させる。
+      if (!ctx.enabled || !this->is_enabled())
+         return false;
+
+      if (k.key != key_code::space && k.key != key_code::enter
+          && k.key != key_code::kp_enter)
+         return false;
+
+      if (k.action == key_action::release)
+         this->activate(ctx);
+
+      return true;
+   }
+
+   bool basic_toggle_button::end_focus()
+   {
+      // basic_button::end_focus は「キー押下中に focus 失うと value=true で
+      // 視覚的に押下状態のままになる」 のを防ぐため value をクリアするが、
+      // toggle にとって value は **状態** なので、 focus が外れたタイミング
+      // で消したらせっかくのトグル状態が失われる。 focus フラグだけ落として
+      // value はそのまま。
+      this->focused(false);
+      return true;
+   }
+
    void basic_latching_button::activate(context const& ctx)
    {
       // Latching: only fires from unlatched → latched. Once on, stays on
@@ -289,6 +321,38 @@ namespace cycfi::elements
       if (this->on_click)
          this->on_click(true);
       ctx.view.refresh(ctx);
+   }
+
+   bool basic_latching_button::key(context const& ctx, key_info k)
+   {
+      // latching / choice 用キー処理: momentary の press/release では
+      // release で set_value(false) してしまい latch / 排他 (choice) が壊れる。
+      // release で activate() を呼ぶ形に切替え、 各派生クラスの正しい
+      // 遷移セマンティクス (latching = latched に固定、 choice = 兄弟 deselect)
+      // を発火させる。
+      // basic_choice はこの override を継承する (key を上書きしないので)。
+      if (!ctx.enabled || !this->is_enabled())
+         return false;
+
+      if (k.key != key_code::space && k.key != key_code::enter
+          && k.key != key_code::kp_enter)
+         return false;
+
+      if (k.action == key_action::release)
+         this->activate(ctx);
+
+      return true;
+   }
+
+   bool basic_latching_button::end_focus()
+   {
+      // basic_button::end_focus は momentary の「キー押下中に focus 失う →
+      // value=true 視覚スタック」 を防ぐため value をクリアするが、 latching /
+      // choice にとって value は **状態** (= 押されてるか / 選ばれてるか) なので、
+      // focus が外れたタイミングで消したら選択が消滅してしまう。
+      // basic_choice はこれを継承する。 focus フラグだけ落として value 維持。
+      this->focused(false);
+      return true;
    }
 
    bool basic_latching_button::click(context const& ctx, mouse_button btn)

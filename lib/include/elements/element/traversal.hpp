@@ -15,6 +15,12 @@ namespace cycfi::elements
 {
    namespace detail
    {
+      // find_element_impl は target 型を探して proxy_base / indirect_base の
+      // 鎖を辿る。 proxy_base のラッパを噛ませた要素を hold_any で
+      // shared_element に詰めて floating で再び wrap、 のような **proxy ↔
+      // indirect 交互の鎖** でも正しく target に届くように、 両方を再帰
+      // 対象に含める。 (例: floating → shared_element → label_decoration →
+      // button — label_decoration が proxy_base 派生のとき button まで届かせる)
       template <typename Ptr>
       inline Ptr find_element_impl(element* e_)
       {
@@ -23,6 +29,9 @@ namespace cycfi::elements
 
          if (auto* e = dynamic_cast<indirect_base*>(e_))
             return find_element_impl<Ptr>(&e->get());
+
+         if (auto* p = dynamic_cast<proxy_base*>(e_))
+            return find_element_impl<Ptr>(&p->subject());
 
          return nullptr;
       }
@@ -35,6 +44,9 @@ namespace cycfi::elements
 
          if (auto* e = dynamic_cast<indirect_base const*>(e_))
             return find_element_impl<Ptr>(&e->get());
+
+         if (auto* p = dynamic_cast<proxy_base const*>(e_))
+            return find_element_impl<Ptr>(&p->subject());
 
          return nullptr;
       }

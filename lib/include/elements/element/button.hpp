@@ -218,6 +218,8 @@ namespace cycfi::elements
 
       bool              click(context const& ctx, mouse_button btn) override;
       void              drag(context const& ctx, mouse_button btn) override;
+      bool              key(context const& ctx, key_info k) override;
+      bool              end_focus() override;
 
    protected:
 
@@ -284,6 +286,8 @@ namespace cycfi::elements
       using basic_button::basic_button;
 
       bool              click(context const& ctx, mouse_button btn) override;
+      bool              key(context const& ctx, key_info k) override;
+      bool              end_focus() override;
 
    protected:
 

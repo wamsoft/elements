@@ -1514,6 +1514,119 @@ element_ptr LayoutBuilder::build_floating(const picojson::object& o)
 // "type" / その他フィールドはそのまま。 build 時に "at" を抜いて widget を
 // 組み、 floating(rect, widget) で wrap して layer に積む。
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// canvas_layer_element — `canvas` 専用の composite_base 派生。
+// 子は (rect, element_ptr) の対で保持し、 bounds_of で **親 ctx.bounds.origin
+// に rect をオフセットして** 子の bounds を返す。 これにより:
+//   - root に置かれた canvas: ctx.bounds.origin = (0,0) なので rect 値が
+//     そのまま画面座標 = 既存の絶対座標っぽい振舞いを維持
+//   - 別 canvas 内にネストされた canvas: 外側 canvas が割当てた bounds.origin
+//     を基点に rect 解釈 = 親に対する相対座標として動く (排他グループの
+//     分離等で nested canvas を使う場合に必須)
+//
+// 旧実装は layer_composite + floating(absolute_rect) 方式だったが、
+// floating::prepare_subject が絶対 rect を上書きするためネストが効かなかった。
+//
+// 仕様メモ:
+//   - rect は JSON の "at": [x, y, w, h] と同じく **左上 origin + 幅高** 表現。
+//   - 描画順は push 順 (= JSON children 配列の順)。 最後に push したものが
+//     最前面。 hit_test も最前面から逆順に試す。
+//   - 子要素はそのまま push (floating wrap しない)。 ただし共有所有のため
+//     hold (or share) 済の element_ptr を渡す。
+//---------------------------------------------------------------------------
+namespace
+{
+	class canvas_layer_element : public ce::composite_base
+	{
+	public:
+		void add(ce::rect r, element_ptr child)
+		{
+			_children.emplace_back(r, std::move(child));
+		}
+
+		std::size_t size() const override { return _children.size(); }
+
+		ce::element& at(std::size_t ix) const override
+		{
+			return *_children[ix].second;
+		}
+
+		ce::view_limits limits(ce::basic_context const& ctx) const override
+		{
+			// canvas の自然 min = 子全体を覆う bounding box (left/top は 0 を仮定)。
+			// max は full_extent (= 親が自由に拡げてよい)。 ホストが width /
+			// height で hmin_size / vmin_size に括る運用は build_canvas 側で続行。
+			//
+			// 注意: 子全部の limits() を一度呼んで「副作用で内部状態を仕込む
+			// 系の widget」 (例: slider_base が _is_horiz をここで設定する)
+			// を巻き込む。 これを忘れると slider の thumb_bounds が縦扱いで
+			// 計算されて見た目が崩壊する (実証済)。 戻り値は使わない。
+			for (auto const& kv : _children)
+				(void)kv.second->limits(ctx);
+
+			float w = 0, h = 0;
+			for (auto const& kv : _children) {
+				w = std::max(w, kv.first.right);
+				h = std::max(h, kv.first.bottom);
+			}
+			return {{w, h}, {ce::full_extent, ce::full_extent}};
+		}
+
+		void layout(ce::context const& ctx) override
+		{
+			for (std::size_t i = 0; i < size(); ++i) {
+				auto& e = at(i);
+				e.layout(ce::context{ctx, &e, bounds_of(ctx, i)});
+			}
+		}
+
+		void draw(ce::context const& ctx) override
+		{
+			// bounds が変わったら relayout (layer_element 流儀)。
+			auto width = ctx.bounds.width();
+			auto height = ctx.bounds.height();
+			if (_prev_size.x != width || _prev_size.y != height) {
+				_prev_size = {width, height};
+				layout(ctx);
+			}
+			ce::composite_base::draw(ctx);
+		}
+
+		ce::rect bounds_of(ce::context const& ctx, std::size_t i) const override
+		{
+			auto const& r = _children[i].first;
+			return ce::rect{
+				ctx.bounds.left + r.left,
+				ctx.bounds.top  + r.top,
+				ctx.bounds.left + r.right,
+				ctx.bounds.top  + r.bottom
+			};
+		}
+
+		// hit_test: 最後に push した子から優先 (= 最前面優先)。
+		hit_info hit_element(ce::context const& ctx, ce::point p,
+		                     bool control) const override
+		{
+			for (int i = int(size()) - 1; i >= 0; --i) {
+				auto& e = at(i);
+				if (!control || e.wants_control()) {
+					auto bounds = bounds_of(ctx, i);
+					if (bounds.includes(p)) {
+						ce::context ectx{ctx, &e, bounds};
+						if (auto leaf = e.hit_test(ectx, p, true, control))
+							return hit_info{&e, leaf, bounds, int(i)};
+					}
+				}
+			}
+			return hit_info{nullptr, nullptr, ce::rect{}, -1};
+		}
+
+	private:
+		std::vector<std::pair<ce::rect, element_ptr>> _children;
+		ce::point _prev_size{};
+	};
+}
+
 element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 {
 	const auto* children = get_array(o, "children");
@@ -1525,7 +1638,7 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 	float width  = static_cast<float>(number_or(o, "width", 0.0));
 	float height = static_cast<float>(number_or(o, "height", 0.0));
 
-	ce::layer_composite layer;
+	auto layer = std::make_shared<canvas_layer_element>();
 	for (auto& v : *children) {
 		if (!v.is<picojson::object>()) continue;
 		const auto& co = v.get<picojson::object>();
@@ -1545,12 +1658,12 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		auto widget = build(v);
 		if (!widget) continue;
 
-		auto wrapped = ce::share(
-			ce::floating(ce::rect{x, y, x + w, y + h}, ce::hold_any(widget)));
-		layer.push_back(wrapped);
+		// canvas_layer_element に直接 (rect, widget) で追加。 floating ラップ
+		// は使わない (相対座標を canvas_layer_element の bounds_of で計算する)。
+		layer->add(ce::rect{x, y, x + w, y + h}, std::move(widget));
 	}
 
-	element_ptr root = ce::share(std::move(layer));
+	element_ptr root = layer;
 	if (width > 0.0f) {
 		root = ce::share(ce::hmin_size(width, ce::hold_any(root)));
 	}
