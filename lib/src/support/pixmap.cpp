@@ -85,7 +85,12 @@ namespace cycfi { namespace elements
          stbi_image_free(src_data);
 
          auto* pic = tvg::Picture::gen();
-         if (!pic || pic->load(tmp.data(), w, h, tvg::ColorSpace::ARGB8888,
+         // stb_image returns *straight* (un-premultiplied) alpha. Declare the
+         // colorspace as the ...S (straight) variant so ThorVG premultiplies
+         // it before blending; using the premultiplied variant here makes the
+         // RawLoader mark it premultiplied=true and skip premultiplication,
+         // which corrupts every partial-alpha pixel (carry overflow → A=0).
+         if (!pic || pic->load(tmp.data(), w, h, tvg::ColorSpace::ARGB8888S,
                 /*copy=*/true) != tvg::Result::Success)
          {
             if (pic) tvg::Paint::rel(pic);
