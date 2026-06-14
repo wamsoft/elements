@@ -49,9 +49,14 @@ namespace cycfi::elements
    {
       if (!is_enabled())
          return false;
-      bool is_leaving = status != cursor_tracking::leaving;
-      if (_state.hilite != is_leaving)
-         hilite(is_leaving);
+      bool hovering = status != cursor_tracking::leaving;
+      if (_state.hilite != hovering)
+         hilite(hovering);
+      // Pointer-driven focus: when the cursor is over the button, sync
+      // keyboard focus to it (unless the view disabled hover_focus). Guarded
+      // by !focused() so it only fires on the transition into the button.
+      if (hovering && !focused() && ctx.view.hover_focus())
+         ctx.view.focus(*this);
       refresh(ctx);
       return false;
    }
@@ -121,7 +126,13 @@ namespace cycfi::elements
       // Clear any stuck press state — keyboard activation holds value=true
       // between key press and release, and losing focus mid-press would
       // otherwise leave the button visually depressed forever.
-      if (value())
+      //
+      // Exception: while a mouse press is in progress (tracking()), the value
+      // belongs to that live interaction. A focus change during the press
+      // (e.g. hover-to-focus moving focus onto this very button) must NOT
+      // wipe it, or the pressed frame never shows. The matching mouse-up
+      // clears the value normally.
+      if (value() && !tracking())
          set_value(false);
       return true;
    }

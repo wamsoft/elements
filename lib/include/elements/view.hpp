@@ -71,6 +71,18 @@ namespace cycfi::elements
       void                    arrow_focus_navigation(bool on);
       bool                    arrow_focus_navigation() const;
 
+      // When enabled, moving the mouse over a focusable widget also moves
+      // keyboard focus to it, so the hovered widget and the focused widget
+      // stay in sync (pointer-driven focus). Defaults to true. Widgets opt
+      // in via basic_button::cursor(); other element types may consult
+      // view::hover_focus() to mirror the behavior.
+      void                    hover_focus(bool on);
+      bool                    hover_focus() const;
+
+      // Move keyboard focus to a specific element already in the view tree
+      // (addressed by raw pointer). No-op if the element is not found.
+      void                    focus(element& e);
+
       // ---- Gamepad button → key synthesis -----------------------------
       // Map a gamepad button to a key event. When the bound pad button is
       // pressed and no shortcut intercepts it, the bound key_info is
@@ -210,6 +222,7 @@ namespace cycfi::elements
       mouse_button            _current_button;
       bool                    _is_focus = false;
       bool                    _arrow_focus_nav = false;
+      bool                    _hover_focus = true;
 
       struct pad_key_binding
       {

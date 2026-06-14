@@ -80,10 +80,28 @@ namespace cycfi::elements
       {
          auto value = this->value();
          auto hilite = this->hilite();
-         if (!ctx.enabled && sp->num_frames() > 4)
+         auto nframes = sp->num_frames();
+         if (!ctx.enabled && nframes > 4)
             sp->index(4); // disabled
          else
-            sp->index((value? 2 : 0) + hilite); // enabled
+         {
+            // Logical frame: 0=normal, 1=hilite, 2=pressed, 3=pressed+hilite.
+            // When a sprite supplies fewer frames (e.g. a 3-state PSD button
+            // with only normal/hilite/pressed), fall back by dropping the
+            // hilite bit so a *pressed* button shows the same frame whether or
+            // not the cursor is over it (pressed+hilite → pressed), and a
+            // hilite-only state degrades to normal. This keeps the pressed
+            // appearance consistent across mouse press (hilite=1) and keyboard
+            // activation (hilite=0).
+            std::size_t idx = (value? 2u : 0u) + (hilite? 1u : 0u);
+            if (idx >= nframes)
+            {
+               idx = value? 2u : 0u;          // drop hilite
+               if (idx >= nframes)
+                  idx = 0u;                    // last resort: normal
+            }
+            sp->index(idx);
+         }
          Base::draw(ctx);
       }
    }

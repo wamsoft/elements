@@ -2507,6 +2507,9 @@ std::function<void(ce::view&)> build_input_applier(
 		bool arrow_nav_set = false;
 		bool arrow_nav = false;
 
+		bool hover_focus_set = false;
+		bool hover_focus = true;
+
 		bool dpad_set = false;       ce::pad_axis_mode dpad_mode    = ce::pad_axis_mode::both;
 		bool lstick_set = false;     ce::pad_axis_mode lstick_mode  = ce::pad_axis_mode::focus;
 		bool rstick_set = false;     ce::pad_axis_mode rstick_mode  = ce::pad_axis_mode::value;
@@ -2532,6 +2535,10 @@ std::function<void(ce::view&)> build_input_applier(
 	if (auto* v = get_field(input_obj, "arrow_focus_nav"); v && v->is<bool>()) {
 		cfg->arrow_nav_set = true;
 		cfg->arrow_nav = v->get<bool>();
+	}
+	if (auto* v = get_field(input_obj, "hover_focus"); v && v->is<bool>()) {
+		cfg->hover_focus_set = true;
+		cfg->hover_focus = v->get<bool>();
 	}
 	if (auto* v = get_field(input_obj, "dpad_mode"); v && v->is<std::string>()) {
 		cfg->dpad_set = true;
@@ -2621,6 +2628,7 @@ std::function<void(ce::view&)> build_input_applier(
 	auto id_map_shared = std::make_shared<std::map<std::string, element_ptr>>(std::move(id_map));
 	return [cfg, id_map_shared](ce::view& view_) {
 		if (cfg->arrow_nav_set)   view_.arrow_focus_navigation(cfg->arrow_nav);
+		if (cfg->hover_focus_set) view_.hover_focus(cfg->hover_focus);
 		if (cfg->dpad_set)        view_.dpad_mode(cfg->dpad_mode);
 		if (cfg->lstick_set)      view_.left_stick_mode(cfg->lstick_mode);
 		if (cfg->rstick_set)      view_.right_stick_mode(cfg->rstick_mode);

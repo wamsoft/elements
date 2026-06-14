@@ -511,6 +511,39 @@
       return _arrow_focus_nav;
    }
 
+   void view::hover_focus(bool on)
+   {
+      _hover_focus = on;
+   }
+
+   bool view::hover_focus() const
+   {
+      return _hover_focus;
+   }
+
+   void view::focus(element& e)
+   {
+      // Address the element by raw pointer; it lives in the view tree for
+      // the lifetime of this deferred task. Posted (rather than run inline)
+      // so it is safe to call from inside an event dispatch — e.g. from
+      // basic_button::cursor() while the cursor walk is still in progress.
+      element* ep = &e;
+      _tasks.post(
+         [this, ep]()
+         {
+            if (_content.empty())
+               return;
+            _main_element.end_focus();
+            if (descend_set_focus(_main_element, ep))
+            {
+               _main_element.begin_focus(element::focus_request::restore_previous);
+               base_view::refresh();
+               _is_focus = _main_element.focus();
+            }
+         }
+      );
+   }
+
    void view::focus(element_ptr e)
    {
       if (!e)

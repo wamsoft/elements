@@ -142,7 +142,7 @@ int main()
 
 PSD でデザインされた固定サイズ / 固定位置のビットマップ UI を JSON 化する用途向け。 通常は `canvas` + `at` で配置する (canvas 内では `at` は canvas 自身の bounds 左上を原点とする相対座標)。 ファイル単位で 1 枚画像を読む素直な版と、 1 枚のアトラス画像を共有する版があり、 後者は別セクション (「アトラス共有」) で扱う。
 
-- `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+- `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 frame が 4 未満のときは欠けた状態をフォールバックする (pressed+hilite→pressed→normal) ので、 **3 frame (normal/hilite/pressed)** だけでも可。 その場合マウス押下 (hilite 中) もキーボード押下も同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
 
 #### アトラス共有 (`atlases` / `atlas_image` / `atlas_button` / `atlas_slider`)
@@ -187,7 +187,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 各要素タイプ:
 
 - `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。
-- `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+- `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。
 - `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — `"atlas": name` + `"track": [x,y,w,h]` + `"thumb": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 値変化で `value_t{double pos}` を発火。
@@ -379,6 +379,10 @@ view 全体のナビゲーション設定。 全フィールドが任意:
 "input": {
     // 矢印キー / dpad / 左 stick (focus モード) で 2D 方向移動を有効化
     "arrow_focus_nav": true,
+
+    // マウスが乗った focusable にキーボードフォーカスも移す (既定 true)。
+    // false でマウス hover とフォーカスを独立させる。
+    "hover_focus": true,
 
     // 軸モード: disabled / focus / value / both
     // デフォルト: dpad=both / left_stick=focus / right_stick=value / trigger=disabled
