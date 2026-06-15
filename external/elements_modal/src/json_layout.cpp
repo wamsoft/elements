@@ -331,6 +331,65 @@ private:
 };
 
 //---------------------------------------------------------------------------
+// StringStore — textID → 言語別文字列の対応表 + 現在言語 + subscriber notify。
+// VariableStore と同じ subscribe/notify パターンの i18n 版。
+// JSON top-level "strings": { id: { lang: "string" } } で対応表を登録、
+// top-level "lang": "ja" で初期言語、 label の "text_id": "id" で参照する。
+// set_language() で全 subscriber (label の set_text closure) を再発火し、
+// 実行中の言語切替に全 widget が追従する (= EUI Phase 2 の核心)。
+//---------------------------------------------------------------------------
+class StringStore
+{
+public:
+	// "strings" の 1 エントリを登録 (id → {lang: string})。
+	void set_entry(const std::string& id, std::map<std::string, std::string> by_lang)
+	{
+		_table[id] = std::move(by_lang);
+	}
+
+	// 現在言語を設定。 既に subscribe 済みの label をすべて再解決して通知。
+	void set_language(const std::string& lang)
+	{
+		if (_lang == lang) return;
+		_lang = lang;
+		for (auto& kv : _subs) {
+			std::string v = resolve(kv.first);
+			for (auto& cb : kv.second) cb(v);
+		}
+	}
+
+	const std::string& language() const { return _lang; }
+
+	// textID を現在言語で解決。 未知 id は id 文字列をそのまま返す。
+	// 現在言語にエントリが無ければ先頭言語へフォールバック。
+	std::string resolve(const std::string& id) const
+	{
+		auto it = _table.find(id);
+		if (it == _table.end() || it->second.empty()) return id;
+		const auto& by_lang = it->second;
+		if (!_lang.empty()) {
+			auto jt = by_lang.find(_lang);
+			if (jt != by_lang.end()) return jt->second;
+		}
+		return by_lang.begin()->second;
+	}
+
+	// 対応表に id が存在するか (build_label の fallback 判定用)。
+	bool has(const std::string& id) const { return _table.count(id) != 0; }
+
+	void subscribe(const std::string& id,
+	               std::function<void(const std::string&)> cb)
+	{
+		_subs[id].push_back(std::move(cb));
+	}
+
+private:
+	std::map<std::string, std::map<std::string, std::string>> _table; // id -> {lang: str}
+	std::string _lang;
+	std::map<std::string, std::vector<std::function<void(const std::string&)>>> _subs;
+};
+
+//---------------------------------------------------------------------------
 // LayoutBuilder — element ツリーを再帰生成
 //---------------------------------------------------------------------------
 class LayoutBuilder
@@ -379,6 +438,10 @@ public:
 	// 親 (top-level) が "vars" 初期値を流し込むために借用 setter。
 	std::shared_ptr<VariableStore> vars() { return _vars; }
 
+	// StringStore (i18n 対応表)。 親 (top-level) が "strings"/"lang" を流し込み、
+	// label の text_id が参照する。 set_language closure 生成にも使う。
+	std::shared_ptr<StringStore> strings() { return _strings; }
+
 	// focus poll クロージャを生成。 毎フレーム呼ぶと現在の focus を見て
 	// vars_on_focus を _vars に流し込み、 subscribers (label set_text) を発火。
 	// take 系メソッドなので 1 回しか呼ばない。
@@ -410,6 +473,7 @@ private:
 	std::map<std::string, element_ptr> _id_to_element;
 	std::set<std::string> _close_button_ids;
 	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
+	std::shared_ptr<StringStore> _strings = std::make_shared<StringStore>();
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
 	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
 	std::vector<std::function<void(cycfi::elements::view&)>> _deferred_view_cbs;
@@ -469,6 +533,11 @@ private:
 	element_ptr build_cycle_picker(const picojson::object& o, int variant); // 0=cycle, 1=framed, 2=segmented
 	element_ptr build_invert_button(const picojson::object& o);
 	element_ptr build_ring_button (const picojson::object& o);
+
+	// i18n: proxy ベースの button (invert/ring/plain) で "text_id" があれば、
+	// styler (= proxy の subject、 text_writer 派生) を StringStore に subscribe
+	// して言語切替で set_text する。 初期値も resolve して同期する。
+	void subscribe_button_text_id(const picojson::object& o, const element_ptr& shared);
 	element_ptr build_slider      (const picojson::object& o);
 	element_ptr build_slider_with_range(const picojson::object& o);
 	element_ptr build_labeled_row (const picojson::object& o);
@@ -658,12 +727,17 @@ std::function<void()> LayoutBuilder::take_focus_poll()
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_label(const picojson::object& o)
 {
-	// "text_var": "varname" 指定があれば初期 text は VariableStore から取得し、
-	// 同時に subscriber を仕掛けて変数更新で set_text が呼ばれるようにする。
-	// "text" が併記されていれば fallback として使う。
+	// "text_id": "id" (i18n) と "text_var": "varname" の動的 text 解決。
+	// 優先順位: text_id > text_var > 静的 "text"。 いずれも初期 text を決め、
+	// 後段で subscriber を仕掛けて言語/変数の更新で set_text が呼ばれる。
+	std::string text_id  = string_or(o, "text_id");
 	std::string text_var = string_or(o, "text_var");
 	std::string text;
-	if (!text_var.empty()) {
+	if (!text_id.empty()) {
+		// 未知 id は static "text" を fallback、 無ければ resolve() が id を返す。
+		text = _strings->has(text_id) ? _strings->resolve(text_id)
+		                              : string_or(o, "text", text_id);
+	} else if (!text_var.empty()) {
 		if (auto* init = _vars->get(text_var)) text = *init;
 		else                                    text = string_or(o, "text");
 	} else {
@@ -706,24 +780,58 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		else                out = ce::share(base.locale(std::move(locale)));
 	}
 
-	// text_var 指定があれば、 VariableStore の更新で label を set_text する
-	// subscriber を仕掛ける。 label は default_label_styler (element +
-	// text_reader) + basic_label_styler_base (Base + text_writer) なので、
-	// text_writer インタフェース (set_text 持ち) に dynamic_cast する。
-	// static_text_box ではない (text_box は別系統)。
-	if (!text_var.empty()) {
+	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
+	// label を set_text する subscriber を仕掛ける。 label は
+	// default_label_styler (element + text_reader) + basic_label_styler_base
+	// (Base + text_writer) なので、 text_writer インタフェース (set_text 持ち)
+	// に dynamic_cast する。 static_text_box ではない (text_box は別系統)。
+	if (!text_id.empty() || !text_var.empty()) {
 		if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(out)) {
 			std::weak_ptr<ce::text_writer> w = sp;
-			_vars->subscribe(text_var, [w](const std::string& v) {
-				if (auto p = w.lock()) p->set_text(v);
-			});
+			if (!text_id.empty()) {
+				// 言語切替で再解決して set_text (EUI Phase 2 の動的更新)。
+				_strings->subscribe(text_id, [w](const std::string& v) {
+					if (auto p = w.lock()) p->set_text(v);
+				});
+			} else {
+				_vars->subscribe(text_var, [w](const std::string& v) {
+					if (auto p = w.lock()) p->set_text(v);
+				});
+			}
 		} else {
-			SDL_Log("elements_modal: label with text_var=\"%s\" — "
+			SDL_Log("elements_modal: label with text_id=\"%s\" text_var=\"%s\" — "
 			        "text_writer 未継承で set_text 仕掛け失敗",
-			        text_var.c_str());
+			        text_id.c_str(), text_var.c_str());
 		}
 	}
 	return out;
+}
+
+//---------------------------------------------------------------------------
+// i18n: proxy ベース button の styler (text_writer 派生) を StringStore に
+// subscribe する。 button は proxy<styler, basic_button> で、 styler が text を
+// 持つ。 proxy_base::subject() で styler (= element&) を取り、 text_writer に
+// cross-cast する。 raw ポインタは shared (proxy 本体) 生存中のみ有効なので、
+// weak_ptr<element> で生存を確認してから set_text する。
+//---------------------------------------------------------------------------
+void LayoutBuilder::subscribe_button_text_id(const picojson::object& o,
+                                             const element_ptr& shared)
+{
+	std::string text_id = string_or(o, "text_id");
+	if (text_id.empty() || !shared) return;
+	auto pb = std::dynamic_pointer_cast<ce::proxy_base>(shared);
+	if (!pb) return;
+	auto* tw = dynamic_cast<ce::text_writer*>(&pb->subject());
+	if (!tw) {
+		SDL_Log("elements_modal: button with text_id=\"%s\" — styler が "
+		        "text_writer 未継承で set_text 仕掛け失敗", text_id.c_str());
+		return;
+	}
+	tw->set_text(_strings->resolve(text_id));      // 初期言語へ同期
+	std::weak_ptr<ce::element> wel = shared;
+	_strings->subscribe(text_id, [wel, tw](const std::string& v) {
+		if (auto el = wel.lock()) tw->set_text(v);  // el 生存中は tw も有効
+	});
 }
 
 element_ptr LayoutBuilder::build_button(const picojson::object& o)
@@ -743,6 +851,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
 	if (!id.empty()) {
@@ -1151,6 +1260,7 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
@@ -1183,6 +1293,7 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
@@ -1836,9 +1947,14 @@ namespace
 namespace
 {
 	element_ptr build_text_overlay_label(const picojson::object& o,
-	                                     const std::string& default_locale)
+	                                     const std::string& default_locale,
+	                                     StringStore* strings)
 	{
-		auto text   = string_or(o, "text");
+		// "text_id" (i18n) があれば現在言語で解決、 無ければ static "text"。
+		std::string text_id = string_or(o, "text_id");
+		auto text = (!text_id.empty() && strings && strings->has(text_id))
+		                ? strings->resolve(text_id)
+		                : string_or(o, "text", text_id);
 		auto locale = string_or(o, "locale", default_locale);
 		float sz = static_cast<float>(number_or(o, "text_size", 0.0));
 
@@ -1866,6 +1982,17 @@ namespace
 		} else {
 			if (locale.empty()) lab = ce::share(std::move(base));
 			else                lab = ce::share(base.locale(std::move(locale)));
+		}
+
+		// text_id 指定があれば言語切替で set_text する subscriber を仕掛ける
+		// (build_label と同じ仕組み)。 wrap 前の素の label (text_writer) を狙う。
+		if (!text_id.empty() && strings) {
+			if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(lab)) {
+				std::weak_ptr<ce::text_writer> w = sp;
+				strings->subscribe(text_id, [w](const std::string& v) {
+					if (auto p = w.lock()) p->set_text(v);
+				});
+			}
 		}
 
 		// align_center_middle で button の中央に位置決め
@@ -1897,12 +2024,14 @@ namespace
 	// 見つけられる。
 	element_ptr maybe_wrap_text_overlay(const picojson::object& o,
 	                                    element_ptr btn_shared,
-	                                    const std::string& default_locale)
+	                                    const std::string& default_locale,
+	                                    StringStore* strings)
 	{
-		auto text = string_or(o, "text");
-		if (text.empty()) return btn_shared;
+		// overlay label は "text" か "text_id" のいずれかがあれば付ける。
+		if (string_or(o, "text").empty() && string_or(o, "text_id").empty())
+			return btn_shared;
 
-		auto label_elem = build_text_overlay_label(o, default_locale);
+		auto label_elem = build_text_overlay_label(o, default_locale, strings);
 		return ce::share(label_decoration(std::move(btn_shared),
 		                                  std::move(label_elem)));
 	}
@@ -1966,7 +2095,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 			_close_button_ids.insert(id);
 		}
 	}
-	return maybe_wrap_text_overlay(o, shared, _default_locale);
+	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
 //---------------------------------------------------------------------------
@@ -2028,7 +2157,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 		note_focusable(id, bp);
 	}
 	note_vars_on_focus(o, id);
-	return maybe_wrap_text_overlay(o, shared, _default_locale);
+	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
 //---------------------------------------------------------------------------
@@ -2107,7 +2236,7 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 		note_focusable(id, bp);
 	}
 	note_vars_on_focus(o, id);
-	return maybe_wrap_text_overlay(o, shared, _default_locale);
+	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
 //---------------------------------------------------------------------------
@@ -2710,6 +2839,27 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		}
 	}
 
+	// "strings" ブロック (任意, i18n): { textId: { lang: "string" } } を
+	// StringStore に登録。 "lang": "ja" で初期言語。 build_label の text_id が
+	// 参照するので content build より先に流し込む。
+	if (auto* v = get_field(o, "strings"); v && v->is<picojson::object>()) {
+		auto strings = builder.strings();
+		for (auto& kv : v->get<picojson::object>()) {
+			if (!kv.second.is<picojson::object>()) continue;
+			std::map<std::string, std::string> by_lang;
+			for (auto& lv : kv.second.get<picojson::object>()) {
+				if (lv.second.is<std::string>()) {
+					by_lang[lv.first] = lv.second.get<std::string>();
+				}
+			}
+			builder.strings()->set_entry(kv.first, std::move(by_lang));
+		}
+	}
+	if (auto* v = get_field(o, "lang"); v && v->is<std::string>()) {
+		builder.strings()->set_language(v->get<std::string>());
+		result.lang = v->get<std::string>();
+	}
+
 	// "atlases" ブロック (任意): name → { path, scale }。 atlas_image /
 	// atlas_button / atlas_slider が参照する pixmap_ptr を名前で共有可能に
 	// するための事前ロード。 path は LayoutBuilder の resource_base を
@@ -2820,6 +2970,13 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			result.transitions[kv.first] = std::move(ts);
 		}
 	}
+
+	// i18n: 言語切替 closure。 StringStore を shared_ptr 捕捉して保持するので、
+	// この closure を持つ限り対応表 + label subscribers が生存する。 "strings"
+	// 未定義でも StringStore は空のまま生成済みなので no-op として安全。
+	result.set_language = [strings = builder.strings()](const std::string& lang) {
+		strings->set_language(lang);
+	};
 
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();

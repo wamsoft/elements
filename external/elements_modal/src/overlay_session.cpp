@@ -124,6 +124,13 @@ struct overlay_session::impl
 	// focused_id() で読む。
 	std::shared_ptr<std::string> focused_id_slot;
 
+	// i18n: 言語切替 closure (StringStore を捕捉)。 set_language() から呼ぶ。
+	// "strings" 未定義でも parsed_layout から非 null で渡る (no-op)。
+	std::function<void(const std::string&)> set_language_fn;
+
+	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
+	std::string current_lang;
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -200,6 +207,8 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->transitions = std::move(layout.transitions);
 	_impl->id_map = std::move(layout.id_map);
 	_impl->focused_id_slot = layout.focused_id_slot;
+	_impl->set_language_fn = std::move(layout.set_language);
+	_impl->current_lang = std::move(layout.lang);
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -266,6 +275,21 @@ void overlay_session::focus_by_id(const std::string& id)
 		return;
 	}
 	_impl->view->focus(it->second);
+}
+
+void overlay_session::set_language(const std::string& lang)
+{
+	if (!_impl) return;
+	_impl->current_lang = lang;
+	if (_impl->set_language_fn) _impl->set_language_fn(lang);
+	// set_text 済の label は次回 render_to_buffer (view->draw) で再描画される。
+}
+
+const std::string& overlay_session::language() const
+{
+	static const std::string empty;
+	if (!_impl) return empty;
+	return _impl->current_lang;
 }
 
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)

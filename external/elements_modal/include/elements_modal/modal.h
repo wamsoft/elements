@@ -231,6 +231,19 @@ public:
 	//! ホスト主導の focus 復元に使う。
 	void focus_by_id(const std::string& id);
 
+	//! @brief i18n: 実行中の表示言語を切り替える (EUI Phase 2)。
+	//! JSON top-level "strings" の対応表を持つ画面で、 "text_id" を指定した
+	//! 全 label の表示文字列をその場で lang のものに更新する (text_var と同じ
+	//! subscribe 機構)。 次フレームの render_to_buffer で反映される。 "strings"
+	//! 未定義の画面では no-op。 lang は対応表の言語キー ("ja" / "en" 等)。
+	//! 画面遷移をまたいで言語を保ちたい場合、 ホストは現在言語を保持して
+	//! 新画面の start() 後に再度呼ぶ (各画面は毎回作り直されるため)。
+	void set_language(const std::string& lang);
+
+	//! @brief 現在の表示言語。 一度も set_language していない場合は JSON の
+	//! "lang"、 それも無ければ空文字列。
+	const std::string& language() const;
+
 	//! @brief view extent を変更 (window resize 等)。
 	void notify_view_resize(int new_view_width, int new_view_height);
 

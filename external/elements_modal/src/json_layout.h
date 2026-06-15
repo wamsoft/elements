@@ -68,6 +68,16 @@ struct parsed_layout
 	//! このポインタの中身を読めば現在の focused id を取れる。 focus poll を
 	//! 一度も呼んでない / 何も focus されてない場合は空文字列。
 	std::shared_ptr<std::string> focused_id_slot;
+
+	//! i18n: 実行中の言語切替。 呼ぶと StringStore の現在言語を変え、 "text_id"
+	//! を持つ全 label に set_text が走る (= EUI Phase 2 の動的更新)。 内部で
+	//! StringStore を shared_ptr 捕捉しているので、 この closure を保持する限り
+	//! 対応表 + subscribers は生存する。 "strings" 未定義でも非 null (no-op 相当)。
+	std::function<void(const std::string&)> set_language;
+
+	//! i18n: JSON top-level "lang" の初期言語 (無ければ空)。 ホストが
+	//! overlay_session::language() で読む初期値。
+	std::string lang;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。
