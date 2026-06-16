@@ -9,6 +9,7 @@ SDL3 を使う任意のアプリから単体で利用できる。
 - JSON / JSONC (行コメント・ブロックコメント・末尾カンマ) でレイアウト定義
 - 独立 SDL_Window でモーダル表示 (`run_modal`) — 内容に合わせた window サイズで生成 + 閉じるまでブロック
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
+- 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -308,7 +309,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 
 ### 画面遷移 (`transitions` + マニフェスト)
 
-複数画面を JSON だけで切り替えたいケース向けの軽量ランナ仕様。 ホスト (例: `elements_console.exe`) は **マニフェスト JSON** (= entry 画面 + 画面名 → ファイルマップ) を読み、 各画面 JSON の top-level `"transitions"` を見て次画面を決める。 ホストには C++ で遷移を書く必要がない。
+複数画面を JSON だけで切り替えたいケース向けの軽量ランナ仕様。 ホスト (例: `elements_console.exe`) は **マニフェスト JSON** (= entry 画面 + 画面名 → ファイルマップ) を読み、 各画面 JSON の top-level `"transitions"` を見て次画面を決める。 ホストには C++ で遷移を書く必要がない。 遷移の解釈とスタック駆動は `navigator` が担う (下記「ホスト連携」)。
 
 #### マニフェスト JSON (例: `app.jsonc`)
 
@@ -358,7 +359,7 @@ target syntax:
 | `"<replace:foo>"` | 現画面を `foo` に**すげ替え** (stack 不変) |
 | `"<stay>"` | 現画面を**再 enter** (stack 不変) |
 
-未定義 action のフォールバックはホスト側。 `elements_console` ランナは「entry なら exit / 子画面なら back」を既定とする。
+未定義 action のフォールバックは `resolve_transition()` / `navigator` (下記「ホスト連携」) が担う。 既定は「空 action: entry なら exit / 子画面なら pop」「非空の未定義 action: entry なら stay / 子画面なら pop」。
 
 #### エフェクト
 
@@ -369,7 +370,40 @@ target syntax:
 
 `duration`: ms。 省略 / 0 でホスト既定 (= 200ms 程度)。 未対応 effect は警告 + 即切替フォールバック。
 
-公開 API: `overlay_session::transitions()` で読み取った辞書を取得できる。 ランナは `get_result().action` を key に lookup して target / effect を決める。
+`"fade"` の混色そのものは `<elements_modal/effects.h>` の `blend_argb8888(from, to, t, out, count)` (ヘッダオンリー) を使う。 旧画面の最終フレームを `from`、 新画面を `to`、 `t = elapsed / duration` (0→1) で channel 別 lerp する。 `out` は `to` と同一バッファでよい (in-place)。
+
+#### ホスト連携: `navigator` (画面遷移ドライバ)
+
+`<elements_modal/navigator.h>` は、 上記の transitions / マニフェスト仕様に従って **画面名スタックを駆動するドライバ**を提供する。 ホストが `get_result().action` の lookup・`<back>`/`<replace:…>` 等の解釈・スタック操作・focus / 言語メモリを自前で実装する必要をなくす (SDL / `overlay_session` 非依存・単体テスト可能)。 `overlay_session` の生成・描画・入力転送・ファイル読込は引き続きホストの責務。
+
+| API | 役割 |
+|---|---|
+| `resolve_transition(action, transitions, is_entry) -> nav_step` | 純関数。 action を transitions で解決し `nav_step{action, name, effect, duration_ms}` を返す。 `nav_action` は `push` / `pop` / `replace` / `stay` / `exit` |
+| `navigator(app_manifest)` | スタック + manifest + 画面ごと focus 記憶 + 表示言語の保持 |
+| `navigator::reset_to(entry)` | スタックを `{entry}` に初期化 (entry 空ならマニフェストの entry) |
+| `navigator::advance(action, transitions) -> nav_step` | session 完了時に呼ぶ。 `is_entry` を深度から自動判定して解決 + スタック更新。 戻り値で effect 演出を処理 |
+| `navigator::current()` / `empty()` | 現画面名 / 終了状態 |
+| `navigator::remember_focus(screen, id)` / `focus_to_restore(screen)` | 再入時 focus 復元用 (id 空は無視) |
+| `navigator::set_language(lang)` / `language()` | 画面遷移をまたぐ表示言語の保持。 start 後に `overlay_session::set_language()` で再適用する |
+| `navigator::screen_file(name)` | manifest 登録の相対パス (未登録は空文字列 → ホストのフォールバックに委ねる) |
+
+典型的なホストループ (session 完了 → 次画面ロード):
+
+```cpp
+// session が finished() になったら:
+nav.remember_focus(nav.current(), sess.focused_id());
+auto step = nav.advance(sess.get_result().action, sess.transitions());
+if (step.effect == "fade" && !nav.empty()) { /* 旧フレームを snapshot して blend_argb8888 */ }
+sess.reset();
+if (nav.empty()) { /* 終了 */ }
+else {
+   // nav.current() の JSON を nav.screen_file()+manifest_dir で解決してロード、 start
+   if (!nav.language().empty())               sess.set_language(nav.language());
+   if (auto& id = nav.focus_to_restore(nav.current()); !id.empty()) sess.focus_by_id(id);
+}
+```
+
+実例は `examples/console_screens` (= elements_console の `main.cpp`) を参照。
 
 ### `"input"` ブロック
 

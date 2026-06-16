@@ -8,6 +8,10 @@
 //   - overlay_session: 呼出側のサーフェスに描画するオーバーレイ
 //   - init() / shutdown(): ThorVG + フォントの一括初期化
 //
+// 複数画面の JSON 駆動遷移を組むホストは、 別ヘッダも参照:
+//   - <elements_modal/navigator.h>: 画面遷移ドライバ (resolve_transition / navigator)
+//   - <elements_modal/effects.h>:   fade 用 ARGB クロスブレンド (blend_argb8888)
+//
 // SDL_Window/SDL_Renderer の所有権はライブラリ側、 呼出側は閉じるまで待つだけ。
 //---------------------------------------------------------------------------
 #ifndef ELEMENTS_MODAL_MODAL_H
