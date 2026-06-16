@@ -38,11 +38,13 @@ if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
       # 本体側が Storages 経由で font を登録する)。 standalone デモは
       # elements リポの resources/fonts を絶対パスで指す compile def で
       # 自前ロードする。
-      if (TARGET elements_modal_hello_example)
-         target_compile_definitions(elements_modal_hello_example PRIVATE
-            ELEMENTS_MODAL_DEMO_FONTS_DIR="${PROJECT_SOURCE_DIR}/resources/fonts"
-         )
-      endif()
+      foreach (_em_demo elements_modal_hello_example elements_modal_navigator_example)
+         if (TARGET ${_em_demo})
+            target_compile_definitions(${_em_demo} PRIVATE
+               ELEMENTS_MODAL_DEMO_FONTS_DIR="${PROJECT_SOURCE_DIR}/resources/fonts"
+            )
+         endif()
+      endforeach()
    endif()
 endif()
 

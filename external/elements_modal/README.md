@@ -403,7 +403,7 @@ else {
 }
 ```
 
-実例は `examples/console_screens` (= elements_console の `main.cpp`) を参照。
+standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_MODAL_BUILD_EXAMPLES=ON` で `elements_modal_navigator_example` を生成。 inline JSON 3 画面を menu→settings/about で push/pop/fade 遷移)。 マニフェスト (ファイル) 駆動・i18n・pad 連携まで含む実アプリ例は elements_console の `main.cpp`。
 
 ### `"input"` ブロック
 
@@ -610,7 +610,9 @@ add_subdirectory(external/elements_modal)
 target_link_libraries(myapp PRIVATE elements_modal::elements_modal)
 ```
 
-`examples/hello_modal.cpp` に standalone サンプルあり (`elements_modal_hello_example` ターゲット)。
+standalone サンプル (`-DELEMENTS_MODAL_BUILD_EXAMPLES=ON` で生成):
+- `examples/hello_modal.cpp` — 単一モーダル (`run_modal`)。 ターゲット `elements_modal_hello_example`。
+- `examples/navigator_screens.cpp` — 複数画面遷移 (`overlay_session` + `navigator`)。 ターゲット `elements_modal_navigator_example`。
 
 ## 設計メモ
 

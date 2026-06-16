@@ -72,31 +72,39 @@ option(ELEMENTS_MODAL_BUILD_EXAMPLES
 
 if (ELEMENTS_MODAL_BUILD_EXAMPLES)
 	# elements_modal が cycfi::elements / thorvg / SDL3 / picojson だけで完結
-	# することを示す standalone デモ。
-	add_executable(elements_modal_hello_example
-		examples/hello_modal.cpp
+	# することを示す standalone デモ群:
+	#   hello_modal       — 単一モーダル (run_modal)
+	#   navigator_screens — 複数画面の遷移 (overlay_session + navigator)
+	set(_em_examples
+		elements_modal_hello_example=examples/hello_modal.cpp
+		elements_modal_navigator_example=examples/navigator_screens.cpp
 	)
-	target_link_libraries(elements_modal_hello_example PRIVATE
-		elements_modal::elements_modal
-	)
-	# example は #include <elements.hpp> で load_fonts_from_directory を直接
-	# 呼ぶため、 elements ターゲットを (在れば) 例にも直接リンクする。
-	# elements_modal 本体は cycfi::elements を PRIVATE 依存のまま保つ。
-	if (TARGET cycfi::elements)
-		target_link_libraries(elements_modal_hello_example PRIVATE cycfi::elements)
-	endif()
-	target_compile_features(elements_modal_hello_example PRIVATE cxx_std_20)
-	if (MSVC)
-		target_compile_options(elements_modal_hello_example PRIVATE /utf-8)
-	endif()
+	foreach (_em_pair IN LISTS _em_examples)
+		string(REPLACE "=" ";" _em_kv "${_em_pair}")
+		list(GET _em_kv 0 _em_target)
+		list(GET _em_kv 1 _em_src)
 
-	# Windows: 実行時に SDL3.dll が要るので exe の隣にコピー。
-	# (SDL3 が shared lib target の場合のみ)
-	if (TARGET SDL3-shared AND WIN32)
-		add_custom_command(TARGET elements_modal_hello_example POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy_if_different
-				$<TARGET_FILE:SDL3-shared>
-				$<TARGET_FILE_DIR:elements_modal_hello_example>
-		)
-	endif()
+		add_executable(${_em_target} ${_em_src})
+		target_link_libraries(${_em_target} PRIVATE elements_modal::elements_modal)
+		# example は #include <elements.hpp> で load_fonts_from_directory を直接
+		# 呼ぶため、 elements ターゲットを (在れば) 例にも直接リンクする。
+		# elements_modal 本体は cycfi::elements を PRIVATE 依存のまま保つ。
+		if (TARGET cycfi::elements)
+			target_link_libraries(${_em_target} PRIVATE cycfi::elements)
+		endif()
+		target_compile_features(${_em_target} PRIVATE cxx_std_20)
+		if (MSVC)
+			target_compile_options(${_em_target} PRIVATE /utf-8)
+		endif()
+
+		# Windows: 実行時に SDL3.dll が要るので exe の隣にコピー。
+		# (SDL3 が shared lib target の場合のみ)
+		if (TARGET SDL3-shared AND WIN32)
+			add_custom_command(TARGET ${_em_target} POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy_if_different
+					$<TARGET_FILE:SDL3-shared>
+					$<TARGET_FILE_DIR:${_em_target}>
+			)
+		endif()
+	endforeach()
 endif()
