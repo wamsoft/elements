@@ -19,6 +19,7 @@ add_library(elements_modal STATIC
 	src/json_layout.cpp
 	src/runtime.cpp
 	src/overlay_session.cpp
+	src/navigator.cpp
 )
 
 target_include_directories(elements_modal
