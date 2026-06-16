@@ -307,6 +307,21 @@ overlay_session::render_rect overlay_session::get_current_rect() const
 	return _impl->last_rect;
 }
 
+bool overlay_session::measure_content(int& out_w, int& out_h) const
+{
+	out_w = 0;
+	out_h = 0;
+	if (!_impl->view) return false;
+	// run_modal と同じく view limits の min (= content の自然最小サイズ) を
+	// 返す。 background が付いた layout でも box の min は ~0 なので、 layer の
+	// min はそのまま content の自然サイズになる (max は box が無限大に伸ばすため
+	// 使えない)。
+	auto vlim = _impl->view->limits();
+	out_w = static_cast<int>(vlim.min.x + 0.5f);
+	out_h = static_cast<int>(vlim.min.y + 0.5f);
+	return true;
+}
+
 bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
                                        int buffer_w_px, int buffer_h_px,
                                        int surface_w, int surface_h,

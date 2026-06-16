@@ -280,6 +280,13 @@ public:
 	//!        この矩形位置を引いて view local 座標に変換する。
 	render_rect get_current_rect() const;
 
+	//! @brief content の自然サイズ (view limits の min、 logical 座標) を取得。
+	//!        run_modal が独立ウィンドウを内容サイズに縮めるのと同じ値で、
+	//!        ホストが overlay の view extent を内容にフィットさせて上下の
+	//!        余白を消すのに使う。 start() 後に呼ぶこと。
+	//! @return true: 取得成功 (view 構築済み) / false: 未開始
+	bool measure_content(int& out_w, int& out_h) const;
+
 	// --- SDL イベント転送 (surface logical 座標で渡す) ---
 
 	//! SDL_BUTTON_LEFT / MIDDLE / RIGHT 等、 mods は SDL_KMOD_* の OR
