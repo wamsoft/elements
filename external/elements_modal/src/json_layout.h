@@ -78,6 +78,15 @@ struct parsed_layout
 	//! i18n: JSON top-level "lang" の初期言語 (無ければ空)。 ホストが
 	//! overlay_session::language() で読む初期値。
 	std::string lang;
+
+	//! 配置アンカー (JSON top-level "align")。 0=左/上、 0.5=中央、 1=右/下。
+	//! render_to_buffer がサーフェス内での描画矩形位置の決定に使う。 既定は
+	//! 中央 (0.5, 0.5)。 "align": "top_left"/"top"/"left"/"center"/... で設定。
+	float anchor_x = 0.5f;
+	float anchor_y = 0.5f;
+
+	//! 非中央アンカー時のサーフェス端からの余白 px (JSON top-level "margin")。
+	int margin = 0;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。

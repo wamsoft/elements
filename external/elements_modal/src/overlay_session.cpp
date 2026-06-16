@@ -94,6 +94,12 @@ struct overlay_session::impl
 	int view_w = 0;
 	int view_h = 0;
 
+	// 配置アンカー (0=左/上, 0.5=中央, 1=右/下) + サーフェス端からの余白 px。
+	// JSON top-level "align" / "margin" から。 既定は中央。
+	float anchor_x = 0.5f;
+	float anchor_y = 0.5f;
+	int   margin   = 0;
+
 	// logical → pixel 倍率 (canvas に渡す)
 	float scale = 1.0f;
 
@@ -201,6 +207,9 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->layout_root = layout.root;
 	_impl->view_w = view_width;
 	_impl->view_h = view_height;
+	_impl->anchor_x = layout.anchor_x;
+	_impl->anchor_y = layout.anchor_y;
+	_impl->margin   = layout.margin;
 	_impl->scale  = pixel_scale;
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
@@ -356,8 +365,16 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	render_rect r;
 	if (surface_w > 0 && surface_h > 0) {
-		r.x = (surface_w - actual_w) / 2;
-		r.y = (surface_h - actual_h) / 2;
+		// アンカー配置: 0=端(margin)、 0.5=中央、 1=反対側端(margin)。
+		//   pos = margin + (free - 2*margin) * anchor    (free = surface - actual)
+		const int free_x = surface_w - actual_w;
+		const int free_y = surface_h - actual_h;
+		r.x = _impl->margin +
+		      static_cast<int>((free_x - 2 * _impl->margin) * _impl->anchor_x);
+		r.y = _impl->margin +
+		      static_cast<int>((free_y - 2 * _impl->margin) * _impl->anchor_y);
+		if (r.x < 0) r.x = 0;
+		if (r.y < 0) r.y = 0;
 	} else {
 		r.x = 0;
 		r.y = 0;

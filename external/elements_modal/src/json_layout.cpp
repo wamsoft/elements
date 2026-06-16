@@ -2808,6 +2808,21 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		result.height = int_at(*arr, 1, result.height);
 	}
 
+	// 配置アンカー: "align" (string) + "margin" (number)。 既定は中央。
+	if (auto* v = get_field(o, "align"); v && v->is<std::string>()) {
+		const std::string& a = v->get<std::string>();
+		float ax = 0.5f, ay = 0.5f;
+		// 縦: top/bottom、 横: left/right。 含まれない軸は中央のまま。
+		if (a.find("top")    != std::string::npos) ay = 0.0f;
+		if (a.find("bottom") != std::string::npos) ay = 1.0f;
+		if (a.find("left")   != std::string::npos) ax = 0.0f;
+		if (a.find("right")  != std::string::npos) ax = 1.0f;
+		// "center" のみ (top/bottom/left/right 無し) は中央。
+		result.anchor_x = ax;
+		result.anchor_y = ay;
+	}
+	result.margin = static_cast<int>(number_or(o, "margin", 0.0));
+
 	// "pad_theme": "xbox"|"ps"|"switch"|"keyboard"|"none" — 任意。 指定が
 	// あれば content build 前に global pad theme を切り替え、 build_pad_icon
 	// 内の resolve が新 theme で走る。 指定なしの場合は呼出側 (argv 等) で
