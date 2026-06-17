@@ -126,6 +126,9 @@ struct overlay_session::impl
 	// element を引くのに使う。
 	std::map<std::string, std::shared_ptr<ce::element>> id_map;
 
+	// id 付き widget の登録順リスト (id+type)。 list_widgets() 用。
+	std::vector<overlay_session::widget_desc> widgets;
+
 	// focus poll が更新する「現在 focus されている id」スロット。 ホストが
 	// focused_id() で読む。
 	std::shared_ptr<std::string> focused_id_slot;
@@ -215,6 +218,8 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->focus_poll = std::move(layout.focus_poll);
 	_impl->transitions = std::move(layout.transitions);
 	_impl->id_map = std::move(layout.id_map);
+	for (auto& it : layout.id_types)
+		_impl->widgets.push_back({ std::move(it.first), std::move(it.second) });
 	_impl->focused_id_slot = layout.focused_id_slot;
 	_impl->set_language_fn = std::move(layout.set_language);
 	_impl->current_lang = std::move(layout.lang);
@@ -284,6 +289,25 @@ void overlay_session::focus_by_id(const std::string& id)
 		return;
 	}
 	_impl->view->focus(it->second);
+}
+
+std::vector<overlay_session::widget_desc> overlay_session::list_widgets() const
+{
+	if (!_impl) return {};
+	return _impl->widgets;
+}
+
+bool overlay_session::activate_by_id(const std::string& id)
+{
+	if (!_impl || !_impl->view || id.empty()) return false;
+	auto it = _impl->id_map.find(id);
+	if (it == _impl->id_map.end()) return false;
+	// focus は遅延タスクなので、 poll() で即時適用してから Enter を送る。
+	_impl->view->focus(it->second);
+	_impl->view->poll();
+	bool handled = on_key_down(SDLK_RETURN, 0);
+	on_key_up(SDLK_RETURN, 0);
+	return handled || true;   // 既知 id へ送れた時点で成功扱い
 }
 
 void overlay_session::set_language(const std::string& lang)

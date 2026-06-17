@@ -64,6 +64,9 @@ struct parsed_layout
 	//! ホスト側の focus_by_id() で参照。
 	std::map<std::string, std::shared_ptr<cycfi::elements::element>> id_map;
 
+	//! id 付き要素を「登録順」に id+type で列挙 (UI ツリー dump 用)。
+	std::vector<std::pair<std::string, std::string>> id_types;
+
 	//! focus_poll が更新する「現在 focus されている id」スロット。 ホストは
 	//! このポインタの中身を読めば現在の focused id を取れる。 focus poll を
 	//! 一度も呼んでない / 何も focus されてない場合は空文字列。

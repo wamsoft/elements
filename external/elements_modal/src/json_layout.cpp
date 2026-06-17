@@ -425,6 +425,11 @@ public:
 	std::map<std::string, element_ptr> take_id_map() { return std::move(_id_to_element); }
 	const std::map<std::string, element_ptr>& id_map() const { return _id_to_element; }
 
+	// id 付き要素を「登録順」で id+type 列挙 (エージェント/デバッグの UI ツリー
+	// dump 用)。 type は JSON の "type" 文字列。
+	std::vector<std::pair<std::string, std::string>> take_id_types()
+	{ return std::move(_id_types); }
+
 	// focus poll クロージャが内部で更新する「現在 focused id」スロット。
 	// LayoutBuilder と take_focus_poll() のクロージャで shared (= 共有
 	// shared_ptr<string>)。 ホストは parsed_layout 経由でこの slot を覗いて
@@ -471,6 +476,7 @@ private:
 	std::map<std::string, cycfi::elements::pixmap_ptr> _atlases;
 	element_ptr _initial_focus;
 	std::map<std::string, element_ptr> _id_to_element;
+	std::vector<std::pair<std::string, std::string>> _id_types;  // 登録順 id+type
 	std::set<std::string> _close_button_ids;
 	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
 	std::shared_ptr<StringStore> _strings = std::make_shared<StringStore>();
@@ -690,6 +696,7 @@ void LayoutBuilder::register_id(const picojson::object& o,
 	auto id = string_or(o, "id");
 	if (!id.empty() && shared) {
 		_id_to_element[id] = shared;
+		_id_types.emplace_back(id, string_or(o, "type"));
 	}
 }
 
@@ -2940,6 +2947,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// id_map と focused_id_slot をホスト公開用に取得。 input ブロックの
 	// shortcut 解決でも id_map を使うので、 takeMove する前にコピーを保存。
 	result.id_map = builder.id_map();
+	result.id_types = builder.take_id_types();
 	result.focused_id_slot = builder.focused_id_slot();
 
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /

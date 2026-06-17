@@ -233,7 +233,20 @@ public:
 	//! @brief 指定 id の要素に focus を移す。 id が見つからなければ no-op。
 	//! 起動直後 (start() 直後 / initial_focus を上書きしたい場面) や、
 	//! ホスト主導の focus 復元に使う。
+	//! 注: view::focus は遅延タスクなので、 直後にキー送出しても旧 focus に届く。
+	//! 「focus してすぐ起動」したい場合は activate_by_id() を使う。
 	void focus_by_id(const std::string& id);
+
+	//! @brief id 付き widget を「登録順」に列挙する (UI ツリー dump 用)。
+	//! 各要素は {id, type} (type は JSON の "type" 文字列)。 現在値は
+	//! get_result().values を id で引く。
+	struct widget_desc { std::string id; std::string type; };
+	std::vector<widget_desc> list_widgets() const;
+
+	//! @brief id 指定で widget を起動する。 focus を**即時適用**してから Enter を
+	//! 送るので、 focus_by_id + on_key_down と違いその場で効く。 button は click、
+	//! checkbox/toggle/slide_switch は値トグル相当。 id が無ければ false。
+	bool activate_by_id(const std::string& id);
 
 	//! @brief i18n: 実行中の表示言語を切り替える (EUI Phase 2)。
 	//! JSON top-level "strings" の対応表を持つ画面で、 "text_id" を指定した
