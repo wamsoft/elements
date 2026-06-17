@@ -455,30 +455,30 @@ void overlay_session::on_mouse_leave()
 	_impl->view->cursor(_impl->last_cursor, ce::cursor_tracking::leaving);
 }
 
-void overlay_session::on_key_down(int sdl_key, int mods)
+bool overlay_session::on_key_down(int sdl_key, int mods)
 {
-	if (!active()) return;
+	if (!active()) return false;
 	if (sdl_key == SDLK_ESCAPE) {
 		_impl->finished_ = true;
-		return;
+		return true;   // Esc はダイアログが消費
 	}
 	ce::key_info ki{
 		.key = sdl_key_to_ce(sdl_key),
 		.action = ce::key_action::press,
 		.modifiers = sdl_mods_to_elements(mods)
 	};
-	_impl->view->key(ki);
+	return _impl->view->key(ki);   // focus widget が処理したら true
 }
 
-void overlay_session::on_key_up(int sdl_key, int mods)
+bool overlay_session::on_key_up(int sdl_key, int mods)
 {
-	if (!active()) return;
+	if (!active()) return false;
 	ce::key_info ki{
 		.key = sdl_key_to_ce(sdl_key),
 		.action = ce::key_action::release,
 		.modifiers = sdl_mods_to_elements(mods)
 	};
-	_impl->view->key(ki);
+	return _impl->view->key(ki);
 }
 
 void overlay_session::on_text_input(const char* utf8_text)
@@ -535,12 +535,13 @@ ce::pad_axis sdl_to_pad_axis(int sdl_axis)
 
 } // anonymous
 
-void overlay_session::on_pad_button(int sdl_gamepad_button, bool down)
+bool overlay_session::on_pad_button(int sdl_gamepad_button, bool down)
 {
-	if (!active()) return;
+	if (!active()) return false;
 	auto btn = sdl_to_pad_button(sdl_gamepad_button);
-	if (btn == ce::pad_button::unknown) return;
+	if (btn == ce::pad_button::unknown) return false;
 	_impl->view->pad_button_event({btn, down});
+	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
 }
 
 void overlay_session::on_pad_axis(int sdl_gamepad_axis, int raw_value)

@@ -300,8 +300,11 @@ public:
 	// (notify_surface_resize は将来 surface 全体の resize 対応用、 現状未実装)
 
 	//! sdl_key = SDL_Keycode 値。 mods は SDL_KMOD_* の OR。
-	void on_key_down(int sdl_key, int mods);
-	void on_key_up  (int sdl_key, int mods);
+	//! @return true: ダイアログが入力を消費した (Esc / focus widget が処理) /
+	//!         false: 未処理。 ホスト側はこれを見て、 非モーダル時に未処理キーを
+	//!         ゲームへ素通しできる (キーボードフォーカスの pass-through)。
+	bool on_key_down(int sdl_key, int mods);
+	bool on_key_up  (int sdl_key, int mods);
 
 	//! UTF-8 テキスト入力 (SDL_EVENT_TEXT_INPUT の text)。
 	void on_text_input(const char* utf8_text);
@@ -309,7 +312,8 @@ public:
 	//! ゲームパッドの離散ボタンイベント。 sdl_gamepad_button は
 	//! SDL_GAMEPAD_BUTTON_SOUTH 等の値、 down は press=true / release=false。
 	//! 未対応ボタン (SDL_GAMEPAD_BUTTON_*_PADDLE 等) は内部で無視される。
-	void on_pad_button(int sdl_gamepad_button, bool down);
+	//! @return true: 消費 (既知ボタン) / false: 未対応で無視。
+	bool on_pad_button(int sdl_gamepad_button, bool down);
 
 	//! ゲームパッドのアナログ軸イベント。 sdl_gamepad_axis は
 	//! SDL_GAMEPAD_AXIS_LEFTX 等の値、 raw_value は SDL の int16 範囲
