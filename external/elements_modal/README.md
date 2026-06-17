@@ -519,6 +519,10 @@ auto const& result = sess.get_result();
 
 `close_on_click=true` な button click で session が自動 finish するので、 host は `sess.finished()` でループ脱出を判定する。
 
+### 入力転送の戻り値 (handled / pass-through)
+
+`on_key_down` / `on_key_up` / `on_pad_button` は **`bool` (このダイアログが入力を消費したか)** を返す。 `true` = Esc / focus 中 widget が処理 / 既知パッドボタン、 `false` = 未処理。 ホストが**複数 UI を重ねる / ゲームと共存させる**場合、 この戻り値を見て「ダイアログが使わなかったキーはゲーム側へ素通しする」といったキーボードフォーカスの pass-through を実装できる (戻り値を無視すれば従来どおり)。 `on_text_input` / `on_mouse_*` / `on_pad_axis` は `void` のまま。
+
 ## pad_icon の前提セットアップ
 
 `pad_icon` を使う JSON を読む前に、 アセット配置とフォント登録をホスト側で
