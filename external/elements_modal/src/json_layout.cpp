@@ -744,12 +744,14 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 			b.prog.ez = easing_from_string(string_or(s, "easing"), easing::linear);
 		}
 
-		// ループ/往復。 loops<=0 → 1 pass。 yoyo なら 1 明滅 = 2 pass。
+		// ループ/往復。 loops<0 → 無限、 0 → 1 pass、 N → N (yoyo なら 1 明滅=2pass)。
 		const int loops = static_cast<int>(number_or(s, "loops", 0.0));
 		bool yoyo = false;
 		if (auto* yv = get_field(s, "yoyo"); yv && yv->is<bool>()) yoyo = yv->get<bool>();
 		b.prog.yoyo = yoyo;
-		b.prog.iterations = (loops <= 0) ? 1 : (yoyo ? loops * 2 : loops);
+		b.prog.iterations = (loops < 0)  ? 0          // 無限
+		                  : (loops == 0) ? 1          // 1 回
+		                  : (yoyo ? loops * 2 : loops);
 
 		const std::string kind = string_or(s, "type");
 		if (kind == "scale") {
