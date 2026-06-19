@@ -10,7 +10,7 @@ SDL3 を使う任意のアプリから単体で利用できる。
 - 独立 SDL_Window でモーダル表示 (`run_modal`) — 内容に合わせた window サイズで生成 + 閉じるまでブロック
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
 - 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
-- パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転を一般イージング・台形プロファイル・ループ付きで JSON 指定 (Phase A、 fade は Phase B 予定)
+- パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転 / フェードを一般イージング・台形プロファイル・ループ付きで JSON 指定 (周囲を reflow しない見た目だけの変換)
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -440,7 +440,7 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 - `<elements_modal/transform.h>` — `xform_state` (移動/拡縮/回転/ピボット/透過) を共有して掛ける非 reflow 変換 proxy `xform()`。
 - `<elements_modal/animator.h>` — `anim_binding` (進捗 tween → チャンネル) を束ねて毎フレーム tick する `animator`。
 
-> **透過 (`fade`) は Phase B**: canvas にグローバル alpha が無いため、 `fade` の値は現状 `xform_state.opacity` に積まれるだけで描画には未反映。 パーツ単体フェード/明滅は層合成として Phase B で実装予定。 移動・拡縮・回転は Phase A で利用可能。
+透過 (`fade`) は canvas のグループ不透明度 (`canvas::global_alpha`) で実装 (Phase B)。 `xform_state.opacity` を fill/stroke/text/image の alpha に乗算する方式で、 オフスクリーン合成は行わない (重なり部分の厳密合成ではなく各シェイプ独立の alpha 乗算)。 `"loops": -1` + `"yoyo": true` で明滅 (BLINK) になる。
 
 ### `"input"` ブロック
 

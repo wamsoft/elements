@@ -14,8 +14,8 @@
 // 入力は prepare_subject(ctx, p) で逆変換 (device_to_user) するので、 変換後の
 // 見た目位置をクリック/ホバーしても subject の自然座標のヒット領域に当たる。
 //
-// 透明度 (opacity) のフィールドも持つが、 canvas にグローバル alpha が無いため
-// Phase A では未適用 (Phase B で層合成として実装予定)。
+// 透明度 (opacity) は canvas::global_alpha (グループ不透明度) に乗算して適用する
+// (fill/stroke/text/image の alpha に効く非オフスクリーン方式)。
 //
 // 依存: cycfi::elements (proxy/canvas/context)。 SDL 非依存。
 //---------------------------------------------------------------------------
@@ -48,7 +48,7 @@ struct xform_state
 	float rot = 0.0f;   //!< 回転 (ラジアン)
 	float ox = 0.5f;    //!< ピボット X (subject 矩形に対する割合)
 	float oy = 0.5f;    //!< ピボット Y
-	float opacity = 1.0f; //!< 透明度 [0,1] (Phase A では未適用 / Phase B 用)
+	float opacity = 1.0f; //!< 透明度 [0,1] (canvas::global_alpha に乗算)
 
 	//! @brief 変換なし (恒等) か。 true なら proxy は素通しでよい。
 	bool identity() const
@@ -95,6 +95,10 @@ public:
 				cnv.translate({-px, -py});
 			}
 		}
+		// 透明度 (フェード): 親の global_alpha に乗算して合成 (Phase B)。
+		// save() 済なので restore() で元に戻る。
+		if (st.opacity < 1.0f)
+			cnv.global_alpha(cnv.global_alpha() * st.opacity);
 	}
 
 	void prepare_subject(ce::context& ctx, ce::point& p) override

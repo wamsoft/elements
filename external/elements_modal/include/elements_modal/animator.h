@@ -56,7 +56,7 @@ struct anim_binding
 				s.rot = deg_to_rad(ax + (bx - ax) * p);
 				break;
 			case channel::fade:
-				s.opacity = ax + (bx - ax) * p;  // Phase A では未描画 / Phase B 用
+				s.opacity = ax + (bx - ax) * p;  // xform_base が global_alpha に乗算
 				break;
 		}
 	}

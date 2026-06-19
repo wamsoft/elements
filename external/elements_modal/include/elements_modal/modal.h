@@ -12,7 +12,7 @@
 //   - <elements_modal/navigator.h>: 画面遷移ドライバ (resolve_transition / navigator)
 //   - <elements_modal/effects.h>:   fade 用 ARGB クロスブレンド (blend_argb8888)
 //
-// パーツ演出 (要素の "animate" による移動/拡縮/回転; Phase A) は overlay_session
+// パーツ演出 (要素の "animate" による移動/拡縮/回転/フェード) は overlay_session
 // が内部で駆動する。 個別利用するなら:
 //   - <elements_modal/tween.h>:     イージング/台形プロファイル + tween 再生器
 //   - <elements_modal/transform.h>: 非 reflow の変換 proxy (xform_state / xform)
