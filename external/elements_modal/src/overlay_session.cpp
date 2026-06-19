@@ -17,6 +17,7 @@
 //     local 座標に変換)
 //---------------------------------------------------------------------------
 #include "elements_modal/modal.h"
+#include "elements_modal/animator.h"
 #include "json_layout.h"
 #include "key_map.h"
 
@@ -140,6 +141,11 @@ struct overlay_session::impl
 	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
 	std::string current_lang;
 
+	// パーツ演出 (Phase A): "animate" 由来の変換アニメ。 start() で初期化し、
+	// render_to_buffer で経過 ms 分 tick する。 空なら一切のコスト無し。
+	animator anim;
+	Uint64   last_anim_ms = 0;
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -223,6 +229,11 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->focused_id_slot = layout.focused_id_slot;
 	_impl->set_language_fn = std::move(layout.set_language);
 	_impl->current_lang = std::move(layout.lang);
+
+	// パーツ演出束縛を animator に積み、 初期値 (進捗 0) を適用してから開始。
+	for (auto& b : layout.animations) _impl->anim.add(std::move(b));
+	_impl->anim.start();
+	_impl->last_anim_ms = SDL_GetTicks();
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -368,6 +379,15 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	// 描画前に focus poll: 変数連動 label の text を更新する。
 	if (_impl->focus_poll) _impl->focus_poll();
+
+	// パーツ演出を経過 ms 分進める (xform_state を書き換え → 次の draw に反映)。
+	if (!_impl->anim.empty()) {
+		const Uint64 now = SDL_GetTicks();
+		const float dt = (now > _impl->last_anim_ms)
+		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
+		_impl->last_anim_ms = now;
+		_impl->anim.tick(dt);
+	}
 
 	const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
 	std::fill_n(pixel_buffer, pixel_count, 0u);

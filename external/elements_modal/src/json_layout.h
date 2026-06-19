@@ -8,6 +8,7 @@
 #define ELEMENTS_MODAL_JSON_LAYOUT_H
 
 #include "elements_modal/modal.h"   // value_t
+#include "elements_modal/animator.h" // anim_binding (Phase A: パーツ演出)
 
 #include <elements.hpp>
 
@@ -90,6 +91,12 @@ struct parsed_layout
 
 	//! 非中央アンカー時のサーフェス端からの余白 px (JSON top-level "margin")。
 	int margin = 0;
+
+	//! パーツ演出 (Phase A): "animate" 指定から生成した変換アニメ束縛。
+	//! 各 binding は xform_state を proxy と共有し、 進捗 tween で移動/拡縮/回転を
+	//! 駆動する。 ホスト (overlay_session) が animator に積んで毎フレーム tick する。
+	//! Phase A は全て画面表示時 (enter) 発火。
+	std::vector<anim_binding> animations;
 };
 
 //! @brief JSON 文字列を Elements ツリーに変換する。

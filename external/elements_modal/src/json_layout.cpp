@@ -402,6 +402,16 @@ public:
 	std::map<std::string, cycfi::elements::pixmap_ptr>& atlases() { return _atlases; }
 	element_ptr build(const picojson::value& v);
 
+	// build() の型ディスパッチ本体 ("animate" ラップ前)。
+	element_ptr build_dispatch(const picojson::object& o, const std::string& type);
+
+	// 要素に "animate" があれば変換 proxy で包み、 演出束縛を _animations に
+	// 積む。 無ければ el をそのまま返す。 Phase A は enter 発火のみ。
+	element_ptr apply_animation(const picojson::object& o, element_ptr el);
+
+	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
+	std::vector<anim_binding> take_animations() { return std::move(_animations); }
+
 	// 相対パスを resource_base (= ホストが指定するベースディレクトリ) で
 	// 解決して fs::path にする。 path が絶対ならそのまま。
 	cycfi::fs::path resolve_resource(const std::string& path) const
@@ -478,6 +488,7 @@ private:
 	std::map<std::string, element_ptr> _id_to_element;
 	std::vector<std::pair<std::string, std::string>> _id_types;  // 登録順 id+type
 	std::set<std::string> _close_button_ids;
+	std::vector<anim_binding> _animations;  // "animate" から生成した演出束縛
 	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
 	std::shared_ptr<StringStore> _strings = std::make_shared<StringStore>();
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
@@ -589,6 +600,15 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	const auto& o = v.get<picojson::object>();
 	auto type = string_or(o, "type");
 
+	element_ptr el = build_dispatch(o, type);
+	// "animate" 指定があれば変換 proxy で包み、 演出束縛を登録する (Phase A)。
+	if (el) el = apply_animation(o, std::move(el));
+	return el;
+}
+
+element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
+                                          const std::string& type)
+{
 	if (type == "label")         return build_label(o);
 	if (type == "button")        return build_button(o);
 	if (type == "vtile")         return build_vtile(o);
@@ -650,6 +670,118 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 
 	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
+}
+
+//---------------------------------------------------------------------------
+// apply_animation — 要素の "animate" を変換 proxy + 演出束縛に落とす (Phase A)。
+//
+// "animate" は 1 オブジェクト or 配列。 配列の各エントリは同じ xform_state を
+// 共有するので、 移動 + 拡縮 + 回転の同時掛けが自然に合成される。 周囲は
+// reflow しない (xform_base は非 reflow オーバーレイ)。
+//
+// 受理フィールド (各エントリ):
+//   "type":     "move" | "scale" | "rotate" | "fade"   (既定 move)
+//   "from"/"to": move/scale は [x,y] or スカラ、 rotate は度、 fade は % (0..100)
+//   "frames":   再生フレーム数 (60fps 換算) — 無ければ "duration_ms" (既定 300)
+//   "easing":   "out_cubic" 等 (台形指定が無いとき)
+//   "accel"/"decel": 台形プロファイルの加速/減速割合 (指定で easing より優先)
+//   "loops":    明滅/ループ回数 (0=ループ無し)
+//   "yoyo":     往復 (明滅 1 回 = 2 pass)
+//   "pivot":    拡縮/回転のピボット [ox,oy] (0..1, 既定中央)。 最初の指定を採用
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_ptr el)
+{
+	auto* av = get_field(o, "animate");
+	if (!av || !el) return el;
+
+	std::vector<const picojson::object*> specs;
+	if (av->is<picojson::object>()) {
+		specs.push_back(&av->get<picojson::object>());
+	} else if (av->is<picojson::array>()) {
+		for (auto& e : av->get<picojson::array>())
+			if (e.is<picojson::object>()) specs.push_back(&e.get<picojson::object>());
+	}
+	if (specs.empty()) return el;
+
+	auto st = std::make_shared<xform_state>();
+
+	// [x,y] 配列 or スカラ (x=y へ展開) を読む。 無ければ (dx,dy)。
+	auto read_xy = [](const picojson::object& s, const char* key,
+	                  float dx, float dy, float& ox, float& oy) {
+		ox = dx; oy = dy;
+		if (auto* v = get_field(s, key)) {
+			if (v->is<picojson::array>()) {
+				auto& a = v->get<picojson::array>();
+				if (a.size() > 0 && a[0].is<double>()) ox = float(a[0].get<double>());
+				if (a.size() > 1 && a[1].is<double>()) oy = float(a[1].get<double>());
+			} else if (v->is<double>()) {
+				ox = oy = float(v->get<double>());
+			}
+		}
+	};
+
+	bool pivot_set = false;
+	for (const picojson::object* sp : specs) {
+		const auto& s = *sp;
+		anim_binding b;
+		b.st = st;
+
+		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
+		float dur_ms;
+		if (auto* fv = get_field(s, "frames"); fv && fv->is<double>())
+			dur_ms = frames_to_ms(float(fv->get<double>()));
+		else
+			dur_ms = float(number_or(s, "duration_ms", 300.0));
+		b.prog.from = 0.0f; b.prog.to = 1.0f; b.prog.duration_ms = dur_ms;
+
+		// 台形 (accel/decel) 指定があれば優先、 無ければ easing。
+		const bool has_trap = get_field(s, "accel") || get_field(s, "decel");
+		if (has_trap) {
+			b.prog.use_trapezoid = true;
+			b.prog.accel_frac = float(number_or(s, "accel", 0.0));
+			b.prog.decel_frac = float(number_or(s, "decel", 0.0));
+		} else {
+			b.prog.ez = easing_from_string(string_or(s, "easing"), easing::linear);
+		}
+
+		// ループ/往復。 loops<=0 → 1 pass。 yoyo なら 1 明滅 = 2 pass。
+		const int loops = static_cast<int>(number_or(s, "loops", 0.0));
+		bool yoyo = false;
+		if (auto* yv = get_field(s, "yoyo"); yv && yv->is<bool>()) yoyo = yv->get<bool>();
+		b.prog.yoyo = yoyo;
+		b.prog.iterations = (loops <= 0) ? 1 : (yoyo ? loops * 2 : loops);
+
+		const std::string kind = string_or(s, "type");
+		if (kind == "scale") {
+			b.ch = anim_binding::channel::scale;
+			read_xy(s, "from", 1.0f, 1.0f, b.ax, b.ay);
+			read_xy(s, "to",   1.0f, 1.0f, b.bx, b.by);
+		} else if (kind == "rotate") {
+			b.ch = anim_binding::channel::rotate;
+			b.ax = float(number_or(s, "from", 0.0));   // 度
+			b.bx = float(number_or(s, "to",   0.0));
+		} else if (kind == "fade") {
+			b.ch = anim_binding::channel::fade;
+			b.ax = float(number_or(s, "from",   0.0)) / 100.0f;   // % → [0,1]
+			b.bx = float(number_or(s, "to",   100.0)) / 100.0f;
+		} else {
+			b.ch = anim_binding::channel::move;
+			read_xy(s, "from", 0.0f, 0.0f, b.ax, b.ay);
+			read_xy(s, "to",   0.0f, 0.0f, b.bx, b.by);
+		}
+
+		if (!pivot_set) {
+			float ox, oy;
+			read_xy(s, "pivot", 0.5f, 0.5f, ox, oy);
+			st->ox = ox; st->oy = oy;
+			pivot_set = true;
+		}
+
+		_animations.push_back(std::move(b));
+	}
+
+	// 内部 el を変換 proxy で包む。 id_map は内部 el を指したままで OK。
+	return ce::share(xform(st, ce::hold_any(el)));
 }
 
 element_ptr LayoutBuilder::build_child(const picojson::object& o)
@@ -2943,6 +3075,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	}
 	result.initial_focus = builder.take_initial_focus();
 	result.close_button_ids = builder.take_close_button_ids();
+	result.animations = builder.take_animations();
 
 	// id_map と focused_id_slot をホスト公開用に取得。 input ブロックの
 	// shortcut 解決でも id_map を使うので、 takeMove する前にコピーを保存。
