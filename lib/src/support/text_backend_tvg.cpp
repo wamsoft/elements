@@ -90,7 +90,7 @@ namespace cycfi { namespace elements
          if (auto* c = std::get_if<color>(&cnv.get_state().fill_style_data))
          {
             text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-            text->opacity(clamp8(c->alpha));
+            text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
          }
 
          tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
@@ -131,7 +131,7 @@ namespace cycfi { namespace elements
          {
             text->outline(cnv.get_state().line_width_val,
                clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-            text->opacity(clamp8(c->alpha));
+            text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
          }
          text->fill(0, 0, 0);
 

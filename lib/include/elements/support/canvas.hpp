@@ -223,6 +223,16 @@ namespace cycfi { namespace elements
       void              restore();
 
       ///////////////////////////////////////////////////////////////////////////////////
+      // Global alpha (group opacity)
+      //
+      // 0..1 の係数で、 アクティブな間に描画される fill / stroke / text / image の
+      // 不透明度に乗算される。 state スタックで save/restore される。 オフスクリーン
+      // 合成なしに要素単位のフェード (opacity) を行うために使う (重なり部分の厳密な
+      // 合成ではなく、 各シェイプ独立の alpha 乗算)。
+      float             global_alpha() const;
+      void              global_alpha(float a);
+
+      ///////////////////////////////////////////////////////////////////////////////////
       // Types used by text backends (public for plugin access)
 
       struct gradient_data
@@ -266,6 +276,10 @@ namespace cycfi { namespace elements
          // (e.g. "ja-JP", "zh-CN", "zh-TW"). Empty = no locale hint.
          // Honored by FT loader builds (TVG_LOADER_FT=ON); ignored otherwise.
          std::string        text_locale;
+
+         // Group opacity (0..1) multiplied into fill/stroke/text/image alpha.
+         // Default 1 (opaque). See canvas::global_alpha().
+         float              global_alpha = 1.0f;
       };
 
    private:

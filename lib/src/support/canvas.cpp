@@ -177,13 +177,14 @@ namespace cycfi { namespace elements
 
    void canvas::apply_fill_to_shape(tvg::Shape* shape) const
    {
+      const float ga = _state.global_alpha;
       if (auto* c = std::get_if<color>(&_state.fill_style_data))
       {
          shape->fill(
             uint8_t(c->red * 255),
             uint8_t(c->green * 255),
             uint8_t(c->blue * 255),
-            uint8_t(c->alpha * 255)
+            uint8_t(c->alpha * ga * 255)
          );
       }
       else if (auto* gd = std::get_if<gradient_data>(&_state.fill_style_data))
@@ -201,7 +202,7 @@ namespace cycfi { namespace elements
                   uint8_t(cs.color.red * 255),
                   uint8_t(cs.color.green * 255),
                   uint8_t(cs.color.blue * 255),
-                  uint8_t(cs.color.alpha * 255)
+                  uint8_t(cs.color.alpha * ga * 255)
                });
             }
             grad->colorStops(stops.data(), stops.size());
@@ -223,7 +224,7 @@ namespace cycfi { namespace elements
                   uint8_t(cs.color.red * 255),
                   uint8_t(cs.color.green * 255),
                   uint8_t(cs.color.blue * 255),
-                  uint8_t(cs.color.alpha * 255)
+                  uint8_t(cs.color.alpha * ga * 255)
                });
             }
             grad->colorStops(stops.data(), stops.size());
@@ -236,13 +237,14 @@ namespace cycfi { namespace elements
    {
       shape->strokeWidth(_state.line_width_val);
 
+      const float ga = _state.global_alpha;
       if (auto* c = std::get_if<color>(&_state.stroke_style_data))
       {
          shape->strokeFill(
             uint8_t(c->red * 255),
             uint8_t(c->green * 255),
             uint8_t(c->blue * 255),
-            uint8_t(c->alpha * 255)
+            uint8_t(c->alpha * ga * 255)
          );
       }
       else if (auto* gd = std::get_if<gradient_data>(&_state.stroke_style_data))
@@ -260,7 +262,7 @@ namespace cycfi { namespace elements
                   uint8_t(cs.color.red * 255),
                   uint8_t(cs.color.green * 255),
                   uint8_t(cs.color.blue * 255),
-                  uint8_t(cs.color.alpha * 255)
+                  uint8_t(cs.color.alpha * ga * 255)
                });
             }
             grad->colorStops(stops.data(), stops.size());
@@ -281,7 +283,7 @@ namespace cycfi { namespace elements
                   uint8_t(cs.color.red * 255),
                   uint8_t(cs.color.green * 255),
                   uint8_t(cs.color.blue * 255),
-                  uint8_t(cs.color.alpha * 255)
+                  uint8_t(cs.color.alpha * ga * 255)
                });
             }
             grad->colorStops(stops.data(), stops.size());
@@ -899,6 +901,13 @@ namespace cycfi { namespace elements
       // Already in device coords — identity transform
       pic->clip(clip);
 
+      // Group opacity (fade): multiply the picture's alpha by global_alpha.
+      if (_state.global_alpha < 1.0f)
+      {
+         float ga = _state.global_alpha < 0.0f ? 0.0f : _state.global_alpha;
+         pic->opacity(uint8_t(ga * 255));
+      }
+
       _tvg_canvas->add(pic);
       _has_pending = true;
    }
@@ -918,5 +927,20 @@ namespace cycfi { namespace elements
          _state = _state_stack.top();
          _state_stack.pop();
       }
+   }
+
+   ///////////////////////////////////////////////////////////////////////////
+   // Global alpha (group opacity)
+   ///////////////////////////////////////////////////////////////////////////
+   float canvas::global_alpha() const
+   {
+      return _state.global_alpha;
+   }
+
+   void canvas::global_alpha(float a)
+   {
+      if (a < 0.0f) a = 0.0f;
+      if (a > 1.0f) a = 1.0f;
+      _state.global_alpha = a;
    }
 }}
