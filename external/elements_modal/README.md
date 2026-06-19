@@ -10,6 +10,7 @@ SDL3 を使う任意のアプリから単体で利用できる。
 - 独立 SDL_Window でモーダル表示 (`run_modal`) — 内容に合わせた window サイズで生成 + 閉じるまでブロック
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
 - 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
+- パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転を一般イージング・台形プロファイル・ループ付きで JSON 指定 (Phase A、 fade は Phase B 予定)
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -404,6 +405,42 @@ else {
 ```
 
 standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_MODAL_BUILD_EXAMPLES=ON` で `elements_modal_navigator_example` を生成。 inline JSON 3 画面を menu→settings/about で push/pop/fade 遷移)。 マニフェスト (ファイル) 駆動・i18n・pad 連携まで含む実アプリ例は elements_console の `main.cpp`。
+
+### パーツ演出 (`"animate"`) — Phase A
+
+任意の要素に `"animate"` を付けると、 その要素を **見た目だけ動かす変換**でスライド/ポップ/回転させられる (周囲のレイアウトは動かさない非 reflow オーバーレイ)。 画面表示時 (enter) に再生され、 `overlay_session` が毎フレーム駆動する。 ホストに演出コードは不要。
+
+```jsonc
+{ "type": "label", "id": "title", "text": "START",
+  "animate": {
+    "type": "move",          // move | scale | rotate | fade
+    "from": [-220, 0],       // move/scale は [x,y] or スカラ、 rotate は度、 fade は %
+    "to":   [0, 0],
+    "frames": 18,            // 再生フレーム数 (60fps 換算)。 代わりに "duration_ms" 可
+    "easing": "out_cubic"    // 一般イージング (下記)。 台形指定があればそちら優先
+  }
+}
+```
+
+| フィールド | 意味 |
+| --- | --- |
+| `"type"` | `move`(平行移動 px) / `scale`(拡縮率) / `rotate`(度) / `fade`(透過%) — 既定 `move` |
+| `"from"` / `"to"` | 開始・終了値。 move/scale は `[x,y]` か単一スカラ、 rotate は度、 fade は % (0..100) |
+| `"frames"` / `"duration_ms"` | 再生時間。 `frames` は 60fps 換算 (要望のフレーム数指定)。 既定 300ms |
+| `"easing"` | `linear` / `in_out` / `out_cubic` / `in_back` 等の一般イージング |
+| `"accel"` / `"decel"` | 台形速度プロファイルの加速・減速割合 (0..1)。 指定すると easing より優先。 加速→等速→減速を別々に制御する要望仕様 |
+| `"loops"` | ループ/明滅回数 (0=ループ無し)。 `"yoyo": true` で往復 (明滅 1 回 = 2 pass) |
+| `"pivot"` | 拡縮/回転の起点 `[ox,oy]` (0..1, 既定中央 `[0.5,0.5]`)。 左上起点は `[0,0]` |
+
+`"animate"` は配列でも書ける。 各エントリは同じ変換状態を共有するので、 **移動 + 拡縮 + 回転の同時掛け**が自然に合成される (例: スライドしながら拡大)。
+
+内部構成 (個別利用も可能):
+
+- `<elements_modal/tween.h>` — 一般イージング (`ease`) と台形プロファイル (`trapezoid`)、 ループ/往復つき `tween` 再生器。 SDL/Elements 非依存でヘッドレス検証可。
+- `<elements_modal/transform.h>` — `xform_state` (移動/拡縮/回転/ピボット/透過) を共有して掛ける非 reflow 変換 proxy `xform()`。
+- `<elements_modal/animator.h>` — `anim_binding` (進捗 tween → チャンネル) を束ねて毎フレーム tick する `animator`。
+
+> **透過 (`fade`) は Phase B**: canvas にグローバル alpha が無いため、 `fade` の値は現状 `xform_state.opacity` に積まれるだけで描画には未反映。 パーツ単体フェード/明滅は層合成として Phase B で実装予定。 移動・拡縮・回転は Phase A で利用可能。
 
 ### `"input"` ブロック
 
