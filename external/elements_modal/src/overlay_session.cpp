@@ -139,6 +139,14 @@ struct overlay_session::impl
 	// focused_id() で読む。
 	std::shared_ptr<std::string> focused_id_slot;
 
+	// hover (マウスオーバー) 追従の poll + 現在 hover id スロット。 hover トリガ演出用。
+	std::function<void()> hover_poll;
+	std::shared_ptr<std::string> hovered_id_slot;
+
+	// focus トリガ演出を有効にするか (JSON "input":{"focus_anim":false})。 hover_focus
+	// 併用時の focus×hover 多重発火を避ける逃がし。
+	bool focus_anim = true;
+
 	// i18n: 言語切替 closure (StringStore を捕捉)。 set_language() から呼ぶ。
 	// "strings" 未定義でも parsed_layout から非 null で渡る (no-op)。
 	std::function<void(const std::string&)> set_language_fn;
@@ -162,10 +170,11 @@ struct overlay_session::impl
 		if (external_cb) {
 			external_cb(id_s, is_button_click, payload);
 		}
-		// 決定 (select) 演出: button click を「決定」とみなして該当 id を発火。
-		// state widget の値変化 (is_button_click=false) は select 扱いしない。
-		if (is_button_click && !anim.empty()) {
-			anim.fire(anim_binding::trigger::select, id_s);
+		// 決定 (select) 演出は button click、 値変化 (change) は state widget の
+		// 値変化 (is_button_click=false) で発火。
+		if (!anim.empty()) {
+			anim.fire(is_button_click ? anim_binding::trigger::select
+			                          : anim_binding::trigger::change, id_s);
 		}
 		// "close_on_click": true な button click のみセッションを終了させる。
 		// 含まれない button click は外部 callback の発火だけで継続。
@@ -247,6 +256,9 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->scale  = pixel_scale;
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
+	_impl->hover_poll = std::move(layout.hover_poll);
+	_impl->hovered_id_slot = layout.hovered_id_slot;
+	_impl->focus_anim = layout.focus_anim;
 	_impl->transitions = std::move(layout.transitions);
 	_impl->id_map = std::move(layout.id_map);
 	for (auto& it : layout.id_types)
@@ -412,11 +424,15 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	// 描画前に focus poll: 変数連動 label の text を更新する。
 	if (_impl->focus_poll) _impl->focus_poll();
+	if (_impl->hover_poll) _impl->hover_poll();
 
-	// focus 変化を演出へ通知 (focus 取得で前進、 喪失で復帰再生)。 focus_poll が
-	// 更新した focused_id_slot を見るので poll の後に呼ぶ。
-	if (!_impl->anim.empty() && _impl->focused_id_slot) {
-		_impl->anim.notify_focus(*_impl->focused_id_slot);
+	// focus / hover 変化を演出へ通知 (取得で前進、 喪失で復帰再生)。 poll の後に呼ぶ。
+	// focus_anim=false なら focus トリガは止める (hover_focus 併用時の多重発火回避)。
+	if (!_impl->anim.empty()) {
+		if (_impl->focus_anim && _impl->focused_id_slot)
+			_impl->anim.notify_focus(*_impl->focused_id_slot);
+		if (_impl->hovered_id_slot)
+			_impl->anim.notify_hover(*_impl->hovered_id_slot);
 	}
 
 	// パーツ演出を経過 ms 分進める (xform_state を書き換え → 次の draw に反映)。

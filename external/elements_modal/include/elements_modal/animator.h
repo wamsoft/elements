@@ -38,8 +38,8 @@ struct anim_binding
 	//! 駆動対象のチャンネル。
 	enum class channel { move, scale, rotate, fade };
 
-	//! 発火タイミング。
-	enum class trigger { enter, focus, select, exit };
+	//! 発火タイミング。 hover はマウスオーバー、 change は値変化 (checkbox/slider 等)。
+	enum class trigger { enter, focus, select, exit, hover, change };
 
 	std::shared_ptr<xform_state> st;   //!< 書き込み先 (proxy と共有)。
 	tween   prog;                      //!< 進捗ドライバ (from=0, to=1)。
@@ -92,13 +92,15 @@ struct anim_binding
 	bool looping() const { return prog.iterations <= 0 || prog.iterations > 1; }
 };
 
-//! @brief "enter"/"focus"/"select"/"exit" を trigger に変換 (未知は enter)。
+//! @brief "enter"/"focus"/"select"/"exit"/"hover"/"change" を trigger に (未知は enter)。
 inline anim_binding::trigger trigger_from_string(std::string_view s)
 {
 	using t = anim_binding::trigger;
 	if (s == "focus")  return t::focus;
 	if (s == "select") return t::select;
 	if (s == "exit")   return t::exit;
+	if (s == "hover")  return t::hover;
+	if (s == "change") return t::change;
 	return t::enter;
 }
 
@@ -135,6 +137,7 @@ public:
 			}
 		}
 		_focus_id.clear();
+		_hover_id.clear();
 		_all_done = false;
 	}
 
@@ -169,17 +172,10 @@ public:
 
 	//! @brief 現在 focus されている id をホストから受け取り、 focus 束縛を駆動する。
 	//!        前回と変化したときだけ、 旧 id を逆再生 (復帰)、 新 id を前進再生する。
-	void notify_focus(const std::string& id)
-	{
-		if (id == _focus_id) return;
-		const std::string old = _focus_id;
-		_focus_id = id;
-		for (auto& b : _bindings) {
-			if (b.trig != trigger::focus) continue;
-			if (!old.empty() && b.id == old) release_focus(b);
-			if (!id.empty()  && b.id == id)  start_focus(b);
-		}
-	}
+	void notify_focus(const std::string& id) { notify_inout(trigger::focus, _focus_id, id); }
+
+	//! @brief 現在 hover されている id を受け取り、 hover 束縛を駆動する (focus と対称)。
+	void notify_hover(const std::string& id) { notify_inout(trigger::hover, _hover_id, id); }
 
 	//! @brief 全 active 束縛が完了したか (idle 含む。 無限ループ active なら false)。
 	bool all_done() const { return _all_done; }
@@ -203,8 +199,21 @@ public:
 
 private:
 
-	// focus 取得: 前進再生を開始。
-	static void start_focus(anim_binding& b)
+	// focus/hover の in/out 駆動 (共通)。 last は前回 id を保持するスロット。
+	void notify_inout(trigger t, std::string& last, const std::string& id)
+	{
+		if (id == last) return;
+		const std::string old = last;
+		last = id;
+		for (auto& b : _bindings) {
+			if (b.trig != t) continue;
+			if (!old.empty() && b.id == old) release_inout(b);
+			if (!id.empty()  && b.id == id)  start_inout(b);
+		}
+	}
+
+	// 取得: 前進再生を開始。
+	static void start_inout(anim_binding& b)
 	{
 		b.reversed = false;
 		b.prog.reset();
@@ -212,8 +221,8 @@ private:
 		b.apply();
 	}
 
-	// focus 喪失: 単発なら逆再生で静止へ、 ループ束縛は即座に静止 (from) へ戻す。
-	static void release_focus(anim_binding& b)
+	// 喪失: 単発なら逆再生で静止へ、 ループ束縛は即座に静止 (from) へ戻す。
+	static void release_inout(anim_binding& b)
 	{
 		b.prog.reset();
 		if (b.looping()) {
@@ -229,6 +238,7 @@ private:
 
 	std::vector<anim_binding> _bindings;
 	std::string _focus_id;   //!< 直近 notify_focus で受け取った focused id。
+	std::string _hover_id;   //!< 直近 notify_hover で受け取った hovered id。
 	bool _all_done = false;
 };
 

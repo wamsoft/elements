@@ -431,7 +431,8 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 | `"accel"` / `"decel"` | 台形速度プロファイルの加速・減速割合 (0..1)。 指定すると easing より優先。 加速→等速→減速を別々に制御する要望仕様 |
 | `"loops"` | ループ/明滅回数 (`0`=ループ無し / `N`=N 回 / `-1`=無限)。 `"yoyo": true` で往復 (明滅 1 回 = 2 pass) |
 | `"pivot"` | 拡縮/回転の起点 `[ox,oy]` (0..1, 既定中央 `[0.5,0.5]`)。 左上起点は `[0,0]` |
-| `"on"` | 発火トリガ `enter`(既定) / `focus` / `select` / `exit`。 下表参照 |
+| `"delay"` | 発火から再生開始までの待ち (フレーム数。 ms は `"delay_ms"`)。 待機中は `from` で固定。 スタッガー/シーケンスに使う |
+| `"on"` | 発火トリガ `enter`(既定) / `focus` / `select` / `exit` / `hover` / `change`。 下表参照 |
 
 `"animate"` は配列でも書ける。 各エントリは同じ変換状態を共有するので、 **移動 + 拡縮 + 回転の同時掛け**が自然に合成される (例: スライドしながら拡大)。
 
@@ -442,9 +443,12 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 | `enter` (既定) | 画面表示時に 1 回 | 登場演出 (スライドイン / ポップ / フェードイン) |
 | `focus` | 要素が focus を得た瞬間に前進、 失った瞬間に逆再生で復帰 | カーソル移動による選択強調 / 選択・非選択の切替 |
 | `select` | 要素が決定 (button click / Enter) された瞬間に 1 回 | 押下フィードバックのポップ |
+| `hover` | 要素にマウスが乗った瞬間に前進、 外れた瞬間に逆再生で復帰 (focus と対称) | マウスオーバー強調 |
+| `change` | 要素の値が変わった瞬間に 1 回 (checkbox/toggle/slider 等) | 値変更フィードバック |
 | `exit` | 画面を閉じる操作 (Esc / B / 閉じるボタン / `close()`) の瞬間に再生し、 **完了してから実際に終了**する | 退場演出 (スライドアウト / フェードアウト) |
 
-- `focus` / `select` は要素の `"id"` に紐付き、 その id への発火だけに反応する (要素に `"id"` が必須。 plain `button` 含む focusable は自動で focus 追跡される)。
+- `focus` / `hover` / `select` / `change` は要素の `"id"` に紐付き、 その id への発火だけに反応する (要素に `"id"` が必須。 plain `button` 含む focusable は自動追跡。 `hover` は button 系のみ)。
+- **focus と hover の併用**: `"input":{"hover_focus":true}` (hover で自動 focus) を使うと hover が focus も誘発し focus トリガと多重発火しうる。 `"input":{"focus_anim":false}` で focus トリガ演出を止められる (hover 演出だけ使う運用)。
 - `focus` の `"from"` は **静止状態 (= 非選択時の見た目)** と一致させること。 発火前は `from` 側で静止し、 focus 取得で `to` へ、 喪失で `from` へ戻る。 ループ指定 (`loops≠1`) の focus 演出は喪失時に即 `from` へ戻す (逆再生しない)。
 - **exit×遷移の協調**: 終了要求 (`close()` / Esc / `close_on_click` button) があると、 exit 束縛があれば即終了せず exit 演出を再生し、 完了後に `finished()` が true になる (この間は入力を受け付けない)。 これにより退場演出を見せてから画面遷移できる。 **exit 演出は有限長にすること** (無限ループ `loops:-1` は完了しないので終了がハングする)。 exit 束縛が無ければ従来どおり即終了。
 - enter 以外のトリガはホストの自動駆動 (enter = 表示時 / focus = 変化時 / select = button click / exit = 終了要求時) のほか、 `overlay_session::play_animation(trigger, id)` で手動発火もできる。

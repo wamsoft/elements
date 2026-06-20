@@ -73,6 +73,17 @@ struct parsed_layout
 	//! 一度も呼んでない / 何も focus されてない場合は空文字列。
 	std::shared_ptr<std::string> focused_id_slot;
 
+	//! 毎フレーム呼ぶと現在 hover (マウスオーバー) されている button 系の id を
+	//! hovered_id_slot に書く poll。 hover トリガ演出の駆動にホストが使う。 null 可。
+	std::function<void()> hover_poll;
+
+	//! hover_poll が更新する「現在 hover されている id」スロット。
+	std::shared_ptr<std::string> hovered_id_slot;
+
+	//! focus トリガ演出を有効にするか (JSON "input":{"focus_anim":false} で無効化)。
+	//! hover_focus 併用時に focus と hover の多重発火を避けるための逃がし。 既定 true。
+	bool focus_anim = true;
+
 	//! i18n: 実行中の言語切替。 呼ぶと StringStore の現在言語を変え、 "text_id"
 	//! を持つ全 label に set_text が走る (= EUI Phase 2 の動的更新)。 内部で
 	//! StringStore を shared_ptr 捕捉しているので、 この closure を保持する限り

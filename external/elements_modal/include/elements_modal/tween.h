@@ -246,6 +246,10 @@ struct tween
 	int  iterations = 1;             //!< 一方向 pass の総数。 <=0 で無限ループ。
 	bool yoyo = false;               //!< 奇数 pass を to→from に逆走させる。
 
+	// --- 開始遅延 ---
+	float delay_ms = 0.0f;           //!< 発火から再生開始までの待ち (ms)。 待機中は
+	                                 //!< from で固定。 スタッガー/シーケンスに使う。
+
 	// --- 実行時状態 ---
 	float elapsed_ms = 0.0f;
 
@@ -262,17 +266,17 @@ struct tween
 	bool done() const
 	{
 		if (!finite()) return false;
-		if (duration_ms <= 0.0f) return true;
-		return elapsed_ms >= duration_ms * static_cast<float>(iterations);
+		if (duration_ms <= 0.0f) return elapsed_ms >= delay_ms;
+		return elapsed_ms >= delay_ms + duration_ms * static_cast<float>(iterations);
 	}
 
 	//! @brief 現在の補間値。
 	float value() const
 	{
-		if (duration_ms <= 0.0f) return to;     // 即時
+		if (duration_ms <= 0.0f) return (elapsed_ms < delay_ms) ? from : to;  // 即時
+		float e = elapsed_ms - delay_ms;
+		if (e <= 0.0f) return from;             // 遅延中は from で待機
 		const float total = duration_ms * static_cast<float>(iterations);
-
-		float e = elapsed_ms;
 		if (finite() && e >= total) e = total;   // 終端でクランプ
 
 		// 何 pass 目か / pass 内ローカル時間
@@ -294,8 +298,8 @@ struct tween
 		if (dt_ms <= 0.0f) return;
 		elapsed_ms += dt_ms;
 		if (finite()) {
-			const float total = duration_ms * static_cast<float>(iterations);
-			if (elapsed_ms > total) elapsed_ms = total;
+			const float full = delay_ms + duration_ms * static_cast<float>(iterations);
+			if (elapsed_ms > full) elapsed_ms = full;
 		}
 	}
 

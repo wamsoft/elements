@@ -446,6 +446,9 @@ public:
 	// "今 focus されてる id" を得る。
 	std::shared_ptr<std::string> focused_id_slot() { return _focused_id_slot; }
 
+	// hover poll が更新する「現在 hover されている id」スロット。
+	std::shared_ptr<std::string> hovered_id_slot() { return _hovered_id_slot; }
+
 	// "close_on_click": true が指定された button の id 集合。
 	std::set<std::string> take_close_button_ids() { return std::move(_close_button_ids); }
 
@@ -461,6 +464,10 @@ public:
 	// vars_on_focus を _vars に流し込み、 subscribers (label set_text) を発火。
 	// take 系メソッドなので 1 回しか呼ばない。
 	std::function<void()> take_focus_poll();
+
+	// hover poll クロージャを生成。 毎フレーム呼ぶと button 系の hilite() を見て
+	// 現在 hover されている id を _hovered_id_slot に書く。 1 回だけ呼ぶ。
+	std::function<void()> take_hover_poll();
 
 	// build 中に install する「view& を引数に取る」追加 set-up クロージャ。
 	// 主に bind_shortcut を仕掛けたい widget (tab_view など) が使う。
@@ -493,8 +500,10 @@ private:
 	std::shared_ptr<StringStore> _strings = std::make_shared<StringStore>();
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
 	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
+	std::vector<std::pair<std::string, std::function<bool()>>> _hoverables;
 	std::vector<std::function<void(cycfi::elements::view&)>> _deferred_view_cbs;
 	std::shared_ptr<std::string> _focused_id_slot = std::make_shared<std::string>();
+	std::shared_ptr<std::string> _hovered_id_slot = std::make_shared<std::string>();
 
 	// focusable build site で、 id と「現在 focus されているか」を返す
 	// closure を _focusables に積む。 typed shared_ptr を weak_ptr で保持。
@@ -506,6 +515,21 @@ private:
 		_focusables.emplace_back(id, [w]() {
 			auto p = w.lock();
 			return p && p->focused();
+		});
+		note_hoverable(id, ptr);   // hover も同時登録 (button 系のみ poll で true)
+	}
+
+	// hover 対象 (button 系 = basic_button 派生) を id と「現在 hover (hilite) 中か」を
+	// 返す closure として _hoverables に積む。 element ptr を weak で保持し、 poll 時に
+	// basic_button へ dynamic_cast して hilite() を読む (proxy も basic_button を継承)。
+	void note_hoverable(const std::string& id, const element_ptr& el)
+	{
+		if (id.empty() || !el) return;
+		std::weak_ptr<ce::element> w = el;
+		_hoverables.emplace_back(id, [w]() {
+			auto p = w.lock();
+			auto* b = dynamic_cast<ce::basic_button*>(p.get());
+			return b && b->hilite();
 		});
 	}
 
@@ -744,6 +768,12 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 			dur_ms = float(number_or(s, "duration_ms", 300.0));
 		b.prog.from = 0.0f; b.prog.to = 1.0f; b.prog.duration_ms = dur_ms;
 
+		// 開始遅延 (スタッガー/シーケンス用)。 "delay" はフレーム、 "delay_ms" は ms。
+		if (auto* dv = get_field(s, "delay"); dv && dv->is<double>())
+			b.prog.delay_ms = frames_to_ms(float(dv->get<double>()));
+		else
+			b.prog.delay_ms = float(number_or(s, "delay_ms", 0.0));
+
 		// 台形 (accel/decel) 指定があれば優先、 無ければ easing。
 		const bool has_trap = get_field(s, "accel") || get_field(s, "decel");
 		if (has_trap) {
@@ -870,6 +900,22 @@ std::function<void()> LayoutBuilder::take_focus_poll()
 		for (auto& var_kv : it->second) {
 			vars->set(var_kv.first, var_kv.second);
 		}
+	};
+}
+
+//---------------------------------------------------------------------------
+// take_hover_poll — button 系の hilite() を見て現在 hover 中の id を slot へ書く。
+//---------------------------------------------------------------------------
+std::function<void()> LayoutBuilder::take_hover_poll()
+{
+	auto hoverables      = std::move(_hoverables);
+	auto last_hovered_id = _hovered_id_slot;
+	return [hoverables, last_hovered_id]() {
+		std::string current;
+		for (auto& kv : hoverables) {
+			if (kv.second()) { current = kv.first; break; }
+		}
+		if (current != *last_hovered_id) *last_hovered_id = current;
 	};
 }
 
@@ -3095,6 +3141,15 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	result.id_map = builder.id_map();
 	result.id_types = builder.take_id_types();
 	result.focused_id_slot = builder.focused_id_slot();
+	result.hovered_id_slot = builder.hovered_id_slot();
+
+	// "input":{"focus_anim":false} で focus トリガ演出を無効化 (hover_focus 併用時の
+	// focus×hover 多重発火を避ける逃がし)。 既定 true。
+	if (auto* v = get_field(o, "input"); v && v->is<picojson::object>()) {
+		if (auto* fa = get_field(v->get<picojson::object>(), "focus_anim");
+		    fa && fa->is<bool>())
+			result.focus_anim = fa->get<bool>();
+	}
 
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /
 	// pad bindings / shortcuts を設定するクロージャを作る。
@@ -3149,6 +3204,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();
+	result.hover_poll = builder.take_hover_poll();
 	return result;
 }
 
