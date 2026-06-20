@@ -157,6 +157,11 @@ struct overlay_session::impl
 		if (external_cb) {
 			external_cb(id_s, is_button_click, payload);
 		}
+		// 決定 (select) 演出: button click を「決定」とみなして該当 id を発火。
+		// state widget の値変化 (is_button_click=false) は select 扱いしない。
+		if (is_button_click && !anim.empty()) {
+			anim.fire(anim_binding::trigger::select, id_s);
+		}
 		// "close_on_click": true な button click のみセッションを終了させる。
 		// 含まれない button click は外部 callback の発火だけで継続。
 		if (is_button_click && close_button_ids.count(id_s)) {
@@ -336,6 +341,13 @@ const std::string& overlay_session::language() const
 	return _impl->current_lang;
 }
 
+void overlay_session::play_animation(const std::string& trigger,
+                                     const std::string& id)
+{
+	if (!_impl || _impl->anim.empty()) return;
+	_impl->anim.fire(trigger_from_string(trigger), id);
+}
+
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)
 {
 	if (!_impl->view) return;
@@ -379,6 +391,12 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	// 描画前に focus poll: 変数連動 label の text を更新する。
 	if (_impl->focus_poll) _impl->focus_poll();
+
+	// focus 変化を演出へ通知 (focus 取得で前進、 喪失で復帰再生)。 focus_poll が
+	// 更新した focused_id_slot を見るので poll の後に呼ぶ。
+	if (!_impl->anim.empty() && _impl->focused_id_slot) {
+		_impl->anim.notify_focus(*_impl->focused_id_slot);
+	}
 
 	// パーツ演出を経過 ms 分進める (xform_state を書き換え → 次の draw に反映)。
 	if (!_impl->anim.empty()) {

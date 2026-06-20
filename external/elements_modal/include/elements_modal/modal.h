@@ -267,6 +267,15 @@ public:
 	//! "lang"、 それも無ければ空文字列。
 	const std::string& language() const;
 
+	//! @brief パーツ演出 ("animate") を発火トリガ名で明示再生する。
+	//! @param trigger "enter" / "focus" / "select" / "exit"。
+	//! @param id      対象要素 id。 空なら同トリガの全束縛を発火。 focus/select は
+	//!                要素 id 紐付けなので id 一致 (または束縛側 id 空) のものだけ。
+	//! enter/focus/select は通常 overlay_session が自動駆動する (画面表示・focus
+	//! 変化・button click)。 これは退場 (exit) 演出や、 ホスト独自タイミングでの
+	//! 手動発火に使う。 exit と画面遷移の協調 (再生完了を待つ等) はホスト責務。
+	void play_animation(const std::string& trigger, const std::string& id = {});
+
 	//! @brief view extent を変更 (window resize 等)。
 	void notify_view_resize(int new_view_width, int new_view_height);
 

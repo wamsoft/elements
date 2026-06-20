@@ -10,7 +10,7 @@ SDL3 を使う任意のアプリから単体で利用できる。
 - 独立 SDL_Window でモーダル表示 (`run_modal`) — 内容に合わせた window サイズで生成 + 閉じるまでブロック
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
 - 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
-- パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転 / フェードを一般イージング・台形プロファイル・ループ付きで JSON 指定 (周囲を reflow しない見た目だけの変換)
+- パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転 / フェードを一般イージング・台形プロファイル・ループ付きで JSON 指定 (周囲を reflow しない見た目だけの変換)。 発火トリガ `"on"` で登場 (enter) / focus / 決定 (select) / 退場 (exit) を出し分け
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -408,7 +408,7 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 
 ### パーツ演出 (`"animate"`) — Phase A
 
-任意の要素に `"animate"` を付けると、 その要素を **見た目だけ動かす変換**でスライド/ポップ/回転させられる (周囲のレイアウトは動かさない非 reflow オーバーレイ)。 画面表示時 (enter) に再生され、 `overlay_session` が毎フレーム駆動する。 ホストに演出コードは不要。
+任意の要素に `"animate"` を付けると、 その要素を **見た目だけ動かす変換**でスライド/ポップ/回転させられる (周囲のレイアウトは動かさない非 reflow オーバーレイ)。 既定では画面表示時 (enter) に再生され、 `overlay_session` が毎フレーム駆動する。 `"on"` で発火タイミングを focus / 決定 (select) に変えられる (下記)。 ホストに演出コードは不要。
 
 ```jsonc
 { "type": "label", "id": "title", "text": "START",
@@ -431,8 +431,22 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 | `"accel"` / `"decel"` | 台形速度プロファイルの加速・減速割合 (0..1)。 指定すると easing より優先。 加速→等速→減速を別々に制御する要望仕様 |
 | `"loops"` | ループ/明滅回数 (`0`=ループ無し / `N`=N 回 / `-1`=無限)。 `"yoyo": true` で往復 (明滅 1 回 = 2 pass) |
 | `"pivot"` | 拡縮/回転の起点 `[ox,oy]` (0..1, 既定中央 `[0.5,0.5]`)。 左上起点は `[0,0]` |
+| `"on"` | 発火トリガ `enter`(既定) / `focus` / `select` / `exit`。 下表参照 |
 
 `"animate"` は配列でも書ける。 各エントリは同じ変換状態を共有するので、 **移動 + 拡縮 + 回転の同時掛け**が自然に合成される (例: スライドしながら拡大)。
+
+#### 発火トリガ (`"on"`)
+
+| 値 | タイミング | 用途 |
+| --- | --- | --- |
+| `enter` (既定) | 画面表示時に 1 回 | 登場演出 (スライドイン / ポップ / フェードイン) |
+| `focus` | 要素が focus を得た瞬間に前進、 失った瞬間に逆再生で復帰 | カーソル移動による選択強調 / 選択・非選択の切替 |
+| `select` | 要素が決定 (button click / Enter) された瞬間に 1 回 | 押下フィードバックのポップ |
+| `exit` | 画面退場時 (ホストが `play_animation("exit")` で明示発火) | 退場演出。 遷移完了待ちなどの協調はホスト責務 |
+
+- `focus` / `select` は要素の `"id"` に紐付き、 その id への発火だけに反応する (要素に `"id"` が必須。 plain `button` 含む focusable は自動で focus 追跡される)。
+- `focus` の `"from"` は **静止状態 (= 非選択時の見た目)** と一致させること。 発火前は `from` 側で静止し、 focus 取得で `to` へ、 喪失で `from` へ戻る。 ループ指定 (`loops≠1`) の focus 演出は喪失時に即 `from` へ戻す (逆再生しない)。
+- enter 以外のトリガはホストの自動駆動 (focus 変化 = `overlay_session`、 select = button click) のほか、 `overlay_session::play_animation(trigger, id)` で手動発火できる (exit 演出やホスト独自タイミング用)。
 
 内部構成 (個別利用も可能):
 

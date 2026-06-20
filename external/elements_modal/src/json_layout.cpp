@@ -688,11 +688,16 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 //   "loops":    明滅/ループ回数 (0=ループ無し)
 //   "yoyo":     往復 (明滅 1 回 = 2 pass)
 //   "pivot":    拡縮/回転のピボット [ox,oy] (0..1, 既定中央)。 最初の指定を採用
+//   "on":       発火トリガ "enter"(既定)/"focus"/"select"/"exit"。 focus/select は
+//               要素の "id" と紐付き、 その id への発火だけ反応する (要素に id 必須)。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_ptr el)
 {
 	auto* av = get_field(o, "animate");
 	if (!av || !el) return el;
+
+	// focus/select の照合に使う対象要素 id (enter/exit では未使用)。
+	const std::string owner_id = string_or(o, "id");
 
 	std::vector<const picojson::object*> specs;
 	if (av->is<picojson::object>()) {
@@ -725,6 +730,11 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		const auto& s = *sp;
 		anim_binding b;
 		b.st = st;
+
+		// 発火トリガ。 エントリ毎の "on" を優先し、 無ければ enter。 focus/select
+		// 束縛は要素 id へ紐付け、 その id への発火だけに反応する。
+		b.trig = trigger_from_string(string_or(s, "on", "enter"));
+		b.id   = owner_id;
 
 		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
 		float dur_ms;
@@ -992,6 +1002,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	note_focusable(id, shared);   // focus 追跡 (focused_id / focus トリガ演出 用)
 	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
