@@ -442,11 +442,12 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 | `enter` (既定) | 画面表示時に 1 回 | 登場演出 (スライドイン / ポップ / フェードイン) |
 | `focus` | 要素が focus を得た瞬間に前進、 失った瞬間に逆再生で復帰 | カーソル移動による選択強調 / 選択・非選択の切替 |
 | `select` | 要素が決定 (button click / Enter) された瞬間に 1 回 | 押下フィードバックのポップ |
-| `exit` | 画面退場時 (ホストが `play_animation("exit")` で明示発火) | 退場演出。 遷移完了待ちなどの協調はホスト責務 |
+| `exit` | 画面を閉じる操作 (Esc / B / 閉じるボタン / `close()`) の瞬間に再生し、 **完了してから実際に終了**する | 退場演出 (スライドアウト / フェードアウト) |
 
 - `focus` / `select` は要素の `"id"` に紐付き、 その id への発火だけに反応する (要素に `"id"` が必須。 plain `button` 含む focusable は自動で focus 追跡される)。
 - `focus` の `"from"` は **静止状態 (= 非選択時の見た目)** と一致させること。 発火前は `from` 側で静止し、 focus 取得で `to` へ、 喪失で `from` へ戻る。 ループ指定 (`loops≠1`) の focus 演出は喪失時に即 `from` へ戻す (逆再生しない)。
-- enter 以外のトリガはホストの自動駆動 (focus 変化 = `overlay_session`、 select = button click) のほか、 `overlay_session::play_animation(trigger, id)` で手動発火できる (exit 演出やホスト独自タイミング用)。
+- **exit×遷移の協調**: 終了要求 (`close()` / Esc / `close_on_click` button) があると、 exit 束縛があれば即終了せず exit 演出を再生し、 完了後に `finished()` が true になる (この間は入力を受け付けない)。 これにより退場演出を見せてから画面遷移できる。 **exit 演出は有限長にすること** (無限ループ `loops:-1` は完了しないので終了がハングする)。 exit 束縛が無ければ従来どおり即終了。
+- enter 以外のトリガはホストの自動駆動 (enter = 表示時 / focus = 変化時 / select = button click / exit = 終了要求時) のほか、 `overlay_session::play_animation(trigger, id)` で手動発火もできる。
 
 内部構成 (個別利用も可能):
 

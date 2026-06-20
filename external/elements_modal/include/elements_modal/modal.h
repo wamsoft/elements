@@ -212,14 +212,17 @@ public:
 	           event_callback external_cb = {},
 	           const std::string& resource_base = {});
 
-	//! @brief 外部からの強制終了要求。 active() → false に。
-	//!        action は呼出側が指定 (空文字なら通常の Esc 相当)。
+	//! @brief 外部からの強制終了要求。 action は呼出側が指定 (空文字なら通常の
+	//!        Esc 相当)。 要素に exit 演出 ("on":"exit") があれば、 即終了せず
+	//!        exit 演出を再生し、 完了後に finished() が true になる (退場×遷移の
+	//!        協調)。 exit 演出が無ければ即 finished()。
 	void close(std::string action = {});
 
-	//! @brief モーダルが描画 / 入力受け取り可能な状態か。
+	//! @brief モーダルが描画 / 入力受け取り可能な状態か。 退場 (exit) 演出の
+	//!        再生中は false (入力は受け付けないが描画 render_to_buffer は継続)。
 	bool active() const;
 
-	//! @brief モーダルが終了したか (button click または close() 後)。 = !active()
+	//! @brief モーダルが終了したか。 exit 演出があれば、 その完了後に true。
 	bool finished() const;
 
 	//! @brief 結果取得。 active() = false の後に意味を持つ。

@@ -86,6 +86,11 @@ struct overlay_session::impl
 	bool started        = false;
 	bool finished_      = false;
 
+	// 退場 (exit) 演出の再生中フラグ。 finish 要求時に exit 束縛があれば、
+	// すぐ finished_ にせず exit 演出を再生し、 完了してから finished_ にする
+	// (退場×遷移の協調)。 この間は入力を受け付けない (active() が false)。
+	bool exiting_       = false;
+
 	// JSON で "close_on_click": true が付いた button の id 集合。
 	// このいずれかが click されると fire() 内で finished_=true にして
 	// 終了状態にする。 含まれない button click は外部 callback だけ発火。
@@ -165,7 +170,22 @@ struct overlay_session::impl
 		// "close_on_click": true な button click のみセッションを終了させる。
 		// 含まれない button click は外部 callback の発火だけで継続。
 		if (is_button_click && close_button_ids.count(id_s)) {
-			accumulated.action = id_s;
+			begin_finish(id_s);
+		}
+	}
+
+	// セッション終了を要求する。 exit 演出があれば即終了せず再生してから終了
+	// する (退場×遷移の協調)。 action は結果に記録され、 遷移先決定に使われる。
+	void begin_finish(std::string action)
+	{
+		if (finished_ || exiting_) return;   // 既に退場処理中
+		accumulated.action = std::move(action);
+		if (!anim.empty() && anim.count(anim_binding::trigger::exit) > 0) {
+			// exit 束縛を再生開始。 完了は render_to_buffer 側で検出して finished_ に。
+			anim.fire(anim_binding::trigger::exit);
+			exiting_ = true;
+			last_anim_ms = SDL_GetTicks();
+		} else {
 			finished_ = true;
 		}
 	}
@@ -263,13 +283,14 @@ bool overlay_session::start(const std::string& json_utf8,
 void overlay_session::close(std::string action)
 {
 	if (!_impl->started) return;
-	_impl->accumulated.action = std::move(action);
-	_impl->finished_ = true;
+	_impl->begin_finish(std::move(action));   // exit 演出があれば再生してから終了
 }
 
 bool overlay_session::active() const
 {
-	return _impl->started && !_impl->finished_;
+	// 退場演出の再生中 (exiting_) は入力を受け付けない。 描画 (render_to_buffer)
+	// は finished_ を直接見るので exit 演出中も継続する。
+	return _impl->started && !_impl->finished_ && !_impl->exiting_;
 }
 
 bool overlay_session::finished() const
@@ -405,6 +426,14 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
 		_impl->last_anim_ms = now;
 		_impl->anim.tick(dt);
+
+		// 退場演出の完了を検出して終了確定 (退場×遷移の協調)。 exit 束縛だけを
+		// 見るので、 enter の無限ループ等があっても正しく完了判定できる。
+		if (_impl->exiting_ &&
+		    !_impl->anim.active_any(anim_binding::trigger::exit)) {
+			_impl->exiting_ = false;
+			_impl->finished_ = true;
+		}
 	}
 
 	const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
@@ -521,7 +550,7 @@ bool overlay_session::on_key_down(int sdl_key, int mods)
 {
 	if (!active()) return false;
 	if (sdl_key == SDLK_ESCAPE) {
-		_impl->finished_ = true;
+		_impl->begin_finish("");   // exit 演出があれば再生してから終了
 		return true;   // Esc はダイアログが消費
 	}
 	ce::key_info ki{

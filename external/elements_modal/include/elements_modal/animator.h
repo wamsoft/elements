@@ -184,6 +184,23 @@ public:
 	//! @brief 全 active 束縛が完了したか (idle 含む。 無限ループ active なら false)。
 	bool all_done() const { return _all_done; }
 
+	//! @brief 指定トリガの束縛数。 0 ならそのトリガの演出は無い。
+	std::size_t count(trigger t) const
+	{
+		std::size_t n = 0;
+		for (auto& b : _bindings) if (b.trig == t) ++n;
+		return n;
+	}
+
+	//! @brief 指定トリガの束縛で、 まだ再生中 (active) のものがあるか。
+	//!        exit 演出の完了待ち (退場×遷移の協調) に使う。 enter の無限ループ等
+	//!        他トリガには影響されない。
+	bool active_any(trigger t) const
+	{
+		for (auto& b : _bindings) if (b.trig == t && b.active) return true;
+		return false;
+	}
+
 private:
 
 	// focus 取得: 前進再生を開始。
