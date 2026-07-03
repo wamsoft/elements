@@ -239,6 +239,12 @@ public:
 	//! 再入時に focus_by_id() で復元できる。
 	const std::string& focused_id() const;
 
+	//! @brief 現在キーボードフォーカスを持つ要素がテキスト入力を消費するか
+	//! (= 編集可能な input_box / text box が focus されているか)。 ホストは
+	//! これを毎フレーム監視して、 モバイル等のオンスクリーンキーボードを
+	//! 「テキスト欄に focus が入ったら表示 / 外れたら非表示」に駆動する。
+	bool focus_consumes_text() const;
+
 	//! @brief 指定 id の要素に focus を移す。 id が見つからなければ no-op。
 	//! 起動直後 (start() 直後 / initial_focus を上書きしたい場面) や、
 	//! ホスト主導の focus 復元に使う。

@@ -328,6 +328,12 @@ const std::string& overlay_session::focused_id() const
 	return *_impl->focused_id_slot;
 }
 
+bool overlay_session::focus_consumes_text() const
+{
+	if (!_impl || !_impl->view) return false;
+	return _impl->view->focus_wants_text_input();
+}
+
 void overlay_session::focus_by_id(const std::string& id)
 {
 	if (!_impl || !_impl->view || id.empty()) return;

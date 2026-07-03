@@ -79,6 +79,14 @@ namespace cycfi::elements
       void                    hover_focus(bool on);
       bool                    hover_focus() const;
 
+      // Returns true if the element that currently holds keyboard focus
+      // consumes text input (i.e. an editable input_box / text box is
+      // focused). Hosts use this to drive the platform on-screen keyboard:
+      // show it while a text field is focused, hide it otherwise. This is
+      // the same predicate used internally to suppress non-forced shortcuts
+      // while typing (see focus_consumes_text()).
+      bool                    focus_wants_text_input() { return focus_consumes_text(); }
+
       // Move keyboard focus to a specific element already in the view tree
       // (addressed by raw pointer). No-op if the element is not found.
       void                    focus(element& e);
