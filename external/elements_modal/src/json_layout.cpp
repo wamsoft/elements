@@ -1067,6 +1067,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);   // focus 追跡 (focused_id / focus トリガ演出 用)
+	note_vars_on_focus(o, id);    // focus 時に vars を書込む (メニュー説明欄など)
 	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
