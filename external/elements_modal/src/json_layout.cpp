@@ -152,6 +152,25 @@ double number_or(const picojson::object& o, const char* key, double dflt)
 	return dflt;
 }
 
+// bool 読み取り: JSON の true/false に加えて number の 0 / 非 0 も受け付ける。
+// 吉里吉里 TJS2 など bool 型を持たないホスト言語から辞書を JSON 化して渡すと
+// true が 1 (number) で届くため、 bool フィールドは数値も真偽値として扱う。
+// v が bool / number 以外 (null, string, ...) なら false を返し out は不変。
+bool bool_field(const picojson::value* v, bool& out)
+{
+	if (!v) return false;
+	if (v->is<bool>()) { out = v->get<bool>(); return true; }
+	if (v->is<double>()) { out = v->get<double>() != 0.0; return true; }
+	return false;
+}
+
+// フィールドが存在して truthy なら true を返すショートカット。
+bool truthy_field(const picojson::value* v)
+{
+	bool b = false;
+	return bool_field(v, b) && b;
+}
+
 const picojson::array* get_array(const picojson::object& o, const char* key)
 {
 	if (auto* v = get_field(o, key); v && v->is<picojson::array>()) {
@@ -787,7 +806,7 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		// ループ/往復。 loops<0 → 無限、 0 → 1 pass、 N → N (yoyo なら 1 明滅=2pass)。
 		const int loops = static_cast<int>(number_or(s, "loops", 0.0));
 		bool yoyo = false;
-		if (auto* yv = get_field(s, "yoyo"); yv && yv->is<bool>()) yoyo = yv->get<bool>();
+		bool_field(get_field(s, "yoyo"), yoyo);
 		b.prog.yoyo = yoyo;
 		b.prog.iterations = (loops < 0)  ? 0          // 無限
 		                  : (loops == 0) ? 1          // 1 回
@@ -858,8 +877,7 @@ void LayoutBuilder::note_initial_focus(const picojson::object& o,
                                        const element_ptr& shared)
 {
 	if (_initial_focus) return;   // 先勝ち
-	auto* v = get_field(o, "initial_focus");
-	if (v && v->is<bool>() && v->get<bool>()) {
+	if (truthy_field(get_field(o, "initial_focus"))) {
 		_initial_focus = shared;
 	}
 }
@@ -1053,8 +1071,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
 	if (!id.empty()) {
-		auto* v = get_field(o, "close_on_click");
-		if (v && v->is<bool>() && v->get<bool>()) {
+		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
 		}
 	}
@@ -1187,7 +1204,7 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "value"); v && v->is<bool>()) init = v->get<bool>();
+	bool_field(get_field(o, "value"), init);
 
 	auto cb = ce::check_box(text);
 	cb.value(init);
@@ -1209,7 +1226,7 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "value"); v && v->is<bool>()) init = v->get<bool>();
+	bool_field(get_field(o, "value"), init);
 
 	auto tb = ce::toggle_button(text);
 	tb.value(init);
@@ -1230,7 +1247,7 @@ element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
 {
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "value"); v && v->is<bool>()) init = v->get<bool>();
+	bool_field(get_field(o, "value"), init);
 
 	auto sw = ce::slide_switch();
 	sw.value(init);
@@ -1464,8 +1481,7 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	}
 	note_vars_on_focus(o, id);
 	if (!id.empty()) {
-		auto* v = get_field(o, "close_on_click");
-		if (v && v->is<bool>() && v->get<bool>()) {
+		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
 		}
 	}
@@ -1497,8 +1513,7 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	}
 	note_vars_on_focus(o, id);
 	if (!id.empty()) {
-		auto* v = get_field(o, "close_on_click");
-		if (v && v->is<bool>() && v->get<bool>()) {
+		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
 		}
 	}
@@ -1613,9 +1628,7 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 		return nullptr;
 	}
 	bool use_font = false;
-	if (auto* v = get_field(o, "use_font"); v && v->is<bool>()) {
-		use_font = v->get<bool>();
-	}
+	bool_field(get_field(o, "use_font"), use_font);
 
 	// "color": [r,g,b,a] (任意) — font mode のみ反映。 既定は白。 SVG mode
 	// では現状無視 (Kenney 元 SVG の色がそのまま出る)。 SVG への tint は
@@ -1635,16 +1648,12 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	}
 	float h = static_cast<float>(number_or(o, "height", 48.0));
 	bool colored = false;
-	if (auto* v = get_field(o, "colored"); v && v->is<bool>()) {
-		colored = v->get<bool>();
-	}
+	bool_field(get_field(o, "colored"), colored);
 	// "outline": true で *_outline.svg バリアントを優先して試す。 colored と
 	// 併用すると _color_xxx_outline.svg → _color_xxx.svg → xxx_outline.svg →
 	// xxx.svg の順でフォールバック。
 	bool outline = false;
-	if (auto* v = get_field(o, "outline"); v && v->is<bool>()) {
-		outline = v->get<bool>();
-	}
+	bool_field(get_field(o, "outline"), outline);
 	if (has_color) {
 		// SVG mode は現状 tint 不可。 指定があれば一度だけ警告。
 		SDL_Log("elements_modal: pad_icon \"%s\" — \"color\" は SVG mode "
@@ -1727,8 +1736,7 @@ element_ptr LayoutBuilder::build_sprite_button(const picojson::object& o)
 		}
 		note_vars_on_focus(o, id);
 		if (!id.empty()) {
-			auto* v = get_field(o, "close_on_click");
-			if (v && v->is<bool>() && v->get<bool>()) {
+			if (truthy_field(get_field(o, "close_on_click"))) {
 				_close_button_ids.insert(id);
 			}
 		}
@@ -2066,8 +2074,8 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	ce::rect src = parse_xywh(*arr);
 
 	bool stretch_h = false, stretch_v = false;
-	if (auto* v = get_field(o, "stretch_h"); v && v->is<bool>()) stretch_h = v->get<bool>();
-	if (auto* v = get_field(o, "stretch_v"); v && v->is<bool>()) stretch_v = v->get<bool>();
+	bool_field(get_field(o, "stretch_h"), stretch_h);
+	bool_field(get_field(o, "stretch_v"), stretch_v);
 
 	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
 }
@@ -2288,8 +2296,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 	}
 	note_vars_on_focus(o, id);
 	if (!id.empty()) {
-		auto* v = get_field(o, "close_on_click");
-		if (v && v->is<bool>() && v->get<bool>()) {
+		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
 		}
 	}
@@ -2335,8 +2342,8 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "initial"); v && v->is<bool>()) init = v->get<bool>();
-	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+	if (!bool_field(get_field(o, "initial"), init))
+		bool_field(get_field(o, "value"), init);
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames));
 	auto tb = ce::toggle_button(std::move(sprite));
@@ -2409,8 +2416,8 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "selected"); v && v->is<bool>()) init = v->get<bool>();
-	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+	if (!bool_field(get_field(o, "selected"), init))
+		bool_field(get_field(o, "value"), init);
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames));
 	// latching_button<basic_choice>(sprite) → proxy<sprite, sprite_button_styler<basic_choice>>
@@ -2466,7 +2473,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	ce::rect thumb_src = parse_xywh(*th);
 
 	bool vertical = false;
-	if (auto* v = get_field(o, "vertical"); v && v->is<bool>()) vertical = v->get<bool>();
+	bool_field(get_field(o, "vertical"), vertical);
 
 	double initial = number_or(o, "initial", 0.5);
 	if (initial < 0.0) initial = 0.0;
@@ -2535,7 +2542,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 	ce::rect fill_src  = parse_xywh(*fl);
 
 	bool vertical = false;
-	if (auto* v = get_field(o, "vertical"); v && v->is<bool>()) vertical = v->get<bool>();
+	bool_field(get_field(o, "vertical"), vertical);
 
 	double init = number_or(o, "value", 0.0);
 
@@ -2588,8 +2595,8 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
 	bool init = false;
-	if (auto* v = get_field(o, "selected"); v && v->is<bool>()) init = v->get<bool>();
-	else if (auto* v2 = get_field(o, "value"); v2 && v2->is<bool>()) init = v2->get<bool>();
+	if (!bool_field(get_field(o, "selected"), init))
+		bool_field(get_field(o, "value"), init);
 
 	// lib 側の `radio_button(std::string)` は `choice(radio_button_styler{text})`
 	// を返す = proxy<radio_button_styler, basic_choice>。
@@ -2859,13 +2866,13 @@ std::function<void(ce::view&)> build_input_applier(
 	};
 	auto cfg = std::make_shared<settings>();
 
-	if (auto* v = get_field(input_obj, "arrow_focus_nav"); v && v->is<bool>()) {
+	if (bool b = false; bool_field(get_field(input_obj, "arrow_focus_nav"), b)) {
 		cfg->arrow_nav_set = true;
-		cfg->arrow_nav = v->get<bool>();
+		cfg->arrow_nav = b;
 	}
-	if (auto* v = get_field(input_obj, "hover_focus"); v && v->is<bool>()) {
+	if (bool b = false; bool_field(get_field(input_obj, "hover_focus"), b)) {
 		cfg->hover_focus_set = true;
-		cfg->hover_focus = v->get<bool>();
+		cfg->hover_focus = b;
 	}
 	if (auto* v = get_field(input_obj, "dpad_mode"); v && v->is<std::string>()) {
 		cfg->dpad_set = true;
@@ -2921,9 +2928,7 @@ std::function<void(ce::view&)> build_input_applier(
 			auto target = string_or(so, "target");
 			if (target.empty()) continue;
 			bool force = false;
-			if (auto* fv = get_field(so, "force"); fv && fv->is<bool>()) {
-				force = fv->get<bool>();
-			}
+			bool_field(get_field(so, "force"), force);
 			int mods = 0;
 			if (auto* ma = get_array(so, "mods")) mods = parse_modifiers(*ma);
 
@@ -3146,9 +3151,8 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// "input":{"focus_anim":false} で focus トリガ演出を無効化 (hover_focus 併用時の
 	// focus×hover 多重発火を避ける逃がし)。 既定 true。
 	if (auto* v = get_field(o, "input"); v && v->is<picojson::object>()) {
-		if (auto* fa = get_field(v->get<picojson::object>(), "focus_anim");
-		    fa && fa->is<bool>())
-			result.focus_anim = fa->get<bool>();
+		bool_field(get_field(v->get<picojson::object>(), "focus_anim"),
+		           result.focus_anim);
 	}
 
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /

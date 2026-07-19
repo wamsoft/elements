@@ -6,7 +6,10 @@ SDL3 を使う任意のアプリから単体で利用できる。
 
 ## 特徴
 
-- JSON / JSONC (行コメント・ブロックコメント・末尾カンマ) でレイアウト定義
+- JSON / JSONC (行コメント・ブロックコメント・末尾カンマ) でレイアウト定義。
+  bool フィールドは `true` / `false` に加えて **number の 0 / 非 0 も真偽値として受け付ける**
+  (吉里吉里 TJS2 など bool 型のないホスト言語が辞書を JSON 化して渡すケース向け。
+  `json_layout.cpp` の `bool_field` / `truthy_field`)
 - 独立 SDL_Window でモーダル表示 (`run_modal`) — 内容に合わせた window サイズで生成 + 閉じるまでブロック
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
 - 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
