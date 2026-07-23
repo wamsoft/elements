@@ -3216,6 +3216,13 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		strings->set_language(lang);
 	};
 
+	// ホスト主導の変数書込 closure。 VariableStore を shared_ptr 捕捉するので
+	// set_language と同じく closure 保持中は store + subscribers が生存する。
+	result.set_var = [vars = builder.vars()](const std::string& name,
+	                                         const std::string& value) {
+		vars->set(name, value);
+	};
+
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();
 	result.hover_poll = builder.take_hover_poll();

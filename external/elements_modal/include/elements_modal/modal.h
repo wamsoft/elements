@@ -276,6 +276,13 @@ public:
 	//! "lang"、 それも無ければ空文字列。
 	const std::string& language() const;
 
+	//! @brief 変数 store への書込 (text_var label の動的更新)。
+	//! JSON で "text_var": name を指定した label が subscribe している変数を
+	//! ホスト側から書き換える。 値が変わった label は次フレームの
+	//! render_to_buffer で再描画される。 未知の変数名は store に追加される
+	//! だけで無害 (subscriber なし)。 vars_on_focus と同じ store を共有する。
+	void set_var(const std::string& name, const std::string& value);
+
 	//! @brief パーツ演出 ("animate") を発火トリガ名で明示再生する。
 	//! @param trigger "enter" / "focus" / "select" / "exit"。
 	//! @param id      対象要素 id。 空なら同トリガの全束縛を発火。 focus/select は

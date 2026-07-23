@@ -309,6 +309,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 - 値型は string のみ (将来拡張余地あり)。
 - 同じ変数に複数 label が subscribe してもよい。
 - `vars_on_focus` は dict なので 1 widget で複数変数を一度に書ける。
+- ホストからも `overlay_session::set_var(name, value)` で書ける (focus poll 以外の書き手。 ソフトウェアキーボードの入力文字列表示のような「ホスト状態 → label」の動的反映に使う)。 反映は次フレームの `render_to_buffer`。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
 
 ### 画面遷移 (`transitions` + マニフェスト)

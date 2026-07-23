@@ -151,6 +151,9 @@ struct overlay_session::impl
 	// "strings" 未定義でも parsed_layout から非 null で渡る (no-op)。
 	std::function<void(const std::string&)> set_language_fn;
 
+	// 変数書込 closure (VariableStore を捕捉)。 set_var() から呼ぶ。
+	std::function<void(const std::string&, const std::string&)> set_var_fn;
+
 	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
 	std::string current_lang;
 
@@ -266,6 +269,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->focused_id_slot = layout.focused_id_slot;
 	_impl->set_language_fn = std::move(layout.set_language);
 	_impl->current_lang = std::move(layout.lang);
+	_impl->set_var_fn = std::move(layout.set_var);
 
 	// パーツ演出束縛を animator に積み、 初期値 (進捗 0) を適用してから開始。
 	for (auto& b : layout.animations) _impl->anim.add(std::move(b));
@@ -378,6 +382,13 @@ const std::string& overlay_session::language() const
 	static const std::string empty;
 	if (!_impl) return empty;
 	return _impl->current_lang;
+}
+
+void overlay_session::set_var(const std::string& name, const std::string& value)
+{
+	if (!_impl) return;
+	if (_impl->set_var_fn) _impl->set_var_fn(name, value);
+	// set_text 済の label は次回 render_to_buffer (view->draw) で再描画される。
 }
 
 void overlay_session::play_animation(const std::string& trigger,
