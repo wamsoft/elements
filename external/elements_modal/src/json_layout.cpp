@@ -1019,6 +1019,9 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			        text_id.c_str(), text_var.c_str());
 		}
 	}
+	// "id" があれば id→element に登録し、 ホストから label を参照可能にする
+	// (label は focus 対象ではないので note_initial_focus は不要)。
+	register_id(o, out);
 	return out;
 }
 
@@ -1123,7 +1126,9 @@ element_ptr LayoutBuilder::build_box(const picojson::object& o)
 {
 	ce::color c = ce::rgba(0, 0, 0, 255);
 	if (auto* arr = get_array(o, "color")) c = parse_color(*arr);
-	return ce::share(ce::box(c));
+	auto out = ce::share(ce::box(c));
+	register_id(o, out);   // "id" 指定でホストから参照可能に
+	return out;
 }
 
 element_ptr LayoutBuilder::build_layer(const picojson::object& o)
@@ -1645,7 +1650,9 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 		// pad_font_icon の size は内部で label.relative_font_size を呼ぶので
 		// scale を渡す。 JSON 側の "size" px をテーマ base で割って変換。
 		float size = resolve_font_scale(o, "size", "size_scale");
-		return ce::pad_font_icon(name, size, tint);
+		auto out = ce::pad_font_icon(name, size, tint);
+		register_id(o, out);
+		return out;
 	}
 	float h = static_cast<float>(number_or(o, "height", 48.0));
 	bool colored = false;
@@ -1661,7 +1668,9 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 		        "では現状無視されます (use_font: true でのみ反映)",
 		        name.c_str());
 	}
-	return ce::share(ce::pad_icon(name, h, colored, outline));
+	auto out = ce::share(ce::pad_icon(name, h, colored, outline));
+	register_id(o, out);   // "id" 指定でホストから参照可能に
+	return out;
 }
 
 //---------------------------------------------------------------------------
