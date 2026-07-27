@@ -63,6 +63,11 @@ namespace cycfi::elements
             {"dpad_down",  "xbox_dpad_down"},
             {"dpad_left",  "xbox_dpad_left"},
             {"dpad_right", "xbox_dpad_right"},
+            // dpad 本体 (方向キーまとまり)
+            {"dpad",            "xbox_dpad"},
+            {"dpad_all",        "xbox_dpad_all"},
+            {"dpad_horizontal", "xbox_dpad_horizontal"},
+            {"dpad_vertical",   "xbox_dpad_vertical"},
             {"up",    "xbox_dpad_up"},    {"down",  "xbox_dpad_down"},
             {"left",  "xbox_dpad_left"},  {"right", "xbox_dpad_right"},
             // shoulders / triggers
@@ -103,6 +108,11 @@ namespace cycfi::elements
             {"dpad_down",  "playstation_dpad_down"},
             {"dpad_left",  "playstation_dpad_left"},
             {"dpad_right", "playstation_dpad_right"},
+            // dpad 本体 (方向キーまとまり)
+            {"dpad",            "playstation_dpad"},
+            {"dpad_all",        "playstation_dpad_all"},
+            {"dpad_horizontal", "playstation_dpad_horizontal"},
+            {"dpad_vertical",   "playstation_dpad_vertical"},
             {"up",    "playstation_dpad_up"},    {"down",  "playstation_dpad_down"},
             {"left",  "playstation_dpad_left"},  {"right", "playstation_dpad_right"},
             // shoulders / triggers
@@ -145,6 +155,11 @@ namespace cycfi::elements
             {"dpad_down",  "switch_dpad_down"},
             {"dpad_left",  "switch_dpad_left"},
             {"dpad_right", "switch_dpad_right"},
+            // dpad 本体 (方向キーまとまり)
+            {"dpad",            "switch_dpad"},
+            {"dpad_all",        "switch_dpad_all"},
+            {"dpad_horizontal", "switch_dpad_horizontal"},
+            {"dpad_vertical",   "switch_dpad_vertical"},
             {"up",    "switch_dpad_up"},    {"down",  "switch_dpad_down"},
             {"left",  "switch_dpad_left"},  {"right", "switch_dpad_right"},
             // shoulders / triggers — Switch uses L/R + ZL/ZR
@@ -183,6 +198,11 @@ namespace cycfi::elements
             {"dpad_down",  "keyboard_arrow_down"},
             {"dpad_left",  "keyboard_arrow_left"},
             {"dpad_right", "keyboard_arrow_right"},
+            // dpad 本体 -> 矢印キーのまとまり
+            {"dpad",            "keyboard_arrows"},
+            {"dpad_all",        "keyboard_arrows_all"},
+            {"dpad_horizontal", "keyboard_arrows_horizontal"},
+            {"dpad_vertical",   "keyboard_arrows_vertical"},
             {"up",    "keyboard_arrow_up"},    {"down",  "keyboard_arrow_down"},
             {"left",  "keyboard_arrow_left"},  {"right", "keyboard_arrow_right"},
             {"start",  "keyboard_enter"},
