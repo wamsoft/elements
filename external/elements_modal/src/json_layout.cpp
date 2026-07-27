@@ -375,6 +375,8 @@ public:
 			std::string v = resolve(kv.first);
 			for (auto& cb : kv.second) cb(v);
 		}
+		// text_id に紐づかない一般の言語変更 subscriber (locale_variant 等) を発火。
+		for (auto& cb : _lang_subs) cb(_lang);
 	}
 
 	const std::string& language() const { return _lang; }
@@ -402,10 +404,18 @@ public:
 		_subs[id].push_back(std::move(cb));
 	}
 
+	// text_id に依らず「言語が変わったら呼ぶ」subscriber (locale_variant のデッキ
+	// 切替など)。 set_language() のたびに新言語で発火する。
+	void subscribe_language(std::function<void(const std::string&)> cb)
+	{
+		_lang_subs.push_back(std::move(cb));
+	}
+
 private:
 	std::map<std::string, std::map<std::string, std::string>> _table; // id -> {lang: str}
 	std::string _lang;
 	std::map<std::string, std::vector<std::function<void(const std::string&)>>> _subs;
+	std::vector<std::function<void(const std::string&)>> _lang_subs;
 };
 
 //---------------------------------------------------------------------------
@@ -607,6 +617,7 @@ private:
 	element_ptr build_gizmo_image (const picojson::object& o);
 	element_ptr build_floating    (const picojson::object& o);
 	element_ptr build_canvas      (const picojson::object& o);
+	element_ptr build_locale_variant(const picojson::object& o);
 	element_ptr build_atlas_image (const picojson::object& o);
 	element_ptr build_atlas_button(const picojson::object& o);
 	element_ptr build_atlas_toggle(const picojson::object& o);
@@ -700,6 +711,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "gizmo_image")   return build_gizmo_image(o);
 	if (type == "floating")      return build_floating(o);
 	if (type == "canvas")        return build_canvas(o);
+	if (type == "locale_variant") return build_locale_variant(o);
 	if (type == "atlas_image")    return build_atlas_image(o);
 	if (type == "atlas_button")   return build_atlas_button(o);
 	if (type == "atlas_toggle")   return build_atlas_toggle(o);
@@ -1140,6 +1152,51 @@ element_ptr LayoutBuilder::build_layer(const picojson::object& o)
 		ly.push_back(*it);
 	}
 	return ce::share(std::move(ly));
+}
+
+element_ptr LayoutBuilder::build_locale_variant(const picojson::object& o)
+{
+	// 言語別バリアント: 現在言語に一致する子だけ表示するデッキ。 JSON:
+	//   { "type":"locale_variant", "at":[..], "default":"en",
+	//     "children":[ { "lang":"jp", <widget> }, { "lang":"en", <widget> } ] }
+	// 各 child は "lang" 付きの通常 widget オブジェクト (lang は widget 側では
+	// 無視される)。 language が変わると StringStore::subscribe_language 経由で
+	// deck の select() を切り替える。 全 child は deck の同一 box を占める。
+	auto deck = std::make_shared<ce::deck_composite>();
+	auto langs = std::make_shared<std::vector<std::string>>();
+	if (auto* arr = get_array(o, "children")) {
+		for (const auto& cv : *arr) {
+			if (!cv.is<picojson::object>()) continue;
+			auto child = build(cv);
+			if (!child) continue;
+			deck->push_back(child);
+			langs->push_back(string_or(cv.get<picojson::object>(), "lang"));
+		}
+	}
+	if (deck->empty())
+		return ce::share(ce::layer_composite{});   // バリアント無し = 何も描かない
+
+	std::string def = string_or(o, "default");
+	// 現在言語 -> 表示 index。 一致優先 / 無ければ default / それも無ければ 0。
+	auto pick = [langs, def](const std::string& cur) -> std::size_t {
+		for (std::size_t i = 0; i < langs->size(); ++i)
+			if ((*langs)[i] == cur) return i;
+		if (!def.empty())
+			for (std::size_t i = 0; i < langs->size(); ++i)
+				if ((*langs)[i] == def) return i;
+		return 0;
+	};
+	deck->select(pick(_strings->language()));
+
+	// 言語変更で表示子を切替 (host が毎フレーム再描画するので refresh 不要)。
+	std::weak_ptr<ce::deck_composite> wdeck = deck;
+	_strings->subscribe_language([wdeck, pick](const std::string& lang) {
+		if (auto d = wdeck.lock()) d->select(pick(lang));
+	});
+
+	element_ptr out = deck;
+	register_id(o, out);
+	return out;
 }
 
 element_ptr LayoutBuilder::build_align(const picojson::object& o, const std::string& kind)
