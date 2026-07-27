@@ -2346,7 +2346,8 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 
 	std::string id = string_or(o, "id");
 
-	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	auto sprite = ce::atlas_sprite(pm, std::move(frames),
+	                               truthy_field(get_field(o, "native_frames")));
 	auto btn = ce::momentary_button(std::move(sprite));
 	if (!id.empty()) {
 		auto cb_id = id;
@@ -2412,7 +2413,8 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	if (!bool_field(get_field(o, "initial"), init))
 		bool_field(get_field(o, "value"), init);
 
-	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	auto sprite = ce::atlas_sprite(pm, std::move(frames),
+	                               truthy_field(get_field(o, "native_frames")));
 	auto tb = ce::toggle_button(std::move(sprite));
 	tb.value(init);
 	if (!id.empty()) {
@@ -2486,7 +2488,8 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	if (!bool_field(get_field(o, "selected"), init))
 		bool_field(get_field(o, "value"), init);
 
-	auto sprite = ce::atlas_sprite(pm, std::move(frames));
+	auto sprite = ce::atlas_sprite(pm, std::move(frames),
+	                               truthy_field(get_field(o, "native_frames")));
 	// latching_button<basic_choice>(sprite) → proxy<sprite, sprite_button_styler<basic_choice>>
 	// 排他は basic_choice::activate/click の find_composite + 兄弟スキャン
 	// による (atlas_choice 群を同じ composite=canvas layer に並べる前提)。

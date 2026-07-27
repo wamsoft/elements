@@ -42,25 +42,40 @@ namespace cycfi::elements
    //---------------------------------------------------------------------
    // atlas_sprite
    //---------------------------------------------------------------------
-   atlas_sprite::atlas_sprite(pixmap_ptr atlas, std::vector<rect> frames)
+   atlas_sprite::atlas_sprite(pixmap_ptr atlas, std::vector<rect> frames, bool native)
     : basic_sprite(std::move(atlas))
     , _frames(std::move(frames))
+    , _native(native)
    {
       if (_frames.empty())
          throw std::runtime_error{
             "atlas_sprite requires at least one frame"};
    }
 
+   point atlas_sprite::max_extent() const
+   {
+      float w = 0, h = 0;
+      for (auto const& f : _frames)
+      {
+         w = std::max<float>(w, f.width());
+         h = std::max<float>(h, f.height());
+      }
+      return {w, h};
+   }
+
    view_limits atlas_sprite::limits(basic_context const& /*ctx*/) const
    {
-      // 全 frame で同寸法を前提。 frame 0 を採用。
-      auto const& f0 = _frames[0];
-      point sz{f0.width(), f0.height()};
+      // 既定は frame 0 (全 frame 同寸法前提)。 native モードでは frame 間で寸法が
+      // 違うので、 最大の frame に合わせて box を確保する (小さい frame は中央)。
+      point sz = _native ? max_extent()
+                         : point{_frames[0].width(), _frames[0].height()};
       return {sz, sz};
    }
 
    point atlas_sprite::size() const
    {
+      if (_native)
+         return max_extent();
       auto const& f = _frames[_index];
       return {f.width(), f.height()};
    }
@@ -68,6 +83,19 @@ namespace cycfi::elements
    rect atlas_sprite::source_rect(context const& /*ctx*/) const
    {
       return _frames[_index];
+   }
+
+   void atlas_sprite::draw(context const& ctx)
+   {
+      if (!_native)
+      {
+         image::draw(ctx);   // 従来: 現 frame を bounds へ伸縮
+         return;
+      }
+      // native: 現 frame を実寸のまま bounds 中央へ (伸縮しない)。
+      auto src = source_rect(ctx);
+      rect dest{0, 0, src.width(), src.height()};
+      ctx.canvas.draw(pixmap(), src, center(dest, ctx.bounds));
    }
 
    void atlas_sprite::index(std::size_t i)

@@ -68,11 +68,15 @@ namespace cycfi::elements
    {
    public:
                               atlas_sprite(pixmap_ptr atlas,
-                                           std::vector<rect> frames);
+                                           std::vector<rect> frames,
+                                           bool native = false);
 
       view_limits             limits(basic_context const& ctx) const override;
       point                   size() const override;
       rect                    source_rect(context const& ctx) const override;
+      // native モード時は各 frame を実寸のまま bounds 中央に描く (frame 間で
+      // サイズが違っても伸縮しない)。 既定 (false) は従来どおり bounds へ伸縮。
+      void                    draw(context const& ctx) override;
 
       std::size_t             num_frames() const override { return _frames.size(); }
       std::size_t             index() const override      { return _index; }
@@ -80,7 +84,10 @@ namespace cycfi::elements
 
    private:
 
+      point                   max_extent() const;
+
       std::vector<rect>       _frames;
+      bool                    _native = false;
    };
 
    ////////////////////////////////////////////////////////////////////////////
