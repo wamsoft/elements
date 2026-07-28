@@ -12,6 +12,7 @@ include(FetchContent)
 # Sources (and Resources)
 
 set(ELEMENTS_SOURCES
+   src/element/anchored_text.cpp
    src/element/arrow_button.cpp
    src/element/atlas.cpp
    src/element/button.cpp

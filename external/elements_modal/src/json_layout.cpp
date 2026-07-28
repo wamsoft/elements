@@ -9,6 +9,7 @@
 
 #include <SDL3/SDL.h>
 #include <picojson/picojson.h>
+#include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 
 #include <cctype>
 #include <cstring>
@@ -983,13 +984,32 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		col = parse_color(*arr);
 	}
 
+	element_ptr out;
+
+	// "text_anchor": [ax, ay] があれば、 絶対 baseline アンカーで描く anchored_text
+	// を使う (PSD 由来のテキスト位置忠実化 / C6)。 ax,ay は自身の bounds 左上からの
+	// baseline 起点。 "text_align" (left/center/right) は ax を左端/中央/右端どちらの
+	// 基準にするか。 "font" はフォントファミリ (空なら theme 既定)。
+	if (auto* anc = get_array(o, "text_anchor"); anc && anc->size() >= 2) {
+		float ax = static_cast<float>(anc->at(0).get<double>());
+		float ay = static_cast<float>(anc->at(1).get<double>());
+		int halign = ce::canvas::left;
+		std::string ta = string_or(o, "text_align");
+		if (ta == "center")     halign = ce::canvas::center;
+		else if (ta == "right") halign = ce::canvas::right;
+		float a_sz = has_size ? sz : ce::get_theme().label_font._size;
+		ce::color a_col = has_color ? col : ce::get_theme().label_font_color;
+		std::string family = string_or(o, "font");
+		out = ce::make_anchored_text(text, family, a_sz, a_col, halign,
+		                             ce::point{ax, ay}, locale);
+	} else {
+
 	// label builder API は font_color / relative_font_size を呼ぶごとに
 	// ラッパ型が変わるチェーン。 直接代入で繋げないので分岐する。
 	// locale は文字列空なら付けない (default_locale 含む)。
 	// 三項演算子 ?: は両 branch の shared_ptr 型が違うとマッチ失敗するので
 	// if/else で element_ptr 代入する。
 	auto base = ce::label(text);
-	element_ptr out;
 	if (has_color && has_size) {
 		auto e = base.font_color(col).font_size(sz);
 		if (locale.empty()) out = ce::share(std::move(e));
@@ -1006,6 +1026,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		if (locale.empty()) out = ce::share(std::move(base));
 		else                out = ce::share(base.locale(std::move(locale)));
 	}
+	}   // text_anchor else
 
 	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
 	// label を set_text する subscriber を仕掛ける。 label は
@@ -2236,6 +2257,33 @@ namespace
 		if (auto* arr = get_array(o, "text_color")) {
 			col = parse_color(*arr);
 			has_color = true;
+		}
+
+		// C6: "text_anchor" があればキャプションを絶対 baseline アンカーで描く
+		// (anchored_text)。 label_decoration が overlay に button の bounds を渡すため、
+		// anchor は button の左上基準の baseline 起点になる。 align_center_middle は
+		// 使わない (中央寄せではなく PSD 位置)。
+		if (auto* anc = get_array(o, "text_anchor"); anc && anc->size() >= 2) {
+			float ax = static_cast<float>(anc->at(0).get<double>());
+			float ay = static_cast<float>(anc->at(1).get<double>());
+			int halign = ce::canvas::left;
+			std::string ta = string_or(o, "text_align");
+			if (ta == "center")     halign = ce::canvas::center;
+			else if (ta == "right") halign = ce::canvas::right;
+			float a_sz = sz > 0.0f ? sz : ce::get_theme().label_font._size;
+			ce::color a_col = has_color ? col : ce::get_theme().label_font_color;
+			std::string family = string_or(o, "font");
+			auto at_elem = ce::make_anchored_text(text, family, a_sz, a_col, halign,
+			                                      ce::point{ax, ay}, locale);
+			if (!text_id.empty() && strings) {
+				if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(at_elem)) {
+					std::weak_ptr<ce::text_writer> w = sp;
+					strings->subscribe(text_id, [w](const std::string& v) {
+						if (auto p = w.lock()) p->set_text(v);
+					});
+				}
+			}
+			return at_elem;
 		}
 
 		auto base = ce::label(text);
