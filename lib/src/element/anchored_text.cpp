@@ -15,7 +15,7 @@ namespace cycfi::elements
 {
    anchored_text::anchored_text(
       std::string text, std::string family, float size, color col,
-      int halign, point anchor, int tracking, std::string locale)
+      int halign, point anchor, int tracking, float leading, std::string locale)
     : _text(std::move(text))
     , _weight(font_constants::weight_normal)
     , _slant(font_constants::slant_normal)
@@ -25,6 +25,7 @@ namespace cycfi::elements
     , _halign(halign)
     , _anchor(anchor)
     , _tracking(tracking)
+    , _leading(leading)
     , _locale(std::move(locale))
    {
       // PSD 由来のフォント名 ("NotoSansJP-Medium" 等) を human family + weight/slant
@@ -89,7 +90,21 @@ namespace cycfi::elements
 
       // 水平 align のみ渡す (垂直ビット無し) → tvg backend の既定 = baseline。
       cnv.text_align(_halign & 0x3);
-      point p{ctx.bounds.left + _anchor.x, ctx.bounds.top + _anchor.y};
-      cnv.fill_text(_text, p);
+      float bx = ctx.bounds.left + _anchor.x;
+      float by = ctx.bounds.top + _anchor.y;
+      // 改行で分割し、 各行を baseline + i*leading に描く。 leading 未指定は ~1.2em。
+      float lead = _leading > 0.0f ? _leading : _size * 1.2f;
+      std::size_t start = 0;
+      int line = 0;
+      for (std::size_t i = 0; i <= _text.size(); ++i)
+      {
+         if (i == _text.size() || _text[i] == '\n')
+         {
+            cnv.fill_text(_text.substr(start, i - start),
+                          point{bx, by + line * lead});
+            start = i + 1;
+            ++line;
+         }
+      }
    }
 }
