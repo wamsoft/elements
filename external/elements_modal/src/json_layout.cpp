@@ -1005,6 +1005,38 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		bool wrap = truthy_field(get_field(o, "wrap"));
 		out = ce::make_anchored_text(text, family, a_sz, a_col, halign,
 		                             ce::point{ax, ay}, tracking, leading, wrap, locale);
+		// "runs" (run 別書式) があれば anchored_text に設定 (rich text)。 段落別
+		// アラインは "para_align" (left/right/center の配列)。
+		if (auto* rarr = get_array(o, "runs"); rarr && !rarr->empty()) {
+			if (auto* at = dynamic_cast<ce::anchored_text*>(out.get())) {
+				std::vector<ce::text_run> truns;
+				for (auto& rv : *rarr) {
+					if (!rv.is<picojson::object>()) continue;
+					const auto& ro = rv.get<picojson::object>();
+					ce::text_run tr;
+					tr.text = string_or(ro, "t");
+					tr.size = static_cast<float>(number_or(ro, "size", a_sz));
+					if (auto* ca = get_array(ro, "color")) tr.col = parse_color(*ca);
+					else tr.col = a_col;
+					auto rf = ce::resolve_font_name(string_or(ro, "font"));
+					tr.family = rf.ok ? rf.family : std::string{};
+					tr.weight = rf.weight;
+					tr.slant  = rf.slant;
+					truns.push_back(std::move(tr));
+				}
+				at->set_runs(std::move(truns));
+				if (auto* pa = get_array(o, "para_align")) {
+					std::vector<int> pal;
+					for (auto& v : *pa) {
+						std::string s = v.is<std::string>() ? v.get<std::string>() : "left";
+						pal.push_back(s == "center" ? ce::canvas::center
+						            : s == "right"  ? ce::canvas::right
+						            :                 ce::canvas::left);
+					}
+					at->set_para_aligns(std::move(pal));
+				}
+			}
+		}
 	} else {
 
 	// label builder API は font_color / relative_font_size を呼ぶごとに

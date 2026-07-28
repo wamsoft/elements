@@ -13,9 +13,36 @@
 #include <elements/support/color.hpp>
 #include <infra/string_view.hpp>
 #include <string>
+#include <vector>
 
 namespace cycfi::elements
 {
+   // フォント名解決結果 (parse_font_name + 登録確認)。 ok=false は theme 既定へ
+   // フォールバック。
+   struct resolved_font
+   {
+      std::string    family;   // 解決した human family ("" = theme 既定)
+      unsigned char  weight = 0;
+      unsigned char  slant  = 0;
+      bool           ok     = false;
+   };
+
+   // PSD 由来のフォント名 ("NotoSansJP-Medium" 等) を human family + weight/slant に
+   // 分解し、 登録済みかを確認する。 未登録なら一度だけ警告して ok=false。
+   resolved_font resolve_font_name(std::string const& name);
+
+   // rich text の 1 span (フォント/サイズ/色が一定の区間)。 family/weight/slant は
+   // 解決済み (resolve_font_name の結果)。 text は \n を含みうる。
+   struct text_run
+   {
+      std::string    text;
+      std::string    family;   // 解決済み human family ("" = theme 既定)
+      unsigned char  weight = 0;
+      unsigned char  slant  = 0;
+      float          size   = 0;
+      color          col;
+   };
+
    /**
     * \class anchored_text
     *
@@ -55,10 +82,17 @@ namespace cycfi::elements
       point                   get_anchor() const         { return _anchor; }
       void                    set_font_family(std::string f) { _family = std::move(f); }
       void                    set_halign(int a)          { _halign = a; }
+      // rich text (run 別書式)。 空でなければ draw は run 別描画に切替わる。
+      void                    set_runs(std::vector<text_run> r) { _runs = std::move(r); }
+      // 段落別アライン (canvas::left/center/right)。 段落 = \n 区切り。
+      void                    set_para_aligns(std::vector<int> a) { _para_aligns = std::move(a); }
 
    private:
 
       font_descr              make_descr() const;
+      void                    draw_rich(context const& ctx);   // run 別描画
+
+      font_descr              run_descr(text_run const& r) const;
 
       std::string             _text;
       std::string             _family;        // parsed human family ("" = theme)
@@ -73,6 +107,8 @@ namespace cycfi::elements
       float                   _leading;       // line advance px (0 = ~1.2em auto)
       bool                    _wrap;          // box text: word-wrap within bounds
       std::string             _locale;
+      std::vector<text_run>   _runs;          // rich text (空=単一書式)
+      std::vector<int>        _para_aligns;   // 段落別 halign (空=_halign 一律)
    };
 
    inline element_ptr make_anchored_text(

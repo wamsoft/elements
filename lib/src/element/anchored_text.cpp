@@ -61,6 +61,29 @@ namespace cycfi::elements
       }
    }
 
+   resolved_font resolve_font_name(std::string const& name)
+   {
+      resolved_font r;
+      if (name.empty())
+         return r;                 // ok=false → theme 既定
+      auto pf = parse_font_name(name);
+      r.family = pf.family;
+      r.weight = static_cast<unsigned char>(pf.weight);
+      r.slant  = static_cast<unsigned char>(pf.slant);
+      r.ok = font_family_available(r.family);
+      if (!r.ok)
+      {
+         static std::set<std::string> warned;
+         if (warned.insert(name).second)
+            std::fprintf(stderr,
+               "[elements] font \"%s\" (family \"%s\") not available; "
+               "add a matching .ttf/.otf to the fonts directory to use it "
+               "(falling back to the default font).\n",
+               name.c_str(), r.family.c_str());
+      }
+      return r;
+   }
+
    anchored_text::anchored_text(
       std::string text, std::string family, float size, color col,
       int halign, point anchor, int tracking, float leading, bool wrap,
@@ -83,22 +106,29 @@ namespace cycfi::elements
       // 促す) theme 既定へフォールバックする。 空指定は最初から theme 既定。
       if (!family.empty())
       {
-         auto pf = parse_font_name(family);
-         _family = pf.family;
-         _weight = static_cast<unsigned char>(pf.weight);
-         _slant  = static_cast<unsigned char>(pf.slant);
-         _resolved = font_family_available(_family);
-         if (!_resolved)
-         {
-            static std::set<std::string> warned;
-            if (warned.insert(family).second)
-               std::fprintf(stderr,
-                  "[elements] font \"%s\" (family \"%s\") not available; "
-                  "add a matching .ttf/.otf to the fonts directory to use it "
-                  "(falling back to the default font).\n",
-                  family.c_str(), _family.c_str());
-         }
+         auto rf = resolve_font_name(family);
+         _family = rf.family;
+         _weight = rf.weight;
+         _slant  = rf.slant;
+         _resolved = rf.ok;
       }
+   }
+
+   font_descr anchored_text::run_descr(text_run const& r) const
+   {
+      float sz = r.size > 0.0f ? r.size : _size;
+      if (r.family.empty())        // 未指定/未解決 → theme 既定
+      {
+         font_descr fd = get_theme().label_font;
+         fd._size = sz;
+         return fd;
+      }
+      font_descr fd{};
+      fd._families = r.family;     // string_view: _runs[i].family (メンバ) は draw 中有効
+      fd._weight = r.weight;
+      fd._slant = r.slant;
+      fd._size = sz;
+      return fd;
    }
 
    font_descr anchored_text::make_descr() const
@@ -127,6 +157,11 @@ namespace cycfi::elements
 
    void anchored_text::draw(context const& ctx)
    {
+      if (!_runs.empty())          // rich text (run 別書式) は専用経路へ
+      {
+         draw_rich(ctx);
+         return;
+      }
       auto& cnv = ctx.canvas;
       auto  state = cnv.new_state();
 
@@ -180,6 +215,103 @@ namespace cycfi::elements
             start = i + 1;
             ++line;
          }
+      }
+   }
+
+   // run 別書式 (rich text)。 各 span を自身のフォント/サイズ/色で描く。 box なら
+   // bounds 幅で word-wrap。 段落 (\n 区切り) ごとに _para_aligns の align を適用。
+   // 行のベースライン送りは行内 span の最大サイズ基準。
+   void anchored_text::draw_rich(context const& ctx)
+   {
+      auto& cnv = ctx.canvas;
+      auto  state = cnv.new_state();
+      if (!_locale.empty())
+         cnv.text_locale(_locale);
+      float maxw = ctx.bounds.width();
+
+      auto measure = [&](std::string const& t, text_run const& r) -> float {
+         return measure_text(cnv, t, run_descr(r)).x;
+      };
+
+      struct Span { std::string text; text_run const* r; };
+      struct Line { std::vector<Span> spans; int para; };
+      std::vector<Line> lines;
+      lines.push_back(Line{{}, 0});
+      int paraIdx = 0;
+      float lineW = 0;
+      auto brk = [&](bool hard) {
+         if (hard) ++paraIdx;
+         lines.push_back(Line{{}, paraIdx});
+         lineW = 0;
+      };
+      auto put = [&](std::string const& ch, text_run const* r) {
+         auto& cur = lines.back().spans;
+         if (!cur.empty() && cur.back().r == r) cur.back().text += ch;
+         else cur.push_back(Span{ch, r});
+      };
+      for (auto const& run : _runs)
+      {
+         std::size_t start = 0;
+         for (std::size_t i = 0; i <= run.text.size(); ++i)
+         {
+            if (i == run.text.size() || run.text[i] == '\n')
+            {
+               std::string part = run.text.substr(start, i - start);
+               if (_wrap)
+               {
+                  for (std::size_t j = 0; j < part.size(); )
+                  {
+                     int len = cp_len(static_cast<unsigned char>(part[j]));
+                     std::string ch = part.substr(j, len);
+                     float w = measure(ch, run);
+                     bool brkable = len >= 3 || ch == " ";
+                     if (lineW > 0.0f && lineW + w > maxw && brkable) brk(false);
+                     put(ch, &run);
+                     lineW += w;
+                     j += len;
+                  }
+               }
+               else if (!part.empty())
+               {
+                  put(part, &run);
+                  lineW += measure(part, run);
+               }
+               if (i < run.text.size()) brk(true);   // hard 改行 (末尾以外)
+               start = i + 1;
+            }
+         }
+      }
+
+      cnv.text_align(canvas::left);
+      float y = 0;
+      for (std::size_t li = 0; li < lines.size(); ++li)
+      {
+         auto& line = lines[li];
+         float maxSize = 0, lineWidth = 0;
+         for (auto& sp : line.spans)
+         {
+            float sz = sp.r->size > 0.0f ? sp.r->size : _size;
+            if (sz > maxSize) maxSize = sz;
+            lineWidth += measure(sp.text, *sp.r);
+         }
+         if (maxSize <= 0.0f) maxSize = _size;
+         float lead = _leading > 0.0f ? _leading : maxSize * 1.2f;
+         float ascent = maxSize * 0.82f;
+         if (li == 0) y = ctx.bounds.top + ascent;
+         int la = _halign & 0x3;
+         if (!_para_aligns.empty() && line.para < static_cast<int>(_para_aligns.size()))
+            la = _para_aligns[line.para] & 0x3;
+         float x = la == canvas::center ? ctx.bounds.left + (maxw - lineWidth) * 0.5f
+                 : la == canvas::right  ? ctx.bounds.left + maxw - lineWidth
+                 :                        ctx.bounds.left;
+         for (auto& sp : line.spans)
+         {
+            cnv.fill_style(sp.r->col);
+            cnv.font(run_descr(*sp.r), sp.r->size > 0.0f ? sp.r->size : _size);
+            cnv.fill_text(sp.text, point{x, y});
+            x += measure(sp.text, *sp.r);
+         }
+         y += lead;
       }
    }
 }
