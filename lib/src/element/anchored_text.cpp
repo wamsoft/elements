@@ -10,12 +10,61 @@
 #include <elements/support/canvas.hpp>
 #include <cstdio>
 #include <set>
+#include <vector>
 
 namespace cycfi::elements
 {
+   namespace
+   {
+      // UTF-8 の 1 コードポイントのバイト長。
+      int cp_len(unsigned char c)
+      {
+         return (c & 0x80) == 0 ? 1 : (c & 0xE0) == 0xC0 ? 2
+              : (c & 0xF0) == 0xE0 ? 3 : 4;
+      }
+
+      // para を maxw に収まるよう折り返す。 CJK/絵文字 (3-4 byte) は文字単位、
+      // Latin は直近の空白で改行。 measure_text で幅を測る (font_descr 指定)。
+      std::vector<std::string> wrap_para(
+         canvas& cnv, std::string const& para, float maxw, font_descr const& fd)
+      {
+         std::vector<std::string> out;
+         std::string line;
+         for (std::size_t i = 0; i < para.size(); )
+         {
+            int len = cp_len(static_cast<unsigned char>(para[i]));
+            std::string ch = para.substr(i, len);
+            if (!line.empty() && measure_text(cnv, line + ch, fd).x > maxw)
+            {
+               auto sp = line.find_last_of(' ');
+               bool multibyte = len >= 3;
+               if (sp != std::string::npos && sp > 0 && !multibyte)
+               {
+                  out.push_back(line.substr(0, sp));
+                  line = line.substr(sp + 1) + ch;
+               }
+               else
+               {
+                  out.push_back(line);
+                  line = ch;
+               }
+            }
+            else
+            {
+               line += ch;
+            }
+            i += len;
+         }
+         if (!line.empty())
+            out.push_back(line);
+         return out;
+      }
+   }
+
    anchored_text::anchored_text(
       std::string text, std::string family, float size, color col,
-      int halign, point anchor, int tracking, float leading, std::string locale)
+      int halign, point anchor, int tracking, float leading, bool wrap,
+      std::string locale)
     : _text(std::move(text))
     , _weight(font_constants::weight_normal)
     , _slant(font_constants::slant_normal)
@@ -26,6 +75,7 @@ namespace cycfi::elements
     , _anchor(anchor)
     , _tracking(tracking)
     , _leading(leading)
+    , _wrap(wrap)
     , _locale(std::move(locale))
    {
       // PSD 由来のフォント名 ("NotoSansJP-Medium" 等) を human family + weight/slant
@@ -90,10 +140,35 @@ namespace cycfi::elements
 
       // 水平 align のみ渡す (垂直ビット無し) → tvg backend の既定 = baseline。
       cnv.text_align(_halign & 0x3);
+      float lead = _leading > 0.0f ? _leading : _size * 1.2f;
+
+      // テキストボックス: bounds 幅で word-wrap し、 枠上 + ascent から下へ流す。
+      if (_wrap)
+      {
+         float maxw = ctx.bounds.width();
+         auto  fm = cnv.measure_font();
+         float ascent = fm.ascent > 0.0f ? fm.ascent : _size * 0.82f;
+         float ax = (_halign & 0x3) == canvas::center ? ctx.bounds.left + maxw * 0.5f
+                  : (_halign & 0x3) == canvas::right  ? ctx.bounds.right
+                  :                                     ctx.bounds.left;
+         auto  fd = make_descr();
+         int   li = 0;
+         std::size_t start = 0;
+         for (std::size_t i = 0; i <= _text.size(); ++i)
+         {
+            if (i == _text.size() || _text[i] == '\n')
+            {
+               for (auto const& ln : wrap_para(cnv, _text.substr(start, i - start), maxw, fd))
+                  cnv.fill_text(ln, point{ax, ctx.bounds.top + ascent + li++ * lead});
+               start = i + 1;
+            }
+         }
+         return;
+      }
+
       float bx = ctx.bounds.left + _anchor.x;
       float by = ctx.bounds.top + _anchor.y;
       // 改行で分割し、 各行を baseline + i*leading に描く。 leading 未指定は ~1.2em。
-      float lead = _leading > 0.0f ? _leading : _size * 1.2f;
       std::size_t start = 0;
       int line = 0;
       for (std::size_t i = 0; i <= _text.size(); ++i)
