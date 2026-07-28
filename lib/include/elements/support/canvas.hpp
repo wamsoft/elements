@@ -160,6 +160,10 @@ namespace cycfi { namespace elements
       // selection (locl GSUB feature). Other backends silently ignore.
       void              text_locale(std::string locale);
 
+      // Letter spacing (tracking) as a scale factor on each glyph advance
+      // (1.0 = normal, <1 tighter, >1 looser). See canvas_state::letter_spacing.
+      void              letter_spacing(float scale);
+
       ///////////////////////////////////////////////////////////////////////////////////
       // Text
       enum text_alignment
@@ -276,6 +280,13 @@ namespace cycfi { namespace elements
          // (e.g. "ja-JP", "zh-CN", "zh-TW"). Empty = no locale hint.
          // Honored by FT loader builds (TVG_LOADER_FT=ON); ignored otherwise.
          std::string        text_locale;
+
+         // Letter spacing (tracking) as a scale factor on each glyph's advance
+         // width (ThorVG Text::spacing convention). 1.0 = normal. Source formats
+         // with additive tracking (PSD: 1/1000 em) map to 1 + tracking/1000,
+         // which is exact for full-width (advance≈em) glyphs. See
+         // canvas::letter_spacing().
+         float              letter_spacing = 1.0f;
 
          // Group opacity (0..1) multiplied into fill/stroke/text/image alpha.
          // Default 1 (opaque). See canvas::global_alpha().

@@ -42,7 +42,7 @@ namespace cycfi::elements
                               anchored_text(
                                  std::string text, std::string family, float size,
                                  color col, int halign, point anchor,
-                                 std::string locale = {});
+                                 int tracking = 0, std::string locale = {});
 
       view_limits             limits(basic_context const& ctx) const override;
       void                    draw(context const& ctx) override;
@@ -68,16 +68,17 @@ namespace cycfi::elements
       color                   _color;
       int                     _halign;        // canvas::left / center / right
       point                   _anchor;        // baseline origin, relative to bounds
+      int                     _tracking;      // letter spacing, 1/1000 em (0 = none)
       std::string             _locale;
    };
 
    inline element_ptr make_anchored_text(
       std::string text, std::string family, float size, color col,
-      int halign, point anchor, std::string locale = {})
+      int halign, point anchor, int tracking = 0, std::string locale = {})
    {
       return share(anchored_text(
          std::move(text), std::move(family), size, col, halign, anchor,
-         std::move(locale)));
+         tracking, std::move(locale)));
    }
 }
 

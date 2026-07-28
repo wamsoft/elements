@@ -47,6 +47,10 @@ namespace cycfi { namespace elements
 
          text->font(font_name.c_str());
          text->size(cnv.get_state().font_size * tvg_font_scale);
+         // letter spacing (tracking): scale factor on each glyph advance.
+         float letter_scale = cnv.get_state().letter_spacing;
+         if (letter_scale != 1.0f)
+            text->spacing(letter_scale, 1.0f);
          if (!cnv.get_state().text_locale.empty())
             text->locale(cnv.get_state().text_locale.c_str());
          text->text(utf8.c_str());
@@ -73,6 +77,8 @@ namespace cycfi { namespace elements
                      width += gm.advance;
                   c += len;
                }
+               // spacing scales advances, so the laid-out width scales too.
+               width *= letter_scale;
                dx = (cnv.get_state().align & 0x3) == canvas::text_alignment::right
                   ? -width : -width / 2;
                break;

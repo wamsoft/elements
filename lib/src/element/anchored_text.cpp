@@ -15,7 +15,7 @@ namespace cycfi::elements
 {
    anchored_text::anchored_text(
       std::string text, std::string family, float size, color col,
-      int halign, point anchor, std::string locale)
+      int halign, point anchor, int tracking, std::string locale)
     : _text(std::move(text))
     , _weight(font_constants::weight_normal)
     , _slant(font_constants::slant_normal)
@@ -24,6 +24,7 @@ namespace cycfi::elements
     , _color(col)
     , _halign(halign)
     , _anchor(anchor)
+    , _tracking(tracking)
     , _locale(std::move(locale))
    {
       // PSD 由来のフォント名 ("NotoSansJP-Medium" 等) を human family + weight/slant
@@ -82,6 +83,9 @@ namespace cycfi::elements
       cnv.font(make_descr(), _size);
       if (!_locale.empty())
          cnv.text_locale(_locale);
+      // tracking (1/1000 em, 加算) → advance 倍率 (全角で近似的に一致)。
+      if (_tracking != 0)
+         cnv.letter_spacing(1.0f + _tracking / 1000.0f);
 
       // 水平 align のみ渡す (垂直ビット無し) → tvg backend の既定 = baseline。
       cnv.text_align(_halign & 0x3);

@@ -788,6 +788,11 @@ namespace cycfi { namespace elements
       _state.text_locale = std::move(locale);
    }
 
+   void canvas::letter_spacing(float scale)
+   {
+      _state.letter_spacing = scale;
+   }
+
    ///////////////////////////////////////////////////////////////////////////
    // Text — dispatched through text_backend interface
    ///////////////////////////////////////////////////////////////////////////

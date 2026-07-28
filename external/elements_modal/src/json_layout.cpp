@@ -1000,8 +1000,9 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		float a_sz = has_size ? sz : ce::get_theme().label_font._size;
 		ce::color a_col = has_color ? col : ce::get_theme().label_font_color;
 		std::string family = string_or(o, "font");
+		int tracking = static_cast<int>(number_or(o, "tracking", 0.0));
 		out = ce::make_anchored_text(text, family, a_sz, a_col, halign,
-		                             ce::point{ax, ay}, locale);
+		                             ce::point{ax, ay}, tracking, locale);
 	} else {
 
 	// label builder API は font_color / relative_font_size を呼ぶごとに
@@ -2273,8 +2274,9 @@ namespace
 			float a_sz = sz > 0.0f ? sz : ce::get_theme().label_font._size;
 			ce::color a_col = has_color ? col : ce::get_theme().label_font_color;
 			std::string family = string_or(o, "font");
+			int tracking = static_cast<int>(number_or(o, "tracking", 0.0));
 			auto at_elem = ce::make_anchored_text(text, family, a_sz, a_col, halign,
-			                                      ce::point{ax, ay}, locale);
+			                                      ce::point{ax, ay}, tracking, locale);
 			if (!text_id.empty() && strings) {
 				if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(at_elem)) {
 					std::weak_ptr<ce::text_writer> w = sp;
