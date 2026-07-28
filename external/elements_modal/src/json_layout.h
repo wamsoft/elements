@@ -94,6 +94,12 @@ struct parsed_layout
 	//! overlay_session::language() で読む初期値。
 	std::string lang;
 
+	//! ホスト主導の変数書込。 VariableStore に書き、 同名を "text_var" で
+	//! subscribe している label に set_text が走る (次 render で反映)。
+	//! 内部で VariableStore を shared_ptr 捕捉しているので、 この closure を
+	//! 保持する限り store + subscribers は生存する。 "vars" 未定義でも非 null。
+	std::function<void(const std::string&, const std::string&)> set_var;
+
 	//! 配置アンカー (JSON top-level "align")。 0=左/上、 0.5=中央、 1=右/下。
 	//! render_to_buffer がサーフェス内での描画矩形位置の決定に使う。 既定は
 	//! 中央 (0.5, 0.5)。 "align": "top_left"/"top"/"left"/"center"/... で設定。
