@@ -5,6 +5,8 @@
 #include <elements/element/atlas.hpp>
 #include <elements/support/context.hpp>
 #include <stdexcept>
+#include <algorithm>
+#include <cmath>
 
 namespace cycfi::elements
 {
@@ -102,6 +104,38 @@ namespace cycfi::elements
    {
       if (i < _frames.size())
          _index = i;
+   }
+
+   //---------------------------------------------------------------------
+   // animated_sprite
+   //---------------------------------------------------------------------
+   animated_sprite::animated_sprite(pixmap_ptr atlas, std::vector<rect> frames,
+                                    float fps, bool loop, bool native)
+    : atlas_sprite(std::move(atlas), std::move(frames), native)
+    , _fps(fps)
+    , _loop(loop)
+   {}
+
+   void animated_sprite::draw(context const& ctx)
+   {
+      // 経過時間からフレーム index を算出 (最初の draw を基点にする)。
+      if (!_started)
+      {
+         _t0 = std::chrono::steady_clock::now();
+         _started = true;
+      }
+      std::size_t n = num_frames();
+      if (n > 0 && _fps > 0.0f)
+      {
+         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - _t0).count();
+         double f = static_cast<double>(ms) * (_fps / 1000.0);
+         std::size_t idx = _loop
+            ? static_cast<std::size_t>(std::fmod(f, static_cast<double>(n)))
+            : std::min<std::size_t>(static_cast<std::size_t>(f), n - 1);
+         index(idx);
+      }
+      atlas_sprite::draw(ctx);
    }
 
    //---------------------------------------------------------------------

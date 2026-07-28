@@ -7,6 +7,7 @@
 
 #include <elements/element/image.hpp>
 #include <vector>
+#include <chrono>
 
 namespace cycfi::elements
 {
@@ -88,6 +89,37 @@ namespace cycfi::elements
 
       std::vector<rect>       _frames;
       bool                    _native = false;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // animated_sprite — atlas_sprite のフレームを一定 fps で自動送りするスプライト
+   // アニメ (パラパラ / スプライトシート再生)。 アニメカーソルアイコン、 スピナー、
+   // 待機ループ演出など。 経過時間 (steady_clock) からフレーム index を算出し、
+   // atlas_sprite::draw に委譲して描く。 loop=false は最終フレームで停止。
+   // elements_modal (console) は毎フレーム再描画するので滑らかに動く。
+   ////////////////////////////////////////////////////////////////////////////
+   class animated_sprite : public atlas_sprite
+   {
+   public:
+                              animated_sprite(pixmap_ptr atlas,
+                                              std::vector<rect> frames,
+                                              float fps = 12.0f,
+                                              bool loop = true,
+                                              bool native = false);
+
+      void                    draw(context const& ctx) override;
+
+      float                   fps() const { return _fps; }
+      void                    set_fps(float f) { _fps = f; }
+      bool                    loop() const { return _loop; }
+      void                    set_loop(bool l) { _loop = l; }
+
+   private:
+
+      float                                 _fps;
+      bool                                  _loop;
+      std::chrono::steady_clock::time_point _t0;
+      bool                                  _started = false;
    };
 
    ////////////////////////////////////////////////////////////////////////////

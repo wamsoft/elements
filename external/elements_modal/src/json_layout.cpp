@@ -620,6 +620,7 @@ private:
 	element_ptr build_canvas      (const picojson::object& o);
 	element_ptr build_locale_variant(const picojson::object& o);
 	element_ptr build_atlas_image (const picojson::object& o);
+	element_ptr build_animated_sprite(const picojson::object& o);
 	element_ptr build_atlas_button(const picojson::object& o);
 	element_ptr build_atlas_toggle(const picojson::object& o);
 	element_ptr build_atlas_choice(const picojson::object& o);
@@ -714,6 +715,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "canvas")        return build_canvas(o);
 	if (type == "locale_variant") return build_locale_variant(o);
 	if (type == "atlas_image")    return build_atlas_image(o);
+	if (type == "animated_sprite") return build_animated_sprite(o);
 	if (type == "atlas_button")   return build_atlas_button(o);
 	if (type == "atlas_toggle")   return build_atlas_toggle(o);
 	if (type == "atlas_check")    return build_atlas_toggle(o);  // alias
@@ -2201,6 +2203,42 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	bool_field(get_field(o, "stretch_v"), stretch_v);
 
 	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
+}
+
+//---------------------------------------------------------------------------
+// animated_sprite — アトラスのフレーム列を fps で自動送りするスプライトアニメ
+// (パラパラ / スプライトシート再生)。 アニメアイコン、 スピナー、 待機ループ等。
+//   { "type": "animated_sprite", "atlas": "ui", "at": [x,y,w,h],
+//     "frames": [[u,v,w,h], ...], "fps": 12, "loop": true,
+//     "native_frames": false }
+// frames は array (順番 = 再生順)。 loop=false は最終フレームで停止。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_animated_sprite(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		SDL_Log("elements_modal: animated_sprite without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	std::vector<ce::rect> frames;
+	static const char* no_states[] = { nullptr };
+	if (!parse_frames(get_field(o, "frames"), no_states, frames)) {
+		SDL_Log("elements_modal: animated_sprite \"%s\" missing 'frames' (array)",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+	float fps = static_cast<float>(number_or(o, "fps", 12.0));
+	bool loop = true;
+	bool_field(get_field(o, "loop"), loop);
+	bool native = truthy_field(get_field(o, "native_frames"));
+
+	auto sprite = ce::share(
+		ce::animated_sprite(pm, std::move(frames), fps, loop, native));
+	register_id(o, sprite);   // id があればホストから参照可能に
+	return sprite;
 }
 
 //---------------------------------------------------------------------------
