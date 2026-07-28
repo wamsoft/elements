@@ -60,7 +60,10 @@ namespace cycfi::elements
       font_descr              make_descr() const;
 
       std::string             _text;
-      std::string             _family;        // font family (empty = theme default)
+      std::string             _family;        // parsed human family ("" = theme)
+      unsigned char           _weight;        // font_constants::weight_enum
+      unsigned char           _slant;         // font_constants::slant_enum
+      bool                    _resolved;      // family registered (usable)?
       float                   _size;
       color                   _color;
       int                     _halign;        // canvas::left / center / right

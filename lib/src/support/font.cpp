@@ -221,6 +221,11 @@ namespace cycfi { namespace elements
       if (!embedded.empty() && embedded != family)
          add_family_alias(embedded, file, weight, slant, stretch);
 
+      // ファイル名 stem (= PSD の PostScript 名 "NotoSansJP-Regular" 等と一致し
+      // やすい) でも font_descr から引けるよう alias 登録する。
+      if (thorvg_name != family)
+         add_family_alias(thorvg_name, file, weight, slant, stretch);
+
       // FreeType side uses the original file string as the cache key, to
       // match glyph_layout_ft.cpp's get_face(f.file()) lookup.
       get_font_backend()->initialize();
@@ -455,5 +460,27 @@ namespace cycfi { namespace elements
 #else
       (void)dir;
 #endif
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // parse_font_name / font_family_available — public wrappers.
+   ////////////////////////////////////////////////////////////////////////////
+   parsed_font_name parse_font_name(std::string const& name)
+   {
+      auto info = parse_font_filename(name);   // 同一 TU の anon 実装を流用
+      parsed_font_name r;
+      r.family  = info.family;
+      r.weight  = info.weight;
+      r.slant   = info.slant;
+      r.stretch = info.stretch;
+      return r;
+   }
+
+   bool font_family_available(std::string const& family)
+   {
+      if (family.empty())
+         return false;
+      std::lock_guard<std::mutex> lock(font_map_mutex());
+      return font_map().find(family) != font_map().end();
    }
 }}

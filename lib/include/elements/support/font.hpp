@@ -372,6 +372,27 @@ namespace cycfi { namespace elements
    // Scan a directory for TTF/OTF files and auto-register them.
    // Extracts family name and weight/slant from filename conventions.
    void load_fonts_from_directory(std::string const& dir);
+
+   ////////////////////////////////////////////////////////////////////////////
+   // parse_font_name — split a PostScript/filename-style font name such as
+   // "NotoSansJP-Medium" into a human family ("Noto Sans JP") plus weight/slant/
+   // stretch, using the same rules as load_fonts_from_directory. Used to turn a
+   // source (e.g. PSD) font name into a font_descr that resolves against the
+   // registered font map.
+   struct parsed_font_name
+   {
+      std::string                       family;
+      font_constants::weight_enum       weight  = font_constants::weight_normal;
+      font_constants::slant_enum        slant   = font_constants::slant_normal;
+      font_constants::stretch_enum      stretch = font_constants::stretch_normal;
+   };
+   parsed_font_name parse_font_name(std::string const& name);
+
+   ////////////////////////////////////////////////////////////////////////////
+   // font_family_available — true if `family` is registered (i.e. usable for
+   // drawing). If false, a matching font file must be added to the fonts
+   // directory (see load_fonts_from_directory).
+   bool font_family_available(std::string const& family);
 }}
 
 #endif

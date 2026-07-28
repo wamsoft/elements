@@ -8,6 +8,8 @@
 #include <elements/support/theme.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/canvas.hpp>
+#include <cstdio>
+#include <set>
 
 namespace cycfi::elements
 {
@@ -15,22 +17,52 @@ namespace cycfi::elements
       std::string text, std::string family, float size, color col,
       int halign, point anchor, std::string locale)
     : _text(std::move(text))
-    , _family(std::move(family))
+    , _weight(font_constants::weight_normal)
+    , _slant(font_constants::slant_normal)
+    , _resolved(true)
     , _size(size)
     , _color(col)
     , _halign(halign)
     , _anchor(anchor)
     , _locale(std::move(locale))
-   {}
+   {
+      // PSD 由来のフォント名 ("NotoSansJP-Medium" 等) を human family + weight/slant
+      // に分解し、 登録済みか確認する。 未登録なら一度だけ警告して (フォント追加を
+      // 促す) theme 既定へフォールバックする。 空指定は最初から theme 既定。
+      if (!family.empty())
+      {
+         auto pf = parse_font_name(family);
+         _family = pf.family;
+         _weight = static_cast<unsigned char>(pf.weight);
+         _slant  = static_cast<unsigned char>(pf.slant);
+         _resolved = font_family_available(_family);
+         if (!_resolved)
+         {
+            static std::set<std::string> warned;
+            if (warned.insert(family).second)
+               std::fprintf(stderr,
+                  "[elements] font \"%s\" (family \"%s\") not available; "
+                  "add a matching .ttf/.otf to the fonts directory to use it "
+                  "(falling back to the default font).\n",
+                  family.c_str(), _family.c_str());
+         }
+      }
+   }
 
    font_descr anchored_text::make_descr() const
    {
-      // family 未指定なら theme 既定フォントを土台に。 いずれも _size を適用。
-      // _families は string_view なので、 描画中だけ生きていればよい (_family は
-      // メンバなので draw/limits の間は有効)。
-      font_descr fd = _family.empty() ? get_theme().label_font : font_descr{};
-      if (!_family.empty())
-         fd._families = _family;
+      // family 未指定 or 未登録なら theme 既定フォントを土台に。 いずれも _size 適用。
+      // _families は string_view なので描画中だけ生きていればよい (_family はメンバ)。
+      if (_family.empty() || !_resolved)
+      {
+         font_descr fd = get_theme().label_font;
+         fd._size = _size;
+         return fd;
+      }
+      font_descr fd{};
+      fd._families = _family;
+      fd._weight = _weight;
+      fd._slant = _slant;
       fd._size = _size;
       return fd;
    }
