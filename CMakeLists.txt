@@ -40,13 +40,16 @@ if (ELEMENTS_BUILD_MODAL)
    else()
       set(ELEMENTS_MODAL_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
    endif()
+   # クロスホストサンプル (overlay_session のみ使用) は両 host でビルドする。
+   set(ELEMENTS_MODAL_BUILD_CROSSHOST_EXAMPLE ${ELEMENTS_BUILD_EXAMPLES} CACHE BOOL "" FORCE)
    add_subdirectory(external/elements_modal)
 
    # elements_modal 本体はフォルダ管理を持たない方針 (吉里吉里組み込み時は
    # 本体側が Storages 経由で font を登録する)。 standalone デモは
    # elements リポの resources/fonts を絶対パスで指す compile def で
    # 自前ロードする。
-   foreach (_em_demo elements_modal_hello_example elements_modal_navigator_example)
+   foreach (_em_demo elements_modal_hello_example elements_modal_navigator_example
+                     elements_modal_crosshost_example)
       if (TARGET ${_em_demo})
          target_compile_definitions(${_em_demo} PRIVATE
             ELEMENTS_MODAL_DEMO_FONTS_DIR="${PROJECT_SOURCE_DIR}/resources/fonts"

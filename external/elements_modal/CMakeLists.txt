@@ -126,3 +126,43 @@ if (ELEMENTS_MODAL_BUILD_EXAMPLES)
 		endif()
 	endforeach()
 endif()
+
+# ----------------------------------------------------------------------------
+# クロスホストサンプル (SDL / Win32 どちらの host build でもビルド可能)
+# ----------------------------------------------------------------------------
+# 上の examples は run_modal (SDL 専用) を含むため sdl host のみだが、 これは
+# overlay_session (host 非依存) だけを使うので両 host でビルドできる。 host glue
+# (window / event loop / present) は ELEMENTS_HOST_UI_LIBRARY_{SDL,WIN32} で分岐。
+option(ELEMENTS_MODAL_BUILD_CROSSHOST_EXAMPLE
+	"Build the cross-host (SDL/Win32) overlay sample" OFF)
+
+if (ELEMENTS_MODAL_BUILD_CROSSHOST_EXAMPLE)
+	if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "win32")
+		# WinMain エントリなので GUI サブシステム。
+		add_executable(elements_modal_crosshost_example WIN32 examples/overlay_crosshost.cpp)
+	else()
+		add_executable(elements_modal_crosshost_example examples/overlay_crosshost.cpp)
+	endif()
+	target_link_libraries(elements_modal_crosshost_example
+		PRIVATE elements_modal::elements_modal)
+	if (TARGET cycfi::elements)
+		target_link_libraries(elements_modal_crosshost_example PRIVATE cycfi::elements)
+	endif()
+	# SDL host 版だけ SDL3 を直接使う (win32 版は windows.h/gdi のみ)。
+	if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+		if (TARGET SDL3::SDL3)
+			target_link_libraries(elements_modal_crosshost_example PRIVATE SDL3::SDL3)
+		elseif (TARGET SDL3-shared)
+			target_link_libraries(elements_modal_crosshost_example PRIVATE SDL3-shared)
+		endif()
+	endif()
+	target_compile_features(elements_modal_crosshost_example PRIVATE cxx_std_20)
+	if (MSVC)
+		target_compile_options(elements_modal_crosshost_example PRIVATE /utf-8)
+	endif()
+	if (TARGET SDL3-shared AND WIN32 AND ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+		add_custom_command(TARGET elements_modal_crosshost_example POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_if_different
+				$<TARGET_FILE:SDL3-shared> $<TARGET_FILE_DIR:elements_modal_crosshost_example>)
+	endif()
+endif()
