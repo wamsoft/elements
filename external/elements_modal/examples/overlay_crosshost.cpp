@@ -20,6 +20,8 @@
 #include <elements_modal/modal.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,7 +37,7 @@ const char* kDialogJson = R"json({
 	"input": { "arrow_focus_nav": true },
 	"content": { "type": "margin", "padding": 40, "child": {
 		"type": "vtile", "children": [
-			{ "type": "hspacer", "width": 480 },
+			{ "type": "hspacer", "width": 560 },
 			{ "type": "align_center", "child": {
 				"type": "label", "text": "elements_modal — cross-host overlay", "size": 26 } },
 			{ "type": "vspacer", "height": 20 },
@@ -63,6 +65,39 @@ std::unique_ptr<elements_modal::overlay_session> make_session()
 	return s;
 }
 
+// staging (ARGB8888 = メモリ上 BGRA) を top-down 32bpp BMP として書き出す。
+// ヘッダは手書き (struct packing 非依存)。 window を出さずに描画結果を確認する
+// ヘッドレス検証 (--dump) 用。 両 host 共通。
+bool write_bmp(const char* path, const std::uint32_t* px, int w, int h)
+{
+	std::FILE* f = std::fopen(path, "wb");
+	if (!f) return false;
+	auto put16 = [&](unsigned v){ std::fputc(v & 0xff, f); std::fputc((v >> 8) & 0xff, f); };
+	auto put32 = [&](unsigned v){ for (int i = 0; i < 4; ++i) std::fputc((v >> (8 * i)) & 0xff, f); };
+	const unsigned data_size = unsigned(w) * unsigned(h) * 4u;
+	// BITMAPFILEHEADER (14)
+	std::fputc('B', f); std::fputc('M', f);
+	put32(14 + 40 + data_size); put16(0); put16(0); put32(14 + 40);
+	// BITMAPINFOHEADER (40) — biHeight 負 = top-down
+	put32(40); put32(unsigned(w)); put32(unsigned(-h)); put16(1); put16(32);
+	put32(0); put32(data_size); put32(2835); put32(2835); put32(0); put32(0);
+	std::fwrite(px, 1, data_size, f);
+	std::fclose(f);
+	return true;
+}
+
+// window を出さずに 1 フレーム描画し BMP に保存する (--dump)。
+int dump_frame(const char* out_path)
+{
+	auto session = make_session();
+	if (!session) return 2;
+	std::vector<std::uint32_t> staging(std::size_t(kW) * kH, 0u);
+	elements_modal::overlay_session::render_rect rect;
+	bool drew = session->render_to_buffer(staging.data(), kW, kH, kW, kH, rect);
+	if (!drew) return 3;
+	return write_bmp(out_path, staging.data(), kW, kH) ? 0 : 4;
+}
+
 } // anonymous
 
 //===========================================================================
@@ -73,15 +108,19 @@ std::unique_ptr<elements_modal::overlay_session> make_session()
 #include <SDL3/SDL.h>
 #include <elements_modal/sdl_input.h>
 
-int main(int, char**)
+int main(int argc, char** argv)
 {
+#ifdef ELEMENTS_MODAL_DEMO_FONTS_DIR
+	cycfi::elements::load_fonts_from_directory(ELEMENTS_MODAL_DEMO_FONTS_DIR);
+#endif
+	// ヘッドレス検証: --dump <path.bmp> で 1 フレーム描画して終了 (window 不要)。
+	if (argc >= 3 && std::strcmp(argv[1], "--dump") == 0)
+		return dump_frame(argv[2]);
+
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		SDL_Log("SDL_Init: %s", SDL_GetError());
 		return 1;
 	}
-#ifdef ELEMENTS_MODAL_DEMO_FONTS_DIR
-	cycfi::elements::load_fonts_from_directory(ELEMENTS_MODAL_DEMO_FONTS_DIR);
-#endif
 
 	SDL_Window*   window   = SDL_CreateWindow("cross-host overlay (SDL)", kW, kH, 0);
 	SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
@@ -245,11 +284,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 } // anonymous
 
-int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
+int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmdLine, int nShow)
 {
 #ifdef ELEMENTS_MODAL_DEMO_FONTS_DIR
 	cycfi::elements::load_fonts_from_directory(ELEMENTS_MODAL_DEMO_FONTS_DIR);
 #endif
+	// ヘッドレス検証: --dump <path.bmp> で 1 フレーム描画して終了 (window 不要)。
+	if (lpCmdLine) {
+		if (const char* d = std::strstr(lpCmdLine, "--dump")) {
+			const char* p = d + 6;
+			while (*p == ' ' || *p == '"') ++p;
+			std::string path(p);
+			while (!path.empty() && (path.back() == ' ' || path.back() == '"'))
+				path.pop_back();
+			return dump_frame(path.c_str());
+		}
+	}
+
 	WinApp app;
 	app.staging.assign(std::size_t(kW) * kH, 0u);
 	app.session = make_session();

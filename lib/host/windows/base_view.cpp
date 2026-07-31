@@ -576,8 +576,12 @@ namespace cycfi::elements
 
    base_view::base_view(extent size_)
    {
-	   RECT bounds = {0, 0, LONG(size_.x), LONG(size_.y)};
-	   _view = make_window(this, nullptr, bounds);
+      // Embedded (host_view 非経由) モード: 実 HWND を作らず、呼出側が用意した
+      // バッファへ view::draw() で直接描画する使い方 (overlay_session 等)。
+      // SDL host の base_view(extent) と挙動を揃える。_view == nullptr が
+      // embedded を表し、size()/refresh() 等はそれで分岐する。
+      _view = nullptr;
+      _embedded_size = size_;
    }
 
    base_view::base_view(host_window_handle h)
@@ -589,6 +593,9 @@ namespace cycfi::elements
 
    base_view::~base_view()
    {
+      if (!_view)
+         return;   // embedded モード: 破棄すべき HWND / info は無い
+
       auto info = get_view_info(_view);
 
       // Free-up the off-screen DC
@@ -605,6 +612,8 @@ namespace cycfi::elements
 
    point base_view::cursor_pos() const
    {
+      if (!_view)
+         return {0, 0};   // embedded: 呼出側が座標を与える
       POINT pos;
       GetCursorPos(&pos);
       ScreenToClient(_view, &pos);
@@ -614,6 +623,8 @@ namespace cycfi::elements
 
    elements::extent base_view::size() const
    {
+      if (!_view)
+         return _embedded_size;   // embedded: ctor で受けたサイズ
       float scale = get_scale_for_window(_view);
       RECT r;
       GetWindowRect(_view, &r);
@@ -622,6 +633,11 @@ namespace cycfi::elements
 
    void base_view::size(elements::extent p)
    {
+      if (!_view)
+      {
+         _embedded_size = p;   // embedded: サイズを更新するだけ
+         return;
+      }
       auto scale = get_scale_for_window(_view);
       auto parent = GetParent(_view);
       RECT bounds;
@@ -636,6 +652,8 @@ namespace cycfi::elements
 
    void base_view::refresh()
    {
+      if (!_view)
+         return;   // embedded: 呼出側が描画タイミングを制御する
       RECT bounds;
       GetClientRect(_view, &bounds);
       InvalidateRect(_view, &bounds, false);
@@ -643,6 +661,8 @@ namespace cycfi::elements
 
    void base_view::refresh(rect area)
    {
+      if (!_view)
+         return;   // embedded
       auto scale = get_scale_for_window(_view);
       RECT r;
       r.left = area.left * scale;
