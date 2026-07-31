@@ -261,23 +261,35 @@ namespace cycfi { namespace elements
          font_map()[family].push_back(std::move(entry));
       }
 
-      // Register with ThorVG (copy=true so we don't need to keep the
-      // caller's buffer alive for ThorVG).
+      // ThorVG indexes fonts by name; text_backend_tvg derives that name via
+      // stem_from_path(canvas font_file) at draw time. So register with ThorVG
+      // under the *stem* of `key` (same convention as the path-based
+      // register_font). Registering under the raw `key` would mismatch the
+      // lookup (stem_from_path(key) != key when key has a dir/extension) and
+      // glyphs would not render even though FreeType layout (keyed by the raw
+      // file() == key) still positions text.
+      auto thorvg_name = stem_from_path(key);
       tvg::Text::load(
-         key.c_str(),
+         thorvg_name.c_str(),
          reinterpret_cast<const char*>(data),
          static_cast<uint32_t>(size),
          "ttf",
          /*copy=*/true);
 
       // Ask ThorVG for the embedded family name. If different from the
-      // caller-supplied family, also expose it as a font_map alias.
-      auto embedded = query_embedded_family(key);
+      // caller-supplied family, also expose it as a font_map alias. The alias
+      // keeps entry.file == key so the FreeType backend lookup stays consistent.
+      auto embedded = query_embedded_family(thorvg_name);
       if (!embedded.empty() && embedded != family)
          add_family_alias(embedded, key, weight, slant, stretch);
 
+      // stem 名でも font_descr から引けるよう alias (register_font と同様)。
+      if (thorvg_name != family)
+         add_family_alias(thorvg_name, key, weight, slant, stretch);
+
       // Register with the active font backend (FreeType etc.). The backend
-      // takes its own copy of the buffer.
+      // takes its own copy of the buffer. FreeType side uses the raw `key` as
+      // the cache key, to match glyph_layout's get_face(f.file() == key) lookup.
       get_font_backend()->initialize();
       get_font_backend()->register_font_buffer(key, data, size);
 
