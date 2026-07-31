@@ -125,16 +125,27 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	// HiDPI: HIGH_PIXEL_DENSITY で物理ピクセルバッキングを要求し、 ピクセル密度
-	// (= DPI/96) を overlay の pixel_scale に渡してネイティブ密度で描く。 window は
-	// 論理 kW×kH 点で作られ、 物理は kW*density × kH*density。
+	// HiDPI: 論理→物理の倍率はディスプレイの content scale (= DPI/96) を使う。
+	// ★Windows 注意: SDL3 の window サイズは物理ピクセルで、SDL_GetWindowPixelDensity は
+	// 1.0 を返す (macOS の pixel density とは別物)。論理サイズ相当の見た目にするには
+	// SDL_GetWindowDisplayScale (content scale) で window を拡大する必要がある。
 	SDL_Window*   window   = SDL_CreateWindow("cross-host overlay (SDL)", kW, kH,
 	                                          SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+	float scale = SDL_GetWindowDisplayScale(window);
+	if (scale <= 0.0f) scale = 1.0f;
+	// window を「論理 kW×kH 相当」= content scale 倍の物理サイズに。
+	SDL_SetWindowSize(window, int(kW * scale + 0.5f), int(kH * scale + 0.5f));
 	int pw = kW, ph = kH;
 	SDL_GetWindowSizeInPixels(window, &pw, &ph);
-	float scale = SDL_GetWindowPixelDensity(window);
-	if (scale <= 0.0f) scale = 1.0f;
+	// 診断: --wininfo で実寸を stderr に出して終了。
+	if (argc >= 2 && std::strcmp(argv[1], "--wininfo") == 0) {
+		int sw = 0, sh = 0; SDL_GetWindowSize(window, &sw, &sh);
+		std::fprintf(stderr, "SDL: create(%d,%d) display_scale=%.3f screen_coords=(%d,%d) pixels=(%d,%d)\n",
+		             kW, kH, scale, sw, sh, pw, ph);
+		SDL_DestroyWindow(window); SDL_Quit(); return 0;
+	}
+
 	SDL_Texture*  texture  = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888,
 	                                            SDL_TEXTUREACCESS_STREAMING, pw, ph);
 
@@ -150,15 +161,15 @@ int main(int argc, char** argv)
 			switch (ev.type) {
 				case SDL_EVENT_QUIT: running = false; break;
 				case SDL_EVENT_MOUSE_BUTTON_DOWN:
-					sess.on_mouse_down(ev.button.x, ev.button.y,
+					sess.on_mouse_down(ev.button.x / scale, ev.button.y / scale,
 					                   si::mouse_button(ev.button.button), si::mods(SDL_GetModState()));
 					break;
 				case SDL_EVENT_MOUSE_BUTTON_UP:
-					sess.on_mouse_up(ev.button.x, ev.button.y,
+					sess.on_mouse_up(ev.button.x / scale, ev.button.y / scale,
 					                 si::mouse_button(ev.button.button), si::mods(SDL_GetModState()));
 					break;
 				case SDL_EVENT_MOUSE_MOTION:
-					sess.on_mouse_move(ev.motion.x, ev.motion.y, si::mods(SDL_GetModState()));
+					sess.on_mouse_move(ev.motion.x / scale, ev.motion.y / scale, si::mods(SDL_GetModState()));
 					break;
 				case SDL_EVENT_KEY_DOWN:
 					sess.on_key_down(si::key(ev.key.key), si::mods(SDL_GetModState()));
@@ -357,6 +368,26 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmdLine, int nShow)
 	AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
 	SetWindowPos(hwnd, nullptr, 0, 0, r.right - r.left, r.bottom - r.top,
 		SWP_NOMOVE | SWP_NOZORDER);
+
+	// 診断: --wininfo <file> で実寸をファイルに出して終了。
+	if (lpCmdLine) {
+		if (const char* d = std::strstr(lpCmdLine, "--wininfo")) {
+			const char* p = d + 9;
+			while (*p == ' ' || *p == '"') ++p;
+			std::string path(p);
+			while (!path.empty() && (path.back() == ' ' || path.back() == '"')) path.pop_back();
+			RECT cr, wr; GetClientRect(hwnd, &cr); GetWindowRect(hwnd, &wr);
+			if (std::FILE* f = std::fopen(path.c_str(), "w")) {
+				std::fprintf(f, "Win32: create_logical(%d,%d) dpi=%u scale=%.3f "
+				             "client_px=(%ld,%ld) window_px=(%ld,%ld)\n",
+				             kW, kH, dpi, app.scale, cr.right - cr.left, cr.bottom - cr.top,
+				             wr.right - wr.left, wr.bottom - wr.top);
+				std::fclose(f);
+			}
+			DestroyWindow(hwnd); return 0;
+		}
+	}
+
 	ShowWindow(hwnd, nShow);
 
 	MSG msg;
