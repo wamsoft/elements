@@ -14,13 +14,24 @@ cmake_minimum_required(VERSION 3.20)
 
 project(elements_modal LANGUAGES CXX)
 
-add_library(elements_modal STATIC
-	src/modal.cpp
+# overlay サブセット (host 非依存)。 SDL3 を一切リンクせずビルドできる。
+# em_platform.cpp = SDL_GetTicks / SDL_Log の host 非依存置き換え shim。
+set(_em_sources
 	src/json_layout.cpp
 	src/runtime.cpp
 	src/overlay_session.cpp
 	src/navigator.cpp
+	src/em_platform.cpp
 )
+
+# 独立ウィンドウ modal (run_modal) は SDL host 専用 (SDL_CreateWindow /
+# SDL_CreateRenderer / SDL_InitSubSystem を使う)。 win32 host 等では overlay
+# サブセットのみ提供し、 modal.cpp はビルドしない。
+if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
+	list(APPEND _em_sources src/modal.cpp)
+endif()
+
+add_library(elements_modal STATIC ${_em_sources})
 
 target_include_directories(elements_modal
 	PUBLIC
@@ -31,15 +42,22 @@ target_include_directories(elements_modal
 
 target_compile_features(elements_modal PUBLIC cxx_std_20)
 
-# 依存ライブラリ。 SDL3 ターゲットは parent project 側で用意済みを前提。
+# 依存ライブラリ。 SDL3 は独立ウィンドウ modal (modal.cpp) の実装内部でのみ使う
+# ので PRIVATE。 公開ヘッダ modal.h は SDL_Window を前方宣言で扱い SDL 型を露出
+# しない (overlay 経路は host 非依存)。 win32 host では SDL3 ターゲットが無いため
+# 何もリンクしない (modal.cpp も除外済み)。
 if (TARGET SDL3::SDL3)
-	target_link_libraries(elements_modal PUBLIC SDL3::SDL3)
+	target_link_libraries(elements_modal PRIVATE SDL3::SDL3)
 elseif (TARGET SDL3-shared)
-	target_link_libraries(elements_modal PUBLIC SDL3-shared)
+	target_link_libraries(elements_modal PRIVATE SDL3-shared)
 endif()
 
+# cycfi::elements は PUBLIC。 modal.h が overlay_session::on_* の引数型として
+# cycfi の入力型 (mouse_button / key_code / pad_button / pad_axis) を公開するため、
+# 利用側にも include ディレクトリと host defines (ELEMENTS_HOST_UI_LIBRARY_*) を
+# 伝播させる。
 if (TARGET cycfi::elements)
-	target_link_libraries(elements_modal PRIVATE cycfi::elements)
+	target_link_libraries(elements_modal PUBLIC cycfi::elements)
 endif()
 
 if (TARGET thorvg)

@@ -28,6 +28,7 @@
 #include <elements_modal/modal.h>
 #include <elements_modal/navigator.h>
 #include <elements_modal/effects.h>
+#include <elements_modal/sdl_input.h>   // SDL イベント → cycfi 入力型 (host アダプタ)
 
 #include <cstdint>
 #include <map>
@@ -232,41 +233,47 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
 	if (!app->session || app->session->finished()) return SDL_APP_CONTINUE;
 	auto& sess = *app->session;
 
+	// SDL イベント生値 → cycfi 中立型は host アダプタ (sdl_input) が担う。
+	// overlay_session 自体は SDL に依存しない。
+	namespace si = elements_modal::sdl_input;
 	switch (event->type) {
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 			if (event->button.button == SDL_BUTTON_RIGHT) { sess.close(""); break; }
-			sess.on_mouse_down(event->button.x, event->button.y, event->button.button,
-			                   static_cast<int>(SDL_GetModState()));
+			sess.on_mouse_down(event->button.x, event->button.y,
+			                   si::mouse_button(event->button.button),
+			                   si::mods(SDL_GetModState()));
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_UP:
-			sess.on_mouse_up(event->button.x, event->button.y, event->button.button,
-			                 static_cast<int>(SDL_GetModState()));
+			sess.on_mouse_up(event->button.x, event->button.y,
+			                 si::mouse_button(event->button.button),
+			                 si::mods(SDL_GetModState()));
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
 			sess.on_mouse_move(event->motion.x, event->motion.y,
-			                   static_cast<int>(SDL_GetModState()));
+			                   si::mods(SDL_GetModState()));
 			break;
 		case SDL_EVENT_KEY_DOWN:
 			if (event->key.key == SDLK_ESCAPE) { sess.close(""); break; }
-			sess.on_key_down(static_cast<int>(event->key.key),
-			                 static_cast<int>(SDL_GetModState()));
+			sess.on_key_down(si::key(event->key.key),
+			                 si::mods(SDL_GetModState()));
 			break;
 		case SDL_EVENT_KEY_UP:
-			sess.on_key_up(static_cast<int>(event->key.key),
-			               static_cast<int>(SDL_GetModState()));
+			sess.on_key_up(si::key(event->key.key),
+			               si::mods(SDL_GetModState()));
 			break;
 		case SDL_EVENT_TEXT_INPUT:
 			sess.on_text_input(event->text.text);
 			break;
 		case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
 			if (event->gbutton.button == SDL_GAMEPAD_BUTTON_EAST) { sess.close(""); break; }
-			sess.on_pad_button(event->gbutton.button, true);
+			sess.on_pad_button(si::pad_button(event->gbutton.button), true);
 			break;
 		case SDL_EVENT_GAMEPAD_BUTTON_UP:
-			sess.on_pad_button(event->gbutton.button, false);
+			sess.on_pad_button(si::pad_button(event->gbutton.button), false);
 			break;
 		case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-			sess.on_pad_axis(event->gaxis.axis, event->gaxis.value);
+			sess.on_pad_axis(si::pad_axis(event->gaxis.axis),
+			                 si::axis_value(event->gaxis.value));
 			break;
 		default: break;
 	}

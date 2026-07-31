@@ -9,7 +9,7 @@
 //---------------------------------------------------------------------------
 #include "elements_modal/modal.h"
 
-#include <SDL3/SDL.h>
+#include "em_platform.h"
 
 #include <thorvg.h>
 
@@ -29,7 +29,7 @@ bool ensure_tvg_inited()
 	if (s_tvg_initialized) return true;
 	auto threads = std::max<unsigned>(1, std::thread::hardware_concurrency() - 1);
 	if (tvg::Initializer::init(threads) != tvg::Result::Success) {
-		SDL_Log("elements_modal: tvg::Initializer::init failed");
+		em_logf("elements_modal: tvg::Initializer::init failed");
 		return false;
 	}
 	s_tvg_initialized = true;

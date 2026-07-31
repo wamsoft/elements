@@ -19,9 +19,7 @@
 #include "elements_modal/modal.h"
 #include "elements_modal/animator.h"
 #include "json_layout.h"
-#include "key_map.h"
-
-#include <SDL3/SDL.h>
+#include "em_platform.h"
 
 #include <elements.hpp>
 
@@ -34,25 +32,6 @@ namespace ce = cycfi::elements;
 namespace elements_modal {
 
 namespace {
-
-ce::mouse_button::what to_mouse_what(int sdl_btn)
-{
-	switch (sdl_btn) {
-		case SDL_BUTTON_LEFT:   return ce::mouse_button::left;
-		case SDL_BUTTON_MIDDLE: return ce::mouse_button::middle;
-		case SDL_BUTTON_RIGHT:  return ce::mouse_button::right;
-		default:                return ce::mouse_button::left;
-	}
-}
-
-int sdl_mods_to_elements(int mod)
-{
-	int m = 0;
-	if (mod & SDL_KMOD_SHIFT) m |= ce::mod_shift;
-	if (mod & SDL_KMOD_CTRL)  m |= ce::mod_control;
-	if (mod & SDL_KMOD_ALT)   m |= ce::mod_alt;
-	return m;
-}
 
 std::uint32_t decode_utf8(const char*& p, const char* end)
 {
@@ -160,7 +139,7 @@ struct overlay_session::impl
 	// パーツ演出 (Phase A): "animate" 由来の変換アニメ。 start() で初期化し、
 	// render_to_buffer で経過 ms 分 tick する。 空なら一切のコスト無し。
 	animator anim;
-	Uint64   last_anim_ms = 0;
+	std::uint64_t last_anim_ms = 0;
 
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
@@ -196,7 +175,7 @@ struct overlay_session::impl
 			// exit 束縛を再生開始。 完了は render_to_buffer 側で検出して finished_ に。
 			anim.fire(anim_binding::trigger::exit);
 			exiting_ = true;
-			last_anim_ms = SDL_GetTicks();
+			last_anim_ms = em_now_ms();
 		} else {
 			finished_ = true;
 		}
@@ -226,11 +205,11 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->external_cb = std::move(external_cb);
 
 	if (_impl->started) {
-		SDL_Log("overlay_session::start: already started");
+		em_logf("overlay_session::start: already started");
 		return false;
 	}
 	if (view_width <= 0 || view_height <= 0 || pixel_scale <= 0.0f) {
-		SDL_Log("overlay_session::start: invalid view size or scale");
+		em_logf("overlay_session::start: invalid view size or scale");
 		return false;
 	}
 
@@ -246,7 +225,7 @@ bool overlay_session::start(const std::string& json_utf8,
 		resource_base);
 
 	if (!layout.root) {
-		SDL_Log("overlay_session::start: layout parse failed");
+		em_logf("overlay_session::start: layout parse failed");
 		return false;
 	}
 
@@ -274,7 +253,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	// パーツ演出束縛を animator に積み、 初期値 (進捗 0) を適用してから開始。
 	for (auto& b : layout.animations) _impl->anim.add(std::move(b));
 	_impl->anim.start();
-	_impl->last_anim_ms = SDL_GetTicks();
+	_impl->last_anim_ms = em_now_ms();
 
 	_impl->view = std::make_unique<ce::view>(
 		ce::extent{ static_cast<float>(view_width),
@@ -343,7 +322,7 @@ void overlay_session::focus_by_id(const std::string& id)
 	if (!_impl || !_impl->view || id.empty()) return;
 	auto it = _impl->id_map.find(id);
 	if (it == _impl->id_map.end()) {
-		SDL_Log("overlay_session::focus_by_id: id '%s' not found",
+		em_logf("overlay_session::focus_by_id: id '%s' not found",
 		        id.c_str());
 		return;
 	}
@@ -364,8 +343,8 @@ bool overlay_session::activate_by_id(const std::string& id)
 	// focus は遅延タスクなので、 poll() で即時適用してから Enter を送る。
 	_impl->view->focus(it->second);
 	_impl->view->poll();
-	bool handled = on_key_down(SDLK_RETURN, 0);
-	on_key_up(SDLK_RETURN, 0);
+	bool handled = on_key_down(ce::key_code::enter, 0);
+	on_key_up(ce::key_code::enter, 0);
 	return handled || true;   // 既知 id へ送れた時点で成功扱い
 }
 
@@ -454,7 +433,7 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	// パーツ演出を経過 ms 分進める (xform_state を書き換え → 次の draw に反映)。
 	if (!_impl->anim.empty()) {
-		const Uint64 now = SDL_GetTicks();
+		const std::uint64_t now = em_now_ms();
 		const float dt = (now > _impl->last_anim_ms)
 		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
 		_impl->last_anim_ms = now;
@@ -514,7 +493,7 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 // --- 入力イベント転送 (surface logical 座標) ---
 
-void overlay_session::on_mouse_down(float sx, float sy, int button, int mods)
+void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
 	auto p = _impl->to_view(sx, sy);
@@ -523,15 +502,15 @@ void overlay_session::on_mouse_down(float sx, float sy, int button, int mods)
 	ce::mouse_button btn{
 		.down = true,
 		.num_clicks = 1,
-		.state = to_mouse_what(button),
-		.modifiers = sdl_mods_to_elements(mods),
+		.state = button,
+		.modifiers = mods,
 		.pos = p
 	};
 	_impl->view->cursor(p, ce::cursor_tracking::hovering);
 	_impl->view->click(btn);
 }
 
-void overlay_session::on_mouse_up(float sx, float sy, int button, int mods)
+void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
 	auto p = _impl->to_view(sx, sy);
@@ -540,8 +519,8 @@ void overlay_session::on_mouse_up(float sx, float sy, int button, int mods)
 	ce::mouse_button btn{
 		.down = false,
 		.num_clicks = 1,
-		.state = to_mouse_what(button),
-		.modifiers = sdl_mods_to_elements(mods),
+		.state = button,
+		.modifiers = mods,
 		.pos = p
 	};
 	_impl->view->click(btn);
@@ -556,7 +535,7 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 		ce::mouse_button btn{
 			.down = true, .num_clicks = 1,
 			.state = ce::mouse_button::left,
-			.modifiers = sdl_mods_to_elements(mods),
+			.modifiers = mods,
 			.pos = p
 		};
 		_impl->view->drag(btn);
@@ -579,28 +558,28 @@ void overlay_session::on_mouse_leave()
 	_impl->view->cursor(_impl->last_cursor, ce::cursor_tracking::leaving);
 }
 
-bool overlay_session::on_key_down(int sdl_key, int mods)
+bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
-	if (sdl_key == SDLK_ESCAPE) {
+	if (key == ce::key_code::escape) {
 		_impl->begin_finish("");   // exit 演出があれば再生してから終了
 		return true;   // Esc はダイアログが消費
 	}
 	ce::key_info ki{
-		.key = sdl_key_to_ce(sdl_key),
+		.key = key,
 		.action = ce::key_action::press,
-		.modifiers = sdl_mods_to_elements(mods)
+		.modifiers = mods
 	};
 	return _impl->view->key(ki);   // focus widget が処理したら true
 }
 
-bool overlay_session::on_key_up(int sdl_key, int mods)
+bool overlay_session::on_key_up(ce::key_code key, int mods)
 {
 	if (!active()) return false;
 	ce::key_info ki{
-		.key = sdl_key_to_ce(sdl_key),
+		.key = key,
 		.action = ce::key_action::release,
-		.modifiers = sdl_mods_to_elements(mods)
+		.modifiers = mods
 	};
 	return _impl->view->key(ki);
 }
@@ -618,65 +597,21 @@ void overlay_session::on_text_input(const char* utf8_text)
 	}
 }
 
-namespace {
-
-ce::pad_button sdl_to_pad_button(int sdl_button)
-{
-	using b = ce::pad_button;
-	switch (sdl_button) {
-		case SDL_GAMEPAD_BUTTON_SOUTH:          return b::a;
-		case SDL_GAMEPAD_BUTTON_EAST:           return b::b;
-		case SDL_GAMEPAD_BUTTON_WEST:           return b::x;
-		case SDL_GAMEPAD_BUTTON_NORTH:          return b::y;
-		case SDL_GAMEPAD_BUTTON_DPAD_UP:        return b::dpad_up;
-		case SDL_GAMEPAD_BUTTON_DPAD_DOWN:      return b::dpad_down;
-		case SDL_GAMEPAD_BUTTON_DPAD_LEFT:      return b::dpad_left;
-		case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:     return b::dpad_right;
-		case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:  return b::lb;
-		case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: return b::rb;
-		case SDL_GAMEPAD_BUTTON_LEFT_STICK:     return b::l3;
-		case SDL_GAMEPAD_BUTTON_RIGHT_STICK:    return b::r3;
-		case SDL_GAMEPAD_BUTTON_BACK:           return b::back;
-		case SDL_GAMEPAD_BUTTON_START:          return b::start;
-		case SDL_GAMEPAD_BUTTON_GUIDE:          return b::guide;
-		default:                                return b::unknown;
-	}
-}
-
-ce::pad_axis sdl_to_pad_axis(int sdl_axis)
-{
-	using a = ce::pad_axis;
-	switch (sdl_axis) {
-		case SDL_GAMEPAD_AXIS_LEFTX:         return a::left_x;
-		case SDL_GAMEPAD_AXIS_LEFTY:         return a::left_y;
-		case SDL_GAMEPAD_AXIS_RIGHTX:        return a::right_x;
-		case SDL_GAMEPAD_AXIS_RIGHTY:        return a::right_y;
-		case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:  return a::lt;
-		case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: return a::rt;
-		default:                             return a::unknown;
-	}
-}
-
-} // anonymous
-
-bool overlay_session::on_pad_button(int sdl_gamepad_button, bool down)
+bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 {
 	if (!active()) return false;
-	auto btn = sdl_to_pad_button(sdl_gamepad_button);
-	if (btn == ce::pad_button::unknown) return false;
-	_impl->view->pad_button_event({btn, down});
+	if (button == ce::pad_button::unknown) return false;
+	_impl->view->pad_button_event({button, down});
 	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
 }
 
-void overlay_session::on_pad_axis(int sdl_gamepad_axis, int raw_value)
+void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
 {
 	if (!active()) return;
-	auto ax = sdl_to_pad_axis(sdl_gamepad_axis);
-	if (ax == ce::pad_axis::unknown) return;
-	float v = static_cast<float>(raw_value) / 32767.0f;
-	if (v < -1.0f) v = -1.0f;
-	if (v >  1.0f) v =  1.0f;
-	_impl->view->pad_axis_event({ax, v});
+	if (axis == ce::pad_axis::unknown) return;
+	if (value < -1.0f) value = -1.0f;
+	if (value >  1.0f) value =  1.0f;
+	_impl->view->pad_axis_event({axis, value});
 }
 
 } // namespace elements_modal

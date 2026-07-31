@@ -27,25 +27,32 @@ set(ELEMENTS_HOST_UI_LIBRARY "sdl" CACHE STRING "Host UI library to use (sdl, wi
 
 add_subdirectory(lib)
 
-# elements_modal: JSON modal UI library (SDL host only)
-if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
-   option(ELEMENTS_BUILD_MODAL "Build elements_modal JSON modal UI library" ON)
-   if (ELEMENTS_BUILD_MODAL)
+# elements_modal: JSON modal UI library。
+# ライブラリ本体の overlay サブセット (overlay_session / navigator) は host 非依存
+# で、 win32 host でも SDL3 を引かずにビルドできる。 独立ウィンドウ modal
+# (run_modal) だけが SDL host 専用 (elements_modal 側 CMake で modal.cpp を
+# ELEMENTS_HOST_UI_LIBRARY で分岐)。
+option(ELEMENTS_BUILD_MODAL "Build elements_modal JSON modal UI library" ON)
+if (ELEMENTS_BUILD_MODAL)
+   # standalone examples は run_modal を使う hello_modal を含むため SDL host のみ。
+   if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "sdl")
       set(ELEMENTS_MODAL_BUILD_EXAMPLES ${ELEMENTS_BUILD_EXAMPLES} CACHE BOOL "" FORCE)
-      add_subdirectory(external/elements_modal)
-
-      # elements_modal 本体はフォルダ管理を持たない方針 (吉里吉里組み込み時は
-      # 本体側が Storages 経由で font を登録する)。 standalone デモは
-      # elements リポの resources/fonts を絶対パスで指す compile def で
-      # 自前ロードする。
-      foreach (_em_demo elements_modal_hello_example elements_modal_navigator_example)
-         if (TARGET ${_em_demo})
-            target_compile_definitions(${_em_demo} PRIVATE
-               ELEMENTS_MODAL_DEMO_FONTS_DIR="${PROJECT_SOURCE_DIR}/resources/fonts"
-            )
-         endif()
-      endforeach()
+   else()
+      set(ELEMENTS_MODAL_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
    endif()
+   add_subdirectory(external/elements_modal)
+
+   # elements_modal 本体はフォルダ管理を持たない方針 (吉里吉里組み込み時は
+   # 本体側が Storages 経由で font を登録する)。 standalone デモは
+   # elements リポの resources/fonts を絶対パスで指す compile def で
+   # 自前ロードする。
+   foreach (_em_demo elements_modal_hello_example elements_modal_navigator_example)
+      if (TARGET ${_em_demo})
+         target_compile_definitions(${_em_demo} PRIVATE
+            ELEMENTS_MODAL_DEMO_FONTS_DIR="${PROJECT_SOURCE_DIR}/resources/fonts"
+         )
+      endif()
+   endforeach()
 endif()
 
 if (ELEMENTS_BUILD_EXAMPLES)

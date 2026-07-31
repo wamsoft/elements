@@ -7,7 +7,7 @@
 //---------------------------------------------------------------------------
 #include "json_layout.h"
 
-#include <SDL3/SDL.h>
+#include "em_platform.h"
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 
@@ -726,7 +726,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "radio_button")   return build_radio_button(o);
 	if (type == "tab_view")      return build_tab_view(o);
 
-	SDL_Log("elements_modal: unknown element type: %s", type.c_str());
+	em_logf("elements_modal: unknown element type: %s", type.c_str());
 	return nullptr;
 }
 
@@ -1084,7 +1084,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 				});
 			}
 		} else {
-			SDL_Log("elements_modal: label with text_id=\"%s\" text_var=\"%s\" — "
+			em_logf("elements_modal: label with text_id=\"%s\" text_var=\"%s\" — "
 			        "text_writer 未継承で set_text 仕掛け失敗",
 			        text_id.c_str(), text_var.c_str());
 		}
@@ -1111,7 +1111,7 @@ void LayoutBuilder::subscribe_button_text_id(const picojson::object& o,
 	if (!pb) return;
 	auto* tw = dynamic_cast<ce::text_writer*>(&pb->subject());
 	if (!tw) {
-		SDL_Log("elements_modal: button with text_id=\"%s\" — styler が "
+		em_logf("elements_modal: button with text_id=\"%s\" — styler が "
 		        "text_writer 未継承で set_text 仕掛け失敗", text_id.c_str());
 		return;
 	}
@@ -1434,7 +1434,7 @@ element_ptr LayoutBuilder::build_selection_menu(const picojson::object& o)
 		}
 	}
 	if (labels.empty()) {
-		SDL_Log("elements_modal: selection_menu without 'options'");
+		em_logf("elements_modal: selection_menu without 'options'");
 		return nullptr;
 	}
 
@@ -1518,7 +1518,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		}
 	}
 	if (opts.empty()) {
-		SDL_Log("elements_modal: %s without 'options'",
+		em_logf("elements_modal: %s without 'options'",
 			variant == 0 ? "cycle_picker"
 			: variant == 1 ? "framed_cycle_picker"
 			: "segmented_picker");
@@ -1745,7 +1745,7 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 {
 	auto name = string_or(o, "name");
 	if (name.empty()) {
-		SDL_Log("elements_modal: pad_icon without 'name'");
+		em_logf("elements_modal: pad_icon without 'name'");
 		return nullptr;
 	}
 	bool use_font = false;
@@ -1779,7 +1779,7 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	bool_field(get_field(o, "outline"), outline);
 	if (has_color) {
 		// SVG mode は現状 tint 不可。 指定があれば一度だけ警告。
-		SDL_Log("elements_modal: pad_icon \"%s\" — \"color\" は SVG mode "
+		em_logf("elements_modal: pad_icon \"%s\" — \"color\" は SVG mode "
 		        "では現状無視されます (use_font: true でのみ反映)",
 		        name.c_str());
 	}
@@ -1828,12 +1828,12 @@ element_ptr LayoutBuilder::build_sprite_button(const picojson::object& o)
 {
 	auto image_str = string_or(o, "image");
 	if (image_str.empty()) {
-		SDL_Log("elements_modal: sprite_button without 'image'");
+		em_logf("elements_modal: sprite_button without 'image'");
 		return nullptr;
 	}
 	float frame_height = static_cast<float>(number_or(o, "frame_height", 0.0));
 	if (frame_height <= 0.0f) {
-		SDL_Log("elements_modal: sprite_button \"%s\" needs 'frame_height'",
+		em_logf("elements_modal: sprite_button \"%s\" needs 'frame_height'",
 		        image_str.c_str());
 		return nullptr;
 	}
@@ -1867,7 +1867,7 @@ element_ptr LayoutBuilder::build_sprite_button(const picojson::object& o)
 		}
 		return shared;
 	} catch (std::exception const& e) {
-		SDL_Log("elements_modal: sprite_button failed to load \"%s\": %s",
+		em_logf("elements_modal: sprite_button failed to load \"%s\": %s",
 		        full.string().c_str(), e.what());
 		return nullptr;
 	}
@@ -1888,7 +1888,7 @@ element_ptr LayoutBuilder::build_gizmo_image(const picojson::object& o)
 {
 	auto image_str = string_or(o, "image");
 	if (image_str.empty()) {
-		SDL_Log("elements_modal: gizmo_image without 'image'");
+		em_logf("elements_modal: gizmo_image without 'image'");
 		return nullptr;
 	}
 	float scale = static_cast<float>(number_or(o, "scale", 1.0));
@@ -1904,7 +1904,7 @@ element_ptr LayoutBuilder::build_gizmo_image(const picojson::object& o)
 			return ce::share(ce::gizmo(full.string().c_str(), scale));
 		}
 	} catch (std::exception const& e) {
-		SDL_Log("elements_modal: gizmo_image failed to load \"%s\": %s",
+		em_logf("elements_modal: gizmo_image failed to load \"%s\": %s",
 		        full.string().c_str(), e.what());
 		return nullptr;
 	}
@@ -1921,7 +1921,7 @@ element_ptr LayoutBuilder::build_floating(const picojson::object& o)
 {
 	auto* arr = get_array(o, "at");
 	if (!arr || arr->size() < 4) {
-		SDL_Log("elements_modal: floating requires 'at': [x, y, w, h]");
+		em_logf("elements_modal: floating requires 'at': [x, y, w, h]");
 		return nullptr;
 	}
 	float x = static_cast<float>(int_at(*arr, 0, 0));
@@ -1931,7 +1931,7 @@ element_ptr LayoutBuilder::build_floating(const picojson::object& o)
 
 	auto child = build_child(o);
 	if (!child) {
-		SDL_Log("elements_modal: floating without valid 'child'");
+		em_logf("elements_modal: floating without valid 'child'");
 		return nullptr;
 	}
 	return ce::share(ce::floating(ce::rect{x, y, x + w, y + h},
@@ -2073,7 +2073,7 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 {
 	const auto* children = get_array(o, "children");
 	if (!children) {
-		SDL_Log("elements_modal: canvas requires 'children'");
+		em_logf("elements_modal: canvas requires 'children'");
 		return nullptr;
 	}
 
@@ -2087,7 +2087,7 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 
 		auto* at = get_array(co, "at");
 		if (!at || at->size() < 4) {
-			SDL_Log("elements_modal: canvas child missing 'at': [x,y,w,h]");
+			em_logf("elements_modal: canvas child missing 'at': [x,y,w,h]");
 			continue;
 		}
 		float x = static_cast<float>(int_at(*at, 0, 0));
@@ -2166,7 +2166,7 @@ ce::pixmap_ptr LayoutBuilder::lookup_atlas(const std::string& name)
 {
 	auto it = _atlases.find(name);
 	if (it == _atlases.end()) {
-		SDL_Log("elements_modal: atlas \"%s\" not registered "
+		em_logf("elements_modal: atlas \"%s\" not registered "
 		        "(missing top-level \"atlases\" entry?)", name.c_str());
 		return nullptr;
 	}
@@ -2184,7 +2184,7 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_image without 'atlas'");
+		em_logf("elements_modal: atlas_image without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2192,7 +2192,7 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 
 	auto* arr = get_array(o, "rect");
 	if (!arr || arr->size() < 4) {
-		SDL_Log("elements_modal: atlas_image \"%s\" missing 'rect': [x,y,w,h]",
+		em_logf("elements_modal: atlas_image \"%s\" missing 'rect': [x,y,w,h]",
 		        atlas_name.c_str());
 		return nullptr;
 	}
@@ -2217,7 +2217,7 @@ element_ptr LayoutBuilder::build_animated_sprite(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: animated_sprite without 'atlas'");
+		em_logf("elements_modal: animated_sprite without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2226,7 +2226,7 @@ element_ptr LayoutBuilder::build_animated_sprite(const picojson::object& o)
 	std::vector<ce::rect> frames;
 	static const char* no_states[] = { nullptr };
 	if (!parse_frames(get_field(o, "frames"), no_states, frames)) {
-		SDL_Log("elements_modal: animated_sprite \"%s\" missing 'frames' (array)",
+		em_logf("elements_modal: animated_sprite \"%s\" missing 'frames' (array)",
 		        atlas_name.c_str());
 		return nullptr;
 	}
@@ -2451,7 +2451,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_button without 'atlas'");
+		em_logf("elements_modal: atlas_button without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2463,7 +2463,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 	};
 	auto* fv = get_field(o, "frames");
 	if (!parse_frames(fv, btn_states, frames)) {
-		SDL_Log("elements_modal: atlas_button \"%s\" missing or invalid 'frames'",
+		em_logf("elements_modal: atlas_button \"%s\" missing or invalid 'frames'",
 		        atlas_name.c_str());
 		return nullptr;
 	}
@@ -2515,7 +2515,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_toggle without 'atlas'");
+		em_logf("elements_modal: atlas_toggle without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2527,7 +2527,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	};
 	auto* fv = get_field(o, "frames");
 	if (!parse_frames(fv, toggle_states, frames)) {
-		SDL_Log("elements_modal: atlas_toggle \"%s\" missing or invalid 'frames'",
+		em_logf("elements_modal: atlas_toggle \"%s\" missing or invalid 'frames'",
 		        atlas_name.c_str());
 		return nullptr;
 	}
@@ -2590,7 +2590,7 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_choice without 'atlas'");
+		em_logf("elements_modal: atlas_choice without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2602,7 +2602,7 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	};
 	auto* fv = get_field(o, "frames");
 	if (!parse_frames(fv, toggle_states, frames)) {
-		SDL_Log("elements_modal: atlas_choice \"%s\" missing or invalid 'frames'",
+		em_logf("elements_modal: atlas_choice \"%s\" missing or invalid 'frames'",
 		        atlas_name.c_str());
 		return nullptr;
 	}
@@ -2650,7 +2650,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_slider without 'atlas'");
+		em_logf("elements_modal: atlas_slider without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2659,7 +2659,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	auto* tr = get_array(o, "track");
 	auto* th = get_array(o, "thumb");
 	if (!tr || !th || tr->size() < 4 || th->size() < 4) {
-		SDL_Log("elements_modal: atlas_slider \"%s\" needs 'track' and 'thumb' "
+		em_logf("elements_modal: atlas_slider \"%s\" needs 'track' and 'thumb' "
 		        "as [x, y, w, h]", atlas_name.c_str());
 		return nullptr;
 	}
@@ -2719,7 +2719,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
 	if (atlas_name.empty()) {
-		SDL_Log("elements_modal: atlas_progress without 'atlas'");
+		em_logf("elements_modal: atlas_progress without 'atlas'");
 		return nullptr;
 	}
 	auto pm = lookup_atlas(atlas_name);
@@ -2728,7 +2728,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 	auto* tr = get_array(o, "track");
 	auto* fl = get_array(o, "fill");
 	if (!tr || !fl || tr->size() < 4 || fl->size() < 4) {
-		SDL_Log("elements_modal: atlas_progress \"%s\" needs 'track' and 'fill' "
+		em_logf("elements_modal: atlas_progress \"%s\" needs 'track' and 'fill' "
 		        "as [x, y, w, h]", atlas_name.c_str());
 		return nullptr;
 	}
@@ -2763,7 +2763,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 				}
 			});
 		} else {
-			SDL_Log("elements_modal: atlas_progress value_var=\"%s\" — "
+			em_logf("elements_modal: atlas_progress value_var=\"%s\" — "
 			        "dynamic_cast 失敗 (share された型が違う?)",
 			        value_var.c_str());
 		}
@@ -2846,7 +2846,7 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 {
 	const auto* tabs_arr = get_array(o, "tabs");
 	if (!tabs_arr || tabs_arr->empty()) {
-		SDL_Log("elements_modal: tab_view without 'tabs'");
+		em_logf("elements_modal: tab_view without 'tabs'");
 		return nullptr;
 	}
 
@@ -2887,7 +2887,7 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 		auto tab_btn = ce::share(ce::choice(std::move(wrapped)));
 		auto choice  = std::dynamic_pointer_cast<ce::basic_choice>(tab_btn);
 		if (!choice) {
-			SDL_Log("elements_modal: tab_view tab[%zu] choice cast failed",
+			em_logf("elements_modal: tab_view tab[%zu] choice cast failed",
 			        tab_btn_elems.size());
 			return nullptr;
 		}
@@ -2905,7 +2905,7 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 	}
 
 	if (choices_owner->empty()) {
-		SDL_Log("elements_modal: tab_view has no valid tabs");
+		em_logf("elements_modal: tab_view has no valid tabs");
 		return nullptr;
 	}
 
@@ -2992,7 +2992,7 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 {
 	auto child = build_child(o);
 	if (!child) {
-		SDL_Log("elements_modal: labeled_row without 'child'");
+		em_logf("elements_modal: labeled_row without 'child'");
 		return nullptr;
 	}
 	auto text = string_or(o, "label");
@@ -3104,7 +3104,7 @@ std::function<void(ce::view&)> build_input_applier(
 			auto pb = parse_pad_button(pad_name);
 			auto kc = parse_key_code(key_name);
 			if (pb == ce::pad_button::unknown || kc == ce::key_code::unknown) {
-				SDL_Log("elements_modal: pad_bindings: unknown pad=%s key=%s",
+				em_logf("elements_modal: pad_bindings: unknown pad=%s key=%s",
 					pad_name.c_str(), key_name.c_str());
 				continue;
 			}
@@ -3130,7 +3130,7 @@ std::function<void(ce::view&)> build_input_applier(
 			if (!key_name.empty()) {
 				auto kc = parse_key_code(key_name);
 				if (kc == ce::key_code::unknown) {
-					SDL_Log("elements_modal: shortcut: unknown key=%s", key_name.c_str());
+					em_logf("elements_modal: shortcut: unknown key=%s", key_name.c_str());
 					continue;
 				}
 				cfg->key_shortcuts.push_back({kc, mods, target, force});
@@ -3140,13 +3140,13 @@ std::function<void(ce::view&)> build_input_applier(
 			if (!pad_name.empty()) {
 				auto pb = parse_pad_button(pad_name);
 				if (pb == ce::pad_button::unknown) {
-					SDL_Log("elements_modal: shortcut: unknown pad=%s", pad_name.c_str());
+					em_logf("elements_modal: shortcut: unknown pad=%s", pad_name.c_str());
 					continue;
 				}
 				cfg->pad_shortcuts.push_back({pb, target, force});
 				continue;
 			}
-			SDL_Log("elements_modal: shortcut: needs 'key' or 'pad'");
+			em_logf("elements_modal: shortcut: needs 'key' or 'pad'");
 		}
 	}
 
@@ -3168,7 +3168,7 @@ std::function<void(ce::view&)> build_input_applier(
 		for (auto const& s : cfg->key_shortcuts) {
 			auto it = id_map_shared->find(s.target);
 			if (it == id_map_shared->end()) {
-				SDL_Log("elements_modal: shortcut target not found: %s",
+				em_logf("elements_modal: shortcut target not found: %s",
 					s.target.c_str());
 				continue;
 			}
@@ -3178,7 +3178,7 @@ std::function<void(ce::view&)> build_input_applier(
 		for (auto const& s : cfg->pad_shortcuts) {
 			auto it = id_map_shared->find(s.target);
 			if (it == id_map_shared->end()) {
-				SDL_Log("elements_modal: shortcut target not found: %s",
+				em_logf("elements_modal: shortcut target not found: %s",
 					s.target.c_str());
 				continue;
 			}
@@ -3195,7 +3195,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 {
 	parsed_layout result;
 	if (!root.is<picojson::object>()) {
-		SDL_Log("elements_modal: top-level must be an object");
+		em_logf("elements_modal: top-level must be an object");
 		return result;
 	}
 	const auto& o = root.get<picojson::object>();
@@ -3291,12 +3291,12 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 				path_str = string_or(so, "path");
 				scale = static_cast<float>(number_or(so, "scale", 1.0));
 			} else {
-				SDL_Log("elements_modal: atlases[\"%s\"] must be string or object",
+				em_logf("elements_modal: atlases[\"%s\"] must be string or object",
 				        name.c_str());
 				continue;
 			}
 			if (path_str.empty()) {
-				SDL_Log("elements_modal: atlases[\"%s\"] missing path",
+				em_logf("elements_modal: atlases[\"%s\"] missing path",
 				        name.c_str());
 				continue;
 			}
@@ -3304,10 +3304,10 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			try {
 				auto pm = std::make_shared<ce::pixmap>(full, scale);
 				builder.atlases()[name] = pm;
-				SDL_Log("elements_modal: loaded atlas \"%s\" from \"%s\"",
+				em_logf("elements_modal: loaded atlas \"%s\" from \"%s\"",
 				        name.c_str(), full.string().c_str());
 			} catch (std::exception const& e) {
-				SDL_Log("elements_modal: failed to load atlas \"%s\" "
+				em_logf("elements_modal: failed to load atlas \"%s\" "
 				        "from \"%s\": %s",
 				        name.c_str(), full.string().c_str(), e.what());
 			}
@@ -3318,7 +3318,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	if (auto* v = get_field(o, "content")) content = builder.build(*v);
 
 	if (!content) {
-		SDL_Log("elements_modal: missing or invalid 'content'");
+		em_logf("elements_modal: missing or invalid 'content'");
 		return result;
 	}
 
@@ -3385,7 +3385,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 					ts.duration_ms = static_cast<int>(d->get<double>());
 				}
 			} else {
-				SDL_Log("elements_modal: transitions[\"%s\"] must be string "
+				em_logf("elements_modal: transitions[\"%s\"] must be string "
 				        "or object", kv.first.c_str());
 				continue;
 			}
@@ -3430,7 +3430,7 @@ parsed_layout parse_from_string(const std::string& json_utf8,
 	std::string err;
 	picojson::parse(v, preprocessed.cbegin(), preprocessed.cend(), &err);
 	if (!err.empty()) {
-		SDL_Log("elements_modal: parse error: %s", err.c_str());
+		em_logf("elements_modal: parse error: %s", err.c_str());
 		return {};
 	}
 	return build_top_level(v, std::move(cb), resource_base);
@@ -3448,18 +3448,18 @@ app_manifest parse_app_manifest(const std::string& json_utf8)
 	std::string err;
 	picojson::parse(v, preprocessed.cbegin(), preprocessed.cend(), &err);
 	if (!err.empty()) {
-		SDL_Log("elements_modal: manifest parse error: %s", err.c_str());
+		em_logf("elements_modal: manifest parse error: %s", err.c_str());
 		return m;
 	}
 	if (!v.is<picojson::object>()) {
-		SDL_Log("elements_modal: manifest top-level must be object");
+		em_logf("elements_modal: manifest top-level must be object");
 		return m;
 	}
 	const auto& o = v.get<picojson::object>();
 
 	m.entry = string_or(o, "entry");
 	if (m.entry.empty()) {
-		SDL_Log("elements_modal: manifest missing 'entry'");
+		em_logf("elements_modal: manifest missing 'entry'");
 		return m;
 	}
 
@@ -3468,13 +3468,13 @@ app_manifest parse_app_manifest(const std::string& json_utf8)
 			if (kv.second.is<std::string>()) {
 				m.screens[kv.first] = kv.second.get<std::string>();
 			} else {
-				SDL_Log("elements_modal: manifest screens[\"%s\"] must be "
+				em_logf("elements_modal: manifest screens[\"%s\"] must be "
 				        "string (= JSON file path)", kv.first.c_str());
 			}
 		}
 	}
 	if (m.screens.find(m.entry) == m.screens.end()) {
-		SDL_Log("elements_modal: manifest entry '%s' not in screens map",
+		em_logf("elements_modal: manifest entry '%s' not in screens map",
 		        m.entry.c_str());
 		return m;
 	}

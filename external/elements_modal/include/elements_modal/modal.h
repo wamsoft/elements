@@ -23,7 +23,15 @@
 #ifndef ELEMENTS_MODAL_MODAL_H
 #define ELEMENTS_MODAL_MODAL_H
 
-#include <SDL3/SDL.h>
+// 入力イベント転送 API (overlay_session::on_*) は host 非依存な cycfi の入力型
+// (mouse_button / key_code / pad_button / pad_axis) で受ける。 native (SDL /
+// Win32 / …) → cycfi のマッピングはホストアダプタの責務。
+#include <elements/base_view.hpp>
+
+// run_modal の config::parent が使う SDL_Window はポインタとしてのみ現れるので
+// 前方宣言で足りる (win32 host ビルドは SDL3 を一切引かない)。 実体 (run_modal)
+// は modal.cpp = SDL host 専用でのみ定義・ビルドされる。
+struct SDL_Window;
 
 #include <cstdint>
 #include <functional>
@@ -333,9 +341,13 @@ public:
 
 	// --- SDL イベント転送 (surface logical 座標で渡す) ---
 
-	//! SDL_BUTTON_LEFT / MIDDLE / RIGHT 等、 mods は SDL_KMOD_* の OR
-	void on_mouse_down(float surface_x, float surface_y, int button, int mods);
-	void on_mouse_up  (float surface_x, float surface_y, int button, int mods);
+	//! button = cycfi::elements::mouse_button::what (left/middle/right)、
+	//! mods は cycfi::elements の mod_shift / mod_control / mod_alt の OR。
+	//! native (SDL_BUTTON_* / SDL_KMOD_* 等) からの変換はホストアダプタが行う。
+	void on_mouse_down(float surface_x, float surface_y,
+	                   cycfi::elements::mouse_button::what button, int mods);
+	void on_mouse_up  (float surface_x, float surface_y,
+	                   cycfi::elements::mouse_button::what button, int mods);
 	void on_mouse_move(float surface_x, float surface_y, int mods);
 	void on_mouse_wheel(float dx, float dy,
 	                    float surface_mouse_x, float surface_mouse_y);
@@ -343,26 +355,29 @@ public:
 	void notify_surface_resize(int new_w, int new_h) { (void)new_w; (void)new_h; }
 	// (notify_surface_resize は将来 surface 全体の resize 対応用、 現状未実装)
 
-	//! sdl_key = SDL_Keycode 値。 mods は SDL_KMOD_* の OR。
+	//! key = cycfi::elements::key_code (host 非依存な GLFW 系スキーム)。
+	//! mods は mod_shift / mod_control / mod_alt の OR。 native keycode →
+	//! key_code の変換はホストアダプタが行う (SDL 版は sdl_key_to_ce 等)。
 	//! @return true: ダイアログが入力を消費した (Esc / focus widget が処理) /
 	//!         false: 未処理。 ホスト側はこれを見て、 非モーダル時に未処理キーを
 	//!         ゲームへ素通しできる (キーボードフォーカスの pass-through)。
-	bool on_key_down(int sdl_key, int mods);
-	bool on_key_up  (int sdl_key, int mods);
+	bool on_key_down(cycfi::elements::key_code key, int mods);
+	bool on_key_up  (cycfi::elements::key_code key, int mods);
 
 	//! UTF-8 テキスト入力 (SDL_EVENT_TEXT_INPUT の text)。
 	void on_text_input(const char* utf8_text);
 
-	//! ゲームパッドの離散ボタンイベント。 sdl_gamepad_button は
-	//! SDL_GAMEPAD_BUTTON_SOUTH 等の値、 down は press=true / release=false。
-	//! 未対応ボタン (SDL_GAMEPAD_BUTTON_*_PADDLE 等) は内部で無視される。
+	//! ゲームパッドの離散ボタンイベント。 button は cycfi::elements::pad_button
+	//! (a/b/x/y/dpad_*/lb/rb/… )、 down は press=true / release=false。
+	//! unknown は内部で無視される。 native (SDL_GAMEPAD_BUTTON_* 等) からの変換は
+	//! ホストアダプタが行う。
 	//! @return true: 消費 (既知ボタン) / false: 未対応で無視。
-	bool on_pad_button(int sdl_gamepad_button, bool down);
+	bool on_pad_button(cycfi::elements::pad_button button, bool down);
 
-	//! ゲームパッドのアナログ軸イベント。 sdl_gamepad_axis は
-	//! SDL_GAMEPAD_AXIS_LEFTX 等の値、 raw_value は SDL の int16 範囲
-	//! (-32768..32767、 トリガは 0..32767)。 内部で [-1.0, +1.0] に正規化。
-	void on_pad_axis(int sdl_gamepad_axis, int raw_value);
+	//! ゲームパッドのアナログ軸イベント。 axis は cycfi::elements::pad_axis
+	//! (left_x/left_y/right_x/right_y/lt/rt)、 value は正規化済み [-1.0, +1.0]
+	//! (トリガは 0..1)。 native の生値 (SDL int16 等) → 正規化はホストアダプタが行う。
+	void on_pad_axis(cycfi::elements::pad_axis axis, float value);
 
 private:
 	struct impl;
