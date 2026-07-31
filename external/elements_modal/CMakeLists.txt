@@ -140,6 +140,13 @@ if (ELEMENTS_MODAL_BUILD_CROSSHOST_EXAMPLE)
 	if (ELEMENTS_HOST_UI_LIBRARY STREQUAL "win32")
 		# WinMain エントリなので GUI サブシステム。
 		add_executable(elements_modal_crosshost_example WIN32 examples/overlay_crosshost.cpp)
+		# Per-Monitor V2 DPI-aware マニフェストを埋め込む (HiDPI で OS ビットマップ
+		# 拡大を防ぎ SDL host と DPI 挙動を揃える)。 MSVC リンカで embed。
+		if (MSVC)
+			target_link_options(elements_modal_crosshost_example PRIVATE
+				/MANIFEST:EMBED
+				"/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/examples/overlay_crosshost.manifest")
+		endif()
 	else()
 		add_executable(elements_modal_crosshost_example examples/overlay_crosshost.cpp)
 	endif()

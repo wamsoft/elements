@@ -3,8 +3,7 @@
 //
 // overlay_session::on_* は host 非依存な cycfi の入力型 (mouse_button /
 // key_code / pad_button / pad_axis) を受ける。 このヘッダは SDL イベントの
-// 生値をそれらへ変換する inline ヘルパを提供する。 SDL を使うホスト
-// (elements_modal の SDL サンプル、 krkrz の SDL DrawDevice アダプタ等) が
+// 生値をそれらへ変換する inline ヘルパを提供する。 SDL を使うホストアプリが
 // include して使う。 SDL を引かないホスト (win32 等) は win32_input.h を使う。
 //
 // これは「native → 中立 (cycfi)」マッピングをホスト側に置く設計の SDL 実装。

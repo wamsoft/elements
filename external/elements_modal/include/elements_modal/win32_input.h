@@ -3,9 +3,8 @@
 //
 // overlay_session::on_* は host 非依存な cycfi の入力型を受ける。 このヘッダは
 // Win32 の仮想キーコード (VK_*) / マウス / 修飾キー状態を cycfi の入力型へ変換
-// する inline ヘルパを提供する。 Win32 ネイティブなホスト (krkrz の WINVER
-// DrawDevice アダプタ、 Win32 サンプル等) が include して使う。 SDL を使う
-// ホストは sdl_input.h を使う。
+// する inline ヘルパを提供する。 Win32 ネイティブなホストアプリが include して
+// 使う。 SDL を使うホストは sdl_input.h を使う。
 //
 // sdl_input.h と対になる「native → 中立 (cycfi)」マッピングの Win32 実装。
 // ライブラリ本体 (overlay_session) は Win32 にも SDL にも依存しない。
