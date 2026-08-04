@@ -1390,6 +1390,9 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 	auto placeholder = string_or(o, "placeholder");
 	std::string id = string_or(o, "id");
 	float size = static_cast<float>(number_or(o, "size", 1.0));
+	// 初期値: "text"(優先) / "value"。空でなければエディットに事前投入する。
+	std::string initial = string_or(o, "text");
+	if (initial.empty()) initial = string_or(o, "value");
 
 	auto pair = ce::input_box(placeholder, size);
 	if (!id.empty()) {
@@ -1398,6 +1401,12 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 		pair.second->on_text = [cb_id, user_cb](std::string_view text) {
 			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{std::string(text)});
 		};
+	}
+	if (!initial.empty()) {
+		// set_text はプログラム的変更で on_text を発火しないため、
+		// 初期値も結果に載るよう明示的にコールバックへ流す。
+		pair.second->set_text(initial);
+		if (!id.empty() && _cb) _cb(id, /*is_button_click=*/false, value_t{initial});
 	}
 	auto shared = ce::share(std::move(pair.first));
 	register_id(o, shared);
