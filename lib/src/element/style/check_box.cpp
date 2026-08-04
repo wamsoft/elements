@@ -16,7 +16,7 @@ namespace cycfi::elements
       auto& canvas_ = ctx.canvas;
       auto canvas_state = canvas_.new_state();
       auto const& theme_ = get_theme();
-      rect box = ctx.bounds.move(15, 0);
+      rect box = ctx.bounds.move(15 * _scale, 0);
 
       box.width(box.height());
 
@@ -46,12 +46,12 @@ namespace cycfi::elements
             icon_c = icon_c.level(0.2);
 
          if (value || tracking)
-            draw_icon(canvas_, box, icons::ok, 14, icon_c);
+            draw_icon(canvas_, box, icons::ok, 14 * _scale, icon_c);
       }
       else
       {
          if (value)
-            draw_icon(canvas_, box, icons::ok, 14, outline_color);
+            draw_icon(canvas_, box, icons::ok, 14 * _scale, outline_color);
       }
 
       // Draw box
@@ -82,9 +82,9 @@ namespace cycfi::elements
          theme_.label_font_color.opacity(
             theme_.label_font_color.alpha * theme_.disabled_opacity);
       canvas_.fill_style(text_c);
-      canvas_.font(theme_.label_font);
+      canvas_.font(theme_.label_font.size(theme_.label_font._size * _scale));
       canvas_.text_align(canvas_.left | canvas_.middle);
-      float cx = box.right + 10;
+      float cx = box.right + 10 * _scale;
       float cy = ctx.bounds.top + (ctx.bounds.height() / 2);
       canvas_.fill_text(_text.c_str(), point{cx, cy});
    }

@@ -21,9 +21,9 @@ namespace cycfi::elements
       void                    draw(context const& ctx) override;
    };
 
-   inline auto radio_button(std::string text)
+   inline auto radio_button(std::string text, float scale = 1.0f)
    {
-      return choice(radio_button_styler{text});
+      return choice(radio_button_styler{std::move(text), scale});
    }
 }
 

@@ -429,6 +429,12 @@ public:
 
 	void set_default_locale(std::string locale) { _default_locale = std::move(locale); }
 	void set_resource_base(std::string base) { _resource_base = std::move(base); }
+
+	// top-level "font_scale" (既定 1.0)。 明示 "size"/"size_scale" を持たない
+	// widget の既定フォント倍率として使う。 button/toggle/radio/check_box は
+	// styler の size 引数に、 label は font_size(px) の既定に流す。 1.0 のとき
+	// 従来と完全一致 (opt-in)。
+	void set_font_scale(float s) { _font_scale = (s > 0.0f) ? s : 1.0f; }
 	std::map<std::string, cycfi::elements::pixmap_ptr>& atlases() { return _atlases; }
 	element_ptr build(const picojson::value& v);
 
@@ -516,6 +522,17 @@ private:
 	event_callback _cb;
 	std::string _default_locale;
 	std::string _resource_base;
+	float _font_scale = 1.0f;   // top-level "font_scale" (既定 1.0 = 従来一致)
+
+	// widget の実効フォント倍率。 明示 "size"/"size_scale" があればそれを
+	// 優先 (resolve_font_scale = px/base)、 なければ top-level _font_scale。
+	// button/toggle/radio/check_box の styler size 引数に渡す用。
+	float effective_font_scale(const picojson::object& o) const
+	{
+		if (has_font_field(o, "size", "size_scale"))
+			return resolve_font_scale(o, "size", "size_scale");
+		return _font_scale;
+	}
 
 	// アトラス画像 (atlas_image / atlas_button / atlas_slider 用) を JSON
 	// top-level "atlases" で名前→pixmap_ptr に解決する。 同名 atlas が複数
@@ -979,6 +996,12 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	// label は font_size(px) を直接呼べる API なので px 値を渡す。
 	bool has_size = has_font_field(o, "size", "size_scale");
 	float sz = resolve_font_px(o, "size", "size_scale");
+	// 明示 size なしでも top-level font_scale が 1.0 でなければ、 その倍率を
+	// 既定サイズに適用して font_size(px) を必ず流す (label も UI 全体拡大に追従)。
+	if (!has_size && _font_scale != 1.0f) {
+		sz = ce::get_theme().label_font._size * _font_scale;
+		has_size = true;
+	}
 	bool has_color = false;
 	ce::color col;
 	if (auto* arr = get_array(o, "color")) {
@@ -1126,7 +1149,9 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 {
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
-	auto btn = ce::button(text);
+	// font_scale / 明示 size を button styler の size 引数へ (font・余白・角丸・
+	// アイコンが一括で拡大される。 draw/limits 時に theme.label_font*size を読む)。
+	auto btn = ce::button(text, effective_font_scale(o));
 	if (!id.empty()) {
 		auto cb_id = id;
 		auto cb = _cb;
@@ -1327,7 +1352,7 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	bool init = false;
 	bool_field(get_field(o, "value"), init);
 
-	auto cb = ce::check_box(text);
+	auto cb = ce::check_box(text, effective_font_scale(o));
 	cb.value(init);
 	if (!id.empty()) {
 		auto cb_id = id;
@@ -1349,7 +1374,7 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	bool init = false;
 	bool_field(get_field(o, "value"), init);
 
-	auto tb = ce::toggle_button(text);
+	auto tb = ce::toggle_button(text, effective_font_scale(o));
 	tb.value(init);
 	if (!id.empty()) {
 		auto cb_id = id;
@@ -2801,16 +2826,13 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	if (!bool_field(get_field(o, "selected"), init))
 		bool_field(get_field(o, "value"), init);
 
-	// lib 側の `radio_button(std::string)` は `choice(radio_button_styler{text})`
-	// を返す = proxy<radio_button_styler, basic_choice>。
-	auto rb = ce::radio_button(text);
+	// lib 側の `radio_button(std::string, float)` は
+	// `choice(radio_button_styler{text, scale})` を返す
+	// = proxy<radio_button_styler, basic_choice>。 scale は toggle_selector が
+	// 保持し、 limits/draw でラベルフォント・インジケータ・余白を一括拡大する。
+	// font_scale / 明示 size を実効倍率として流す。
+	auto rb = ce::radio_button(text, effective_font_scale(o));
 	rb.value(init);
-
-	// font_size 指定があれば styler 側に伝える。 lib の radio_button_styler は
-	// toggle_selector 継承で text() / relative_font_size() / font_size() を
-	// 持つ。 ただ proxy 越しのアクセスは subject() 経由になる。
-	// シンプルさ優先で size 指定は今のところ対応せず (将来必要なら styler に
-	// font_size を flowed する API を足す)。
 
 	if (!id.empty()) {
 		auto cb_id = id;
@@ -3248,6 +3270,11 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	if (auto* v = get_field(o, "locale"); v && v->is<std::string>()) {
 		builder.set_default_locale(v->get<std::string>());
 	}
+
+	// "font_scale" (float, 既定 1.0) — このダイアログのウィジェット既定フォント
+	// 倍率。 明示 size を持たない button/toggle/radio/check_box/label が追従する。
+	// 省略 (=1.0) 時は従来と完全一致 (opt-in、 他メニューへ不影響)。
+	builder.set_font_scale(static_cast<float>(number_or(o, "font_scale", 1.0)));
 
 	// "vars": {name: value} — VariableStore に初期値を登録。 build_label
 	// の text_var が参照する。 build より先に流し込んでおく。

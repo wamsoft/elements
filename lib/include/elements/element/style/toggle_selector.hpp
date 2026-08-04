@@ -20,8 +20,12 @@ namespace cycfi::elements
    ////////////////////////////////////////////////////////////////////////////
    struct toggle_selector : element
    {
-                              toggle_selector(std::string text)
-                               : _text(std::move(text))
+                              // `scale` は 1.0 = テーマ既定サイズ。 >1.0 で
+                              // ラベルフォント・インジケータ・余白を一括拡大する
+                              // (button の get_size() と同じ意味論)。 既定 1.0 は
+                              // 従来と完全一致。
+                              toggle_selector(std::string text, float scale = 1.0f)
+                               : _text(std::move(text)), _scale(scale)
                               {}
 
       view_limits             limits(basic_context const& ctx) const override;
@@ -29,13 +33,19 @@ namespace cycfi::elements
       bool                    wants_control() const override;
 
       std::string             _text;
+      float                   _scale = 1.0f;
    };
 
    inline view_limits toggle_selector::limits(basic_context const& ctx) const
    {
       auto& thm = get_theme();
-      auto  size = measure_text(ctx.canvas, _text.c_str(), thm.label_font);
-      size.x += 15 + size.y + 10 + 15;
+      auto  font = thm.label_font;
+      font = font.size(font._size * _scale);
+      auto  size = measure_text(ctx.canvas, _text.c_str(), font);
+      // 左マージン 15 + インジケータ幅 (= 文字高 size.y) + 文字との間隔 10 +
+      // 右マージン 15。 インジケータは size.y 由来なので既に scale 済み、
+      // 固定ギャップだけ scale を掛ける。
+      size.x += (15 + 10 + 15) * _scale + size.y;
       return {{size.x, size.y}, {size.x, size.y}};
    }
 

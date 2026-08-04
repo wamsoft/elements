@@ -21,9 +21,9 @@ namespace cycfi::elements
       void                    draw(context const& ctx) override;
    };
 
-   inline auto check_box(std::string text)
+   inline auto check_box(std::string text, float scale = 1.0f)
    {
-      return toggle_button(check_box_styler{text});
+      return toggle_button(check_box_styler{std::move(text), scale});
    }
 }
 
