@@ -85,6 +85,8 @@ int main()
 | `content` | element | ルート要素 |
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
+| `strings` | `{id: {lang: string}}` | i18n 文字列テーブル (StringStore)。 `text_id` / `options_id` の解決元 (後述「i18n」節) |
+| `lang` | `"ja"` 等 | i18n の初期表示言語。 実行中の切替はホストの `set_language()` |
 | `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
 | `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
 
@@ -106,10 +108,14 @@ int main()
 - `scroller` — 縦スクロール領域。 `"child"`。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 - `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
-- `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 内部の composite が **親 bounds の origin に rect をオフセット** して子を配置する (= 親 bounds の左上を基準とする相対座標)。 root に置けば bounds origin = (0, 0) なので絶対座標に見えるが、 別 canvas にネストすると外側 canvas が割り当てた領域の中で相対配置になる (排他グループの分離等で nested canvas を使う場面で重要)。 PSD ベース UI の主役。
+- `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 内部の composite が **親 bounds の origin に rect をオフセット** して子を配置する (= 親 bounds の左上を基準とする相対座標)。 root に置けば bounds origin = (0, 0) なので絶対座標に見えるが、 別 canvas にネストすると外側 canvas が割り当てた領域の中で相対配置になる (排他グループの分離等で nested canvas を使う場面で重要)。 PSD ベース UI の主役。 追加オプション:
+  - `"choice_nav": true` — この canvas の selectable な直接子 (atlas_choice / radio_button) をまとめて **1 フォーカスの左右トグルグループ**にする (後述「choice_nav」節)。
+  - 子要素の `"at_var": "varname"` — 配置 rect を変数 store で駆動 (後述「変数 store」節)。
 
 #### 入力 / state widget
-- `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。
+- `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。 追加バリエーション:
+  - `"text_id": "id"` — i18n。 StringStore の textID で現在言語の訳文を表示、 言語切替に追従 (後述「i18n」節。 優先順位 text_id > text_var > 静的 text)。
+  - `"text_list": [s0, s1, ...]` + `"index_var": "varname"` — **指定番号表示ラベル**。 変数 store の値 (10 進 index 文字列) で text_list の 1 エントリを選んで表示し、 変数変更に追従する。 picker の `index_var` と同名にすると選択連動 (機種別 SPEC 表示等)。 範囲外 index は無視 (現状維持)。
 - `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
@@ -121,9 +127,12 @@ int main()
 
 - `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (**px 絶対**) または `"size_scale"` (倍率)。 button と同じく `initial_focus` / `close_on_click` をサポート。
 - `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"` (px) / `"size_scale"` (倍率)。 同じく `initial_focus` / `close_on_click` をサポート。
-- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。
-- `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
-- `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` も対応)。
+- `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。 picker 系共通の追加フィールド:
+  - `"options_id": [...]` — i18n。 各要素を StringStore の textID として現在言語で解決 (`options` より優先)。 言語切替で選択 index を維持したまま表示文字列だけ差し替わる (後述「i18n」節)。
+  - `"index_var": "varname"` — 選択 index を変数 store と連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。
+- `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
+- `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
+- `atlas_cycle_picker` — 画像矢印ボタン式の cycle_picker (アトラス素材、 「アトラス共有」節参照)。
 - `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
 - `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (**px 絶対**) または `"font_size_scale"` (倍率) + `"child"`。 child の最初の focusable を click-focus target にする。
@@ -191,12 +200,31 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 
 各要素タイプ:
 
-- `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。
+- `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。 追加バリエーション:
+  - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。
 - `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
-- `atlas_slider` — `"atlas": name` + `"track": [x,y,w,h]` + `"thumb": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 値変化で `value_t{double pos}` を発火。
-- `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
+- `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
+  - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。
+  - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
+  - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作の on_change は通常どおり発火。 値は `"0.75"` 形式の 10 進文字列。
+- `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
+- `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
+
+  ```jsonc
+  { "type": "atlas_cycle_picker", "atlas": "ui", "id": "machine",
+    "left":  { "normal": [x,y,w,h], "hilite": [x,y,w,h] },   // 左矢印 (hilite 省略時 normal と同じ)
+    "right": { "normal": [x,y,w,h], "hilite": [x,y,w,h] },   // 右矢印
+    "left_at":  [dx,dy,w,h],   // 矢印/テキストの配置。 widget bounds 左上原点の相対 px
+    "right_at": [dx,dy,w,h],
+    "text_at":  [dx,dy,w,h],   // 選択テキスト表示領域 (中央寄せ描画)
+    "options": ["A", "B"],     // または "options_id" (i18n、 options より優先)
+    "initial": 0, "font_size": 30, "color": [r,g,b,a],
+    "index_var": "machine" }   // 任意: 選択 index を変数 store と連動
+  ```
+
+  値変化で `value_t{int64_t index}` を発火。 `options_id` / `index_var` / `initial_focus` / `vars_on_focus` の意味は cycle_picker と同じ。
 
 ##### atlas_button / atlas_toggle / atlas_choice の text overlay
 
@@ -252,6 +280,29 @@ lib の `basic_choice::activate / click` は次の処理をする:
 4. composite の context を refresh
 
 つまり「**find_composite が最初に当たる composite**」が排他スコープ。 atlas_button / atlas_toggle の text overlay は `label_decoration` (proxy_base 派生、 composite ではない) を使うので find_composite を素通りする — find_composite はあくまで **canvas / layer / htile / vtile / 内側 canvas** などの composite_base 派生で止まる。
+
+#### choice_nav (排他グループの 1 フォーカス左右トグル化)
+
+排他グループの内側 canvas に `"choice_nav": true` を付けると、 グループ全体が**方向フォーカスナビゲーションの 1 focusable** になり、 メンバー個別のフォーカスは無くなる:
+
+```jsonc
+{ "at": [822, 218, 790, 46],
+  "type": "canvas", "width": 790, "height": 46,
+  "id": "grp_display_mode", "choice_nav": true,
+  "vars_on_focus": { "help": "表示モードを切り替えます。" },
+  "children": [
+    { "at": [  0, 0, 389, 46], "type": "atlas_choice", "id": "mode_full", "selected": true, "frames": { ... } },
+    { "at": [401, 0, 389, 46], "type": "atlas_choice", "id": "mode_dot",  "frames": { ... } }
+  ] }
+```
+
+- **←→ キー / パッド横軸で選択メンバーが移動** (端で止まる = wrap しない。 端からさらに押した左右は view のフォーカスナビへ素通し — segmented_picker と同じ)。
+- 選択変更は**新しく選ばれたメンバーの `on_click(true)`** でイベント発火 (= マウスクリック時と同じ semantics。 event_callback には**メンバーの id** が届く)。
+- **フォーカス表示 = 選択中メンバーの hilite 兼用**: グループが focus を持つ間、 選択中メンバーが hilite フレーム (`on_hilite`) で描かれる。 マウス hover の hilite とは独立。
+- マウスクリックは従来どおり子へ素通し (排他動作も従来のまま)。
+- canvas の `"id"` / `"vars_on_focus"` / `"initial_focus"` は**グループ自体**に配線される (focused-id polling / help 連動 / 初期フォーカスがグループ単位になる)。
+- 対象は canvas の **selectable な直接子** (atlas_choice / radio_button)。 ネストした canvas の中までは辿らない。
+- 実装: lib の `focus_unit_element` (focus.hpp — サブツリーを方向ナビの 1 focusable として扱う proxy 基底) の派生 `choice_nav_group`。 各行が 1 フォーカス (picker / choice_nav グループ / slider) になり、 上下ナビが行単位で自然になる。
 
 #### resource_base (相対パスの解決起点)
 
@@ -311,6 +362,51 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 - `vars_on_focus` は dict なので 1 widget で複数変数を一度に書ける。
 - ホストからも `overlay_session::set_var(name, value)` で書ける (focus poll 以外の書き手。 ソフトウェアキーボードの入力文字列表示のような「ホスト状態 → label」の動的反映に使う)。 反映は次フレームの `render_to_buffer`。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
+
+#### 変数連動ファミリ一覧
+
+変数 store を読む / 書くフィールドの早見。 いずれも同名変数で連動する:
+
+| フィールド | 対象 widget | 向き | 値の形式 |
+|---|---|---|---|
+| `text_var` | label | 読み | 表示文字列 |
+| `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
+| `text_list` + `index_var` | label | 読み | 10 進 index (`"2"`) |
+| `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
+| `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **書き** (選択変更時 + build 時に初期 index) / 既値があれば initial 採用 | 10 進 index |
+| `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
+| `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
+
+- `at_var` — canvas 子要素の配置 rect を変数で駆動する (キャラ位置マーカー等の座標アニメ用機構)。 `"x,y"` はサイズ維持で位置のみ、 `"x,y,w,h"` は矩形ごと差し替え。 初期値は `"at"`。 build 時に変数へ既値があれば即適用。 パース不能 / 要素不足の値は無視 (現状維持)。
+
+  ```jsonc
+  { "at": [80, 470, 128, 128],
+    "type": "atlas_image", "atlas": "ui", "rect": [220, 0, 128, 128],
+    "at_var": "chara_pos" }   // set_var("chara_pos", "600,400") で移動
+  ```
+
+- **picker → text_list / rect_list の選択連動**: picker に `index_var` を付け、 表示側 (label の text_list / atlas_image の rect_list) に同名の `index_var` を付けるだけで、 選択変更が表示に即時反映される (build 時に picker が初期 index を書き込むので初期表示も揃う)。 機種選択 → スクリーンショット / SPEC 表示のような連動 UI が JSON だけで組める。
+
+### i18n (`strings` / `lang` / `text_id` / `options_id`)
+
+textID → 言語別文字列の対応表 (StringStore) による実行時多言語化。 言語切替は再 build なしで全 widget に反映される:
+
+```jsonc
+{
+    "lang": "ja",                                  // 初期言語
+    "strings": {
+        "menu.save":  { "ja": "セーブ", "en": "Save" },
+        "opt.speed.slow":   { "ja": "遅い",   "en": "Slow" },
+        "opt.speed.normal": { "ja": "普通",   "en": "Normal" }
+    },
+    "content": { ... }
+}
+```
+
+- label / button 系の `"text_id": "menu.save"` — 現在言語の訳文を表示。 `"text"` は i18n 非対応ランタイム / 未知 id 向けの静的 fallback。
+- picker 系の `"options_id": ["opt.speed.slow", ...]` — options を textID で与える (`options` より優先)。 言語切替時は**選択 index を維持**したまま表示文字列だけ `set_options` で差し替わる。
+- 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
+- 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
 
 ### 画面遷移 (`transitions` + マニフェスト)
 
