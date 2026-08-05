@@ -103,11 +103,14 @@ namespace cycfi::elements
       // the button. Default in basic_button = momentary press fires on_click.
       virtual void      activate(context const& ctx);
 
+      // Public: hosts may drive the hilite state programmatically (e.g. a
+      // choice-nav group showing focus via the selected member's hilite).
+      void              hilite(bool val);
+
    protected:
 
       bool              set_value(bool val);
       void              tracking(bool val);
-      void              hilite(bool val);
       void              focused(bool val);
 
    private:

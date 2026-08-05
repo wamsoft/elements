@@ -7,6 +7,7 @@
 #include <elements/window.hpp>
 #include <elements/element/button.hpp>
 #include <elements/element/composite.hpp>
+#include <elements/element/focus.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/element/proxy.hpp>
 #include <elements/support/context.hpp>
@@ -383,6 +384,13 @@
             // 区別される。 ここで wants_focus を見ると装飾系ごと脱落する。
             if (!current.wants_control())
                return;
+            // focus_unit_element: subtree 全体を 1 つの focusable として
+            // 扱う (下の composite には降りない)。
+            if (dynamic_cast<focus_unit_element*>(&current))
+            {
+               out.push_back({&current, ctx.bounds});
+               return;
+            }
             if (proxy_chain_has_composite(&p->subject()))
             {
                context sctx{ctx, &p->subject(), ctx.bounds};

@@ -12,6 +12,8 @@
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 
 #include <cctype>
+#include <chrono>    // choice_nav_group の pad エッジ検出
+#include <cmath>
 #include <cstdlib>   // std::atof (pj_num)
 #include <cstring>
 #include <utility>
@@ -2250,6 +2252,135 @@ namespace
 	};
 }
 
+//---------------------------------------------------------------------------
+// choice_nav_group — "choice_nav": true の canvas グループを 1 フォーカス
+// 対象にする proxy (focus_unit_element 派生 = 方向フォーカスナビは中に
+// 降りず、 このグループ自体が 1 focusable になる)。
+// 左右キー / パッド横軸で選択メンバー (selectable = atlas_choice /
+// radio_button な子) を切替え、 クリック時と同じ semantics でイベント発火
+// (新しく選ばれた側の on_click(true) のみ)。 端で止まる (wrap しない) ので、
+// 端からさらに押した左右は view の focus nav に素通しになる (segmented_picker
+// と同じ)。 フォーカス表示 = 選択中メンバーの hilite 兼用 (focus 中だけ
+// 選択メンバーを hilite フレームにする)。 マウスクリックは従来どおり子へ。
+//---------------------------------------------------------------------------
+namespace
+{
+	class choice_nav_group : public ce::focus_unit_element
+	{
+	public:
+		choice_nav_group(element_ptr subject_, std::vector<element_ptr> members)
+		 : _subject(std::move(subject_))
+		 , _members(std::move(members))
+		{}
+
+		ce::element const& subject() const override { return *_subject; }
+		ce::element&       subject() override       { return *_subject; }
+
+		void draw(ce::context const& ctx) override
+		{
+			sync_hilite();
+			ce::proxy_base::draw(ctx);
+		}
+
+		bool key(ce::context const& ctx, ce::key_info k) override
+		{
+			if (!ctx.enabled)
+				return false;
+			if (k.action != ce::key_action::press &&
+			    k.action != ce::key_action::repeat)
+				return false;
+			int delta = 0;
+			switch (k.key) {
+			case ce::key_code::left:  delta = -1; break;
+			case ce::key_code::right: delta = +1; break;
+			default: return false;
+			}
+			if (step_selection(delta)) {
+				ctx.view.refresh(ctx);
+				return true;
+			}
+			return false;   // 端 → view の focus nav へ素通し
+		}
+
+		bool pad_axis(ce::context const& ctx, ce::pad_axis_info info) override
+		{
+			// picker 系と同じエッジ検出 (engage 0.55 / quiet 35ms)。
+			if (!ctx.enabled)
+				return false;
+			if (info.axis != ce::pad_axis::dpad_x &&
+			    info.axis != ce::pad_axis::left_x &&
+			    info.axis != ce::pad_axis::right_x)
+				return false;
+			float mag = std::abs(info.value);
+			if (mag < 0.20f)
+				return false;
+			if (mag > 0.55f) {
+				auto now = std::chrono::steady_clock::now();
+				if (now - _last_pad_step >= std::chrono::milliseconds(35)) {
+					if (step_selection(info.value < 0.0f ? -1 : +1)) {
+						_last_pad_step = now;
+						ctx.view.refresh(ctx);
+						return true;
+					}
+					return false;
+				}
+				_last_pad_step = now;
+			}
+			return true;
+		}
+
+	private:
+		int selected_index() const
+		{
+			for (int i = 0; i < int(_members.size()); ++i) {
+				if (auto* s = ce::find_element<ce::selectable*>(_members[i].get()))
+					if (s->is_selected()) return i;
+			}
+			return -1;
+		}
+
+		bool step_selection(int delta)
+		{
+			if (_members.empty())
+				return false;
+			int cur = selected_index();
+			int next = (cur < 0) ? (delta > 0 ? 0 : int(_members.size()) - 1)
+			                     : cur + delta;
+			if (next < 0 || next >= int(_members.size()) || next == cur)
+				return false;
+			if (cur >= 0)
+				if (auto* s = ce::find_element<ce::selectable*>(_members[cur].get()))
+					s->select(false);
+			if (auto* s = ce::find_element<ce::selectable*>(_members[next].get()))
+				s->select(true);
+			if (auto* b = ce::find_element<ce::basic_button*>(_members[next].get()))
+				if (b->on_click) b->on_click(true);
+			return true;
+		}
+
+		void sync_hilite()
+		{
+			// focus 中だけ選択メンバーの hilite を管理する。 非 focus 時は
+			// 手を出さない (マウス hover の hilite を殺さないため)。
+			int want = focused() ? selected_index() : -1;
+			if (want == _hilited)
+				return;
+			if (_hilited >= 0 && _hilited < int(_members.size()))
+				if (auto* b = ce::find_element<ce::basic_button*>(_members[_hilited].get()))
+					b->hilite(false);
+			if (want >= 0)
+				if (auto* b = ce::find_element<ce::basic_button*>(_members[want].get()))
+					b->hilite(true);
+			_hilited = want;
+		}
+
+		element_ptr _subject;
+		std::vector<element_ptr> _members;
+		int _hilited = -1;
+		std::chrono::steady_clock::time_point _last_pad_step{};
+	};
+}
+
 element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 {
 	const auto* children = get_array(o, "children");
@@ -2260,6 +2391,11 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 
 	float width  = static_cast<float>(number_or(o, "width", 0.0));
 	float height = static_cast<float>(number_or(o, "height", 0.0));
+
+	// "choice_nav": true — この canvas の selectable な直接子 (atlas_choice /
+	// radio_button) をまとめて 1 フォーカス対象の左右トグルグループにする。
+	bool choice_nav = truthy_field(get_field(o, "choice_nav"));
+	std::vector<element_ptr> nav_members;
 
 	auto layer = std::make_shared<canvas_layer_element>();
 	for (auto& v : *children) {
@@ -2281,12 +2417,29 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		auto widget = build(v);
 		if (!widget) continue;
 
+		if (choice_nav && ce::find_element<ce::selectable*>(widget.get()))
+			nav_members.push_back(widget);
+
 		// canvas_layer_element に直接 (rect, widget) で追加。 floating ラップ
 		// は使わない (相対座標を canvas_layer_element の bounds_of で計算する)。
 		layer->add(ce::rect{x, y, x + w, y + h}, std::move(widget));
 	}
 
 	element_ptr root = layer;
+	if (choice_nav) {
+		if (nav_members.empty()) {
+			em_logf("elements_modal: canvas choice_nav: no selectable children");
+		} else {
+			auto grp = std::make_shared<choice_nav_group>(
+				root, std::move(nav_members));
+			std::string id = string_or(o, "id");
+			note_focusable(id, grp);
+			register_id(o, grp);
+			note_initial_focus(o, grp);
+			note_vars_on_focus(o, id);
+			root = grp;
+		}
+	}
 	if (width > 0.0f) {
 		root = ce::share(ce::hmin_size(width, ce::hold_any(root)));
 	}

@@ -62,6 +62,38 @@ namespace cycfi::elements
    {
       return {std::forward<Subject>(subject)};
    }
+
+   /**
+    * \class focus_unit_element
+    * \brief
+    *    Presents its whole subtree (typically a composite) to the view's
+    *    focus machinery as ONE atomic focusable unit.
+    *
+    *    The directional focus navigation (view::arrow_focus_navigation)
+    *    normally descends into composites and collects the individual
+    *    focusable children. A focus_unit_element stops that descent: the
+    *    unit itself is collected instead, and begin_focus / end_focus are
+    *    NOT forwarded to the subject (the unit holds the focus flag).
+    *
+    *    Derive from this and override key() / pad_axis() to give the unit
+    *    its behavior (e.g. a choice group where Left/Right move the
+    *    selection between member buttons). Mouse clicks pass through to
+    *    the children as usual (proxy_base default).
+    */
+   class focus_unit_element : public proxy_base
+   {
+   public:
+
+      bool                    wants_control() const override { return true; }
+      bool                    wants_focus() const override   { return true; }
+      void                    begin_focus(focus_request) override { _has_focus = true; }
+      bool                    end_focus() override { _has_focus = false; return true; }
+      bool                    focused() const { return _has_focus; }
+
+   private:
+
+      bool                    _has_focus = false;
+   };
 }
 
 #endif
