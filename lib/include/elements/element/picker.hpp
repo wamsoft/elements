@@ -48,6 +48,7 @@ namespace cycfi::elements
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
       bool                    step(int delta);
+      void                    set_options(std::vector<std::string> options);
 
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
@@ -100,6 +101,7 @@ namespace cycfi::elements
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
       bool                    step(int delta);
+      void                    set_options(std::vector<std::string> options);
 
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
@@ -152,6 +154,7 @@ namespace cycfi::elements
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
       bool                    step(int delta);
+      void                    set_options(std::vector<std::string> options);
 
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }

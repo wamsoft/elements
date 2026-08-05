@@ -620,6 +620,27 @@ private:
 		}
 	}
 
+	// i18n: "options_id" 付き picker を言語切替に追従させる。 言語が変わったら
+	// 各 textID を StringStore で再解決して set_options (選択 index は維持)。
+	// closure は StringStore 自身 (_lang_subs) に格納されるので raw StringStore*
+	// 捕捉で生存問題なし (shared_ptr 捕捉だと自己参照サイクルになる)。
+	template <typename P>
+	void subscribe_picker_options(std::shared_ptr<P> p,
+	                              const std::vector<std::string>& opt_ids)
+	{
+		if (opt_ids.empty() || !p) return;
+		std::weak_ptr<P> w = p;
+		StringStore* ss = _strings.get();
+		_strings->subscribe_language([w, ss, ids = opt_ids](const std::string&) {
+			if (auto sp = w.lock()) {
+				std::vector<std::string> opts;
+				opts.reserve(ids.size());
+				for (const auto& tid : ids) opts.push_back(ss->resolve(tid));
+				sp->set_options(std::move(opts));
+			}
+		});
+	}
+
 	// type ごとのビルダ
 	element_ptr build_label       (const picojson::object& o);
 	element_ptr build_button      (const picojson::object& o);
@@ -1608,6 +1629,20 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 			if (v.is<std::string>()) opts.push_back(v.get<std::string>());
 		}
 	}
+	// i18n: "options_id" — 各要素を StringStore の textID として現在言語で
+	// 解決 ("options" より優先)。 言語切替は subscribe_picker_options で追従。
+	std::vector<std::string> opt_ids;
+	if (auto* arr = get_array(o, "options_id")) {
+		opt_ids.reserve(arr->size());
+		for (const auto& v : *arr) {
+			if (v.is<std::string>()) opt_ids.push_back(v.get<std::string>());
+		}
+	}
+	if (!opt_ids.empty()) {
+		opts.clear();
+		opts.reserve(opt_ids.size());
+		for (const auto& tid : opt_ids) opts.push_back(_strings->resolve(tid));
+	}
 	if (opts.empty()) {
 		em_logf("elements_modal: %s without 'options'",
 			variant == 0 ? "cycle_picker"
@@ -1642,18 +1677,21 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		note_focusable(id, p);
+		subscribe_picker_options(p, opt_ids);
 		shared = p;
 	} else if (variant == 1) {
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		note_focusable(id, p);
+		subscribe_picker_options(p, opt_ids);
 		shared = p;
 	} else {
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		note_focusable(id, p);
+		subscribe_picker_options(p, opt_ids);
 		shared = p;
 	}
 	register_id(o, shared);

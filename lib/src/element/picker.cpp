@@ -97,6 +97,18 @@ namespace cycfi::elements
       }
    }
 
+   void cycle_picker::set_options(std::vector<std::string> options)
+   {
+      // Replace displayed strings (i18n relabeling). The selected index is
+      // kept (clamped only if out of range) and on_change is not fired:
+      // the selection itself is semantically unchanged.
+      _options = std::move(options);
+      if (_options.empty())
+         _index = 0;
+      else if (_index >= _options.size())
+         _index = _options.size() - 1;
+   }
+
    bool cycle_picker::step(int delta)
    {
       if (_options.size() < 2)
@@ -239,6 +251,15 @@ namespace cycfi::elements
          if (on_change)
             on_change(_index);
       }
+   }
+
+   void framed_cycle_picker::set_options(std::vector<std::string> options)
+   {
+      _options = std::move(options);
+      if (_options.empty())
+         _index = 0;
+      else if (_index >= _options.size())
+         _index = _options.size() - 1;
    }
 
    bool framed_cycle_picker::step(int delta)
@@ -452,6 +473,15 @@ namespace cycfi::elements
          if (on_change)
             on_change(_index);
       }
+   }
+
+   void segmented_picker::set_options(std::vector<std::string> options)
+   {
+      _options = std::move(options);
+      if (_options.empty())
+         _index = 0;
+      else if (_index >= _options.size())
+         _index = _options.size() - 1;
    }
 
    bool segmented_picker::step(int delta)
