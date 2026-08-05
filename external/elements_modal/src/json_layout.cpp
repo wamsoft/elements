@@ -14,6 +14,7 @@
 #include <cctype>
 #include <chrono>    // choice_nav_group の pad エッジ検出
 #include <cmath>
+#include <cstdio>    // std::sscanf (at_var)
 #include <cstdlib>   // std::atof (pj_num)
 #include <cstring>
 #include <utility>
@@ -2169,6 +2170,15 @@ namespace
 			_children.emplace_back(r, std::move(child));
 		}
 
+		// "at_var" (座標の変数駆動): 子 ix の配置 rect を差し替える。
+		// _prev_size を無効化して次 draw で relayout させる。
+		void set_rect(std::size_t ix, ce::rect r)
+		{
+			if (ix >= _children.size()) return;
+			_children[ix].first = r;
+			_prev_size = {-1.0f, -1.0f};
+		}
+
 		std::size_t size() const override { return _children.size(); }
 
 		ce::element& at(std::size_t ix) const override
@@ -2423,6 +2433,27 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		// canvas_layer_element に直接 (rect, widget) で追加。 floating ラップ
 		// は使わない (相対座標を canvas_layer_element の bounds_of で計算する)。
 		layer->add(ce::rect{x, y, x + w, y + h}, std::move(widget));
+
+		// "at_var": 配置 rect を変数で駆動 (map 画面のキャラ位置等)。 変数値は
+		// "x,y" (サイズは "at" のまま) または "x,y,w,h" の 10 進 px 文字列。
+		// パース不能 / 要素不足の値は無視 (現状維持)。 初期値は "at"。
+		if (std::string at_var = string_or(co, "at_var"); !at_var.empty()) {
+			std::size_t ix = layer->size() - 1;
+			std::weak_ptr<canvas_layer_element> wl = layer;
+			float iw = w, ih = h;
+			auto apply = [wl, ix, iw, ih](const std::string& v) {
+				float nx = 0, ny = 0, nw = 0, nh = 0;
+				int n = std::sscanf(v.c_str(), " %f , %f , %f , %f",
+				                    &nx, &ny, &nw, &nh);
+				if (n < 2) return;
+				ce::rect r = (n >= 4)
+					? ce::rect{nx, ny, nx + nw, ny + nh}
+					: ce::rect{nx, ny, nx + iw, ny + ih};
+				if (auto l = wl.lock()) l->set_rect(ix, r);
+			};
+			if (auto* cur = _vars->get(at_var)) apply(*cur);
+			_vars->subscribe(at_var, apply);
+		}
 	}
 
 	element_ptr root = layer;
@@ -2524,6 +2555,58 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	auto pm = lookup_atlas(atlas_name);
 	if (!pm) return nullptr;
 
+	bool stretch_h = false, stretch_v = false;
+	bool_field(get_field(o, "stretch_h"), stretch_h);
+	bool_field(get_field(o, "stretch_v"), stretch_v);
+
+	// "rect_list" + "index_var": ソース矩形のリストを変数 index で切替える
+	// (picker の index_var と連動する機種別スクショ等)。 rect より優先。
+	//   { "type": "atlas_image", "atlas": "ui",
+	//     "rect_list": [[x,y,w,h], ...], "index_var": "machine" }
+	// index が範囲外の値は無視 (現状維持)。 全 rect 同寸法を推奨 (limits は
+	// 現 rect 基準なので、 canvas floating の "at" 固定配置で使うこと)。
+	if (auto* rl = get_array(o, "rect_list"); rl && !rl->empty()) {
+		std::vector<ce::rect> rects;
+		for (auto& el : *rl) {
+			if (el.is<picojson::array>())
+				rects.push_back(parse_xywh(el.get<picojson::array>()));
+		}
+		if (rects.empty()) {
+			em_logf("elements_modal: atlas_image \"%s\" rect_list has no "
+			        "[x,y,w,h] entries", atlas_name.c_str());
+			return nullptr;
+		}
+		std::string index_var = string_or(o, "index_var");
+		std::size_t idx = 0;
+		if (!index_var.empty()) {
+			if (auto* cur = _vars->get(index_var)) {
+				try {
+					auto v = std::stol(*cur);
+					if (v >= 0 && static_cast<std::size_t>(v) < rects.size())
+						idx = static_cast<std::size_t>(v);
+				} catch (...) { /* fallback */ }
+			}
+		}
+		auto img = std::make_shared<ce::atlas_image>(
+			pm, rects[idx], stretch_h, stretch_v);
+		if (!index_var.empty()) {
+			std::weak_ptr<ce::atlas_image> w = img;
+			_vars->subscribe(index_var,
+				[w, rects = std::move(rects)](const std::string& v) {
+					std::size_t i = 0;
+					try {
+						auto n = std::stol(v);
+						if (n < 0 || static_cast<std::size_t>(n) >= rects.size())
+							return;
+						i = static_cast<std::size_t>(n);
+					} catch (...) { return; }
+					if (auto p = w.lock()) p->sub_rect(rects[i]);
+				});
+		}
+		register_id(o, img);
+		return img;
+	}
+
 	auto* arr = get_array(o, "rect");
 	if (!arr || arr->size() < 4) {
 		em_logf("elements_modal: atlas_image \"%s\" missing 'rect': [x,y,w,h]",
@@ -2531,10 +2614,6 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 		return nullptr;
 	}
 	ce::rect src = parse_xywh(*arr);
-
-	bool stretch_h = false, stretch_v = false;
-	bool_field(get_field(o, "stretch_h"), stretch_h);
-	bool_field(get_field(o, "stretch_v"), stretch_v);
 
 	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
 }

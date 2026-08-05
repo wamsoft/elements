@@ -38,6 +38,7 @@ namespace cycfi::elements
       rect                    source_rect(context const& ctx) const override;
 
       rect const&             sub_rect() const { return _src; }
+      void                    sub_rect(rect r) { _src = r; }
 
    private:
 
