@@ -644,6 +644,86 @@ private:
 		});
 	}
 
+	// index_var の var→picker 一方向同期 (quiet)。 picker→var は on_change 側で
+	// set 済なので、 これで index_var が双方向になる (ホストの setVar 一発で
+	// 表示も依存 widget も追従)。 set_index は on_change を発火しないので
+	// on_change → vars->set → ここ、のエコーはループしない。
+	template <typename P>
+	void subscribe_picker_index_var(std::shared_ptr<P> p,
+	                                const std::string& index_var)
+	{
+		if (index_var.empty() || !p) return;
+		std::weak_ptr<P> w = p;
+		_vars->subscribe(index_var, [w](const std::string& v) {
+			long idx = 0;
+			try { idx = std::stol(v); } catch (...) { return; }
+			if (idx < 0) return;
+			if (auto sp = w.lock()) {
+				if (static_cast<std::size_t>(idx) != sp->index())
+					sp->set_index(static_cast<std::size_t>(idx));
+			}
+		});
+	}
+
+	// "selected_var"/"selected_value": choice (atlas_choice / radio_button) を
+	// ラジオグループ変数に連動させる。 var == value のとき選択状態。 グループ
+	// 全員が同じ var を subscribe する前提なので、 ホストの setVar 一発で
+	// グループ全体の選択が入れ替わる (basic_choice::select は on_click を
+	// 発火しない quiet 操作)。 choice→var はビルダが on_click に仕込む書き戻し
+	// (選択された側のみ) で行う = 双方向。
+	void subscribe_choice_selected_var(const element_ptr& shared,
+	                                   const std::string& sel_var,
+	                                   const std::string& sel_val)
+	{
+		if (sel_var.empty() || !shared) return;
+		auto bc = std::dynamic_pointer_cast<ce::basic_choice>(shared);
+		if (!bc) {
+			em_logf("elements_modal: selected_var=\"%s\" on non-choice element",
+			        sel_var.c_str());
+			return;
+		}
+		std::weak_ptr<ce::basic_choice> w = bc;
+		_vars->subscribe(sel_var, [w, sel_val](const std::string& v) {
+			if (auto sp = w.lock()) sp->select(v == sel_val);
+		});
+	}
+
+	// selected_var 一式を JSON から読む。 selected_value 省略時は "1"
+	// (単独 ON/OFF 用途)。 var に既存値があれば初期選択状態を上書きする。
+	void read_choice_selected_var(const picojson::object& o,
+	                              std::string& sel_var, std::string& sel_val,
+	                              bool& init)
+	{
+		sel_var = string_or(o, "selected_var");
+		if (sel_var.empty()) return;
+		sel_val = string_or(o, "selected_value");
+		if (sel_val.empty()) sel_val = "1";
+		if (auto* cur = _vars->get(sel_var)) init = (*cur == sel_val);
+	}
+
+	// "enabled_var": picker 選択肢の有効/無効 mask を変数連動にする
+	// (cycle_picker / atlas_cycle_picker のみ)。 値は index 順の '0'/'1' 文字列
+	// (例 "10111011" = index 1 を無効)。 mask より後ろの index は有効扱い。
+	// step/click/pad は無効 index をスキップ、 現在選択が無効化されたら最寄りの
+	// 有効 index へ進めて on_change 発火 (依存 widget が追従する)。
+	void wire_picker_enabled_var(std::shared_ptr<ce::cycle_picker> p,
+	                             const picojson::object& o)
+	{
+		std::string var = string_or(o, "enabled_var");
+		if (var.empty() || !p) return;
+		auto apply = [](ce::cycle_picker& pk, const std::string& v) {
+			std::vector<bool> mask;
+			mask.reserve(v.size());
+			for (char c : v) mask.push_back(c != '0');
+			pk.set_enabled(std::move(mask));
+		};
+		if (auto* cur = _vars->get(var)) apply(*p, *cur);
+		std::weak_ptr<ce::cycle_picker> w = p;
+		_vars->subscribe(var, [w, apply](const std::string& v) {
+			if (auto sp = w.lock()) apply(*sp, v);
+		});
+	}
+
 	// type ごとのビルダ
 	element_ptr build_label       (const picojson::object& o);
 	element_ptr build_button      (const picojson::object& o);
@@ -1725,12 +1805,16 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	};
 
 	element_ptr shared;
+	std::size_t actual = initial;
 	if (variant == 0) {
 		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
+		subscribe_picker_index_var(p, index_var);
+		wire_picker_enabled_var(p, o);   // 初期 mask で index が動く可能性あり
+		actual = p->index();
 		shared = p;
 	} else if (variant == 1) {
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
@@ -1738,6 +1822,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->font_size(fs);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
+		subscribe_picker_index_var(p, index_var);
 		shared = p;
 	} else {
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
@@ -1745,13 +1830,14 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->font_size(fs);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
+		subscribe_picker_index_var(p, index_var);
 		shared = p;
 	}
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_vars_on_focus(o, id);
-	// 依存 widget (text_list / rect_list 等) の初期表示を initial に揃える。
-	if (!index_var.empty()) _vars->set(index_var, std::to_string(initial));
+	// 依存 widget (text_list / rect_list 等) の初期表示を実選択に揃える。
+	if (!index_var.empty()) _vars->set(index_var, std::to_string(actual));
 	return shared;
 }
 
@@ -3024,6 +3110,8 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	bool init = false;
 	if (!bool_field(get_field(o, "selected"), init))
 		bool_field(get_field(o, "value"), init);
+	std::string sel_var, sel_val;
+	read_choice_selected_var(o, sel_var, sel_val, init);
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames),
 	                               truthy_field(get_field(o, "native_frames")));
@@ -3034,11 +3122,14 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	// 包むので、 find_composite はそれを素通りして canvas layer まで届く。
 	auto ch = ce::latching_button<ce::basic_choice>(std::move(sprite));
 	ch.value(init);
-	if (!id.empty()) {
+	if (!id.empty() || !sel_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		ch.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		ch.on_click = [cb_id, user_cb, vars, sel_var, sel_val](bool state) {
+			if (state && !sel_var.empty()) vars->set(sel_var, sel_val);
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(ch));
@@ -3047,6 +3138,7 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
+	subscribe_choice_selected_var(shared, sel_var, sel_val);
 	note_vars_on_focus(o, id);
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
@@ -3346,10 +3438,12 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 	if (auto* arr = get_array(o, "color")) p->text_color(parse_color(*arr));
 	note_focusable(id, p);
 	subscribe_picker_options(p, opt_ids);
+	subscribe_picker_index_var(p, index_var);
+	wire_picker_enabled_var(p, o);   // 初期 mask で index が動く可能性あり
 	register_id(o, p);
 	note_initial_focus(o, p);
 	note_vars_on_focus(o, id);
-	if (!index_var.empty()) _vars->set(index_var, std::to_string(initial));
+	if (!index_var.empty()) _vars->set(index_var, std::to_string(p->index()));
 	return p;
 }
 
@@ -3377,14 +3471,20 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	// = proxy<radio_button_styler, basic_choice>。 scale は toggle_selector が
 	// 保持し、 limits/draw でラベルフォント・インジケータ・余白を一括拡大する。
 	// font_scale / 明示 size を実効倍率として流す。
+	std::string sel_var, sel_val;
+	read_choice_selected_var(o, sel_var, sel_val, init);
+
 	auto rb = ce::radio_button(text, effective_font_scale(o));
 	rb.value(init);
 
-	if (!id.empty()) {
+	if (!id.empty() || !sel_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		rb.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		rb.on_click = [cb_id, user_cb, vars, sel_var, sel_val](bool state) {
+			if (state && !sel_var.empty()) vars->set(sel_var, sel_val);
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(rb));
@@ -3393,6 +3493,7 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
+	subscribe_choice_selected_var(shared, sel_var, sel_val);
 	note_vars_on_focus(o, id);
 	return shared;
 }

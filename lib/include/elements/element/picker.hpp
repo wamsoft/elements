@@ -47,8 +47,11 @@ namespace cycfi::elements
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
+      void                    set_index(std::size_t i);
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
+      void                    set_enabled(std::vector<bool> mask);
+      bool                    option_enabled(std::size_t i) const;
 
       std::size_t             num_options() const { return _options.size(); }
       std::string const&      option_text(std::size_t i) const { return _options[i]; }
@@ -63,6 +66,7 @@ namespace cycfi::elements
    private:
 
       std::vector<std::string> _options;
+      std::vector<bool>       _enabled;   // empty = all enabled
       std::size_t             _index;
       bool                    _has_focus = false;
       float                   _font_size = 1.0f;
@@ -103,6 +107,7 @@ namespace cycfi::elements
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
+      void                    set_index(std::size_t i);
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
@@ -156,6 +161,7 @@ namespace cycfi::elements
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
+      void                    set_index(std::size_t i);
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 

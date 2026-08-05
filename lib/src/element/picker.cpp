@@ -89,12 +89,36 @@ namespace cycfi::elements
 
    void cycle_picker::select(std::size_t i)
    {
-      if (!_options.empty() && i < _options.size() && i != _index)
+      if (!_options.empty() && i < _options.size() && i != _index
+         && option_enabled(i))
       {
          _index = i;
          if (on_change)
             on_change(_index);
       }
+   }
+
+   void cycle_picker::set_index(std::size_t i)
+   {
+      // Quiet variant of select(): host-driven update (e.g. variable
+      // subscribe) that must not echo back through on_change.
+      if (!_options.empty() && i < _options.size() && option_enabled(i))
+         _index = i;
+   }
+
+   bool cycle_picker::option_enabled(std::size_t i) const
+   {
+      return i >= _enabled.size() || _enabled[i];
+   }
+
+   void cycle_picker::set_enabled(std::vector<bool> mask)
+   {
+      _enabled = std::move(mask);
+      // The current selection may just have become unavailable — advance to
+      // the nearest enabled option. That is a real selection change, so it
+      // goes through step() and notifies on_change.
+      if (!option_enabled(_index))
+         step(+1);
    }
 
    void cycle_picker::set_options(std::vector<std::string> options)
@@ -111,11 +135,16 @@ namespace cycfi::elements
 
    bool cycle_picker::step(int delta)
    {
-      if (_options.size() < 2)
+      if (_options.size() < 2 || delta == 0)
          return false;
       auto n = int(_options.size());
+      auto dir = delta > 0 ? +1 : -1;
       auto next = (int(_index) + delta % n + n) % n;
-      if (next != int(_index))
+      // Skip over disabled options, continuing in the same direction
+      // (wraps; bails out after a full lap when everything is disabled).
+      for (int hop = 0; hop < n && !option_enabled(std::size_t(next)); ++hop)
+         next = (next + dir + n) % n;
+      if (next != int(_index) && option_enabled(std::size_t(next)))
       {
          _index = std::size_t(next);
          if (on_change)
@@ -251,6 +280,12 @@ namespace cycfi::elements
          if (on_change)
             on_change(_index);
       }
+   }
+
+   void framed_cycle_picker::set_index(std::size_t i)
+   {
+      if (!_options.empty() && i < _options.size())
+         _index = i;
    }
 
    void framed_cycle_picker::set_options(std::vector<std::string> options)
@@ -482,6 +517,12 @@ namespace cycfi::elements
          _index = 0;
       else if (_index >= _options.size())
          _index = _options.size() - 1;
+   }
+
+   void segmented_picker::set_index(std::size_t i)
+   {
+      if (!_options.empty() && i < _options.size())
+         _index = i;
    }
 
    bool segmented_picker::step(int delta)

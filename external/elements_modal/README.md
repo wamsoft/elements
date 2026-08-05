@@ -129,7 +129,8 @@ int main()
 - `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"` (px) / `"size_scale"` (倍率)。 同じく `initial_focus` / `close_on_click` をサポート。
 - `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。 picker 系共通の追加フィールド:
   - `"options_id": [...]` — i18n。 各要素を StringStore の textID として現在言語で解決 (`options` より優先)。 言語切替で選択 index を維持したまま表示文字列だけ差し替わる (後述「i18n」節)。
-  - `"index_var": "varname"` — 選択 index を変数 store と連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。
+  - `"index_var": "varname"` — 選択 index を変数 store と**双方向**連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。 さらに**変数→picker の追従** (ホストの set_var 一発で表示と依存 widget が揃って切り替わる。 quiet = on_change 非発火なのでエコーバックしない)。 範囲外/パース不能な値は無視。
+  - `"enabled_var": "varname"` (cycle_picker / atlas_cycle_picker のみ) — 選択肢の有効/無効 mask を変数連動にする。 値は index 順の `'0'`/`'1'` 文字列 (例 `"10111011"` = index 1 と 4 を無効)。 mask より後ろの index は有効扱い。 step / click / pad は無効 index をスキップ (wrap 継続)、 現在選択が無効化されたら最寄りの有効 index へ進めて on_change 発火 (依存 widget が追従)。 隠し要素 (未開放の機種など) の動的出し分けに使う。
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `atlas_cycle_picker` — 画像矢印ボタン式の cycle_picker (アトラス素材、 「アトラス共有」節参照)。
@@ -204,7 +205,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。
-- `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
+- `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 `"selected_var"` / `"selected_value"` (任意) で変数 store と双方向連動 (下記「変数連動ファミリ一覧」参照)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
   - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
@@ -239,7 +240,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 
 lib 既定の塗りつぶし円 + テキスト styler を使ったテキスト版排他ボタン。 atlas を使わない普通の UI 用:
 
-- `radio_button` — `"text": "Easy"` + `"id"` + `"selected": bool` (既定 false)。 同じ親 composite に並べた radio_button 群は atlas_choice と同じ仕組みで自動排他。 値変化で `value_t{bool true}` を発火。
+- `radio_button` — `"text": "Easy"` + `"id"` + `"selected": bool` (既定 false)。 同じ親 composite に並べた radio_button 群は atlas_choice と同じ仕組みで自動排他。 値変化で `value_t{bool true}` を発火。 `"selected_var"` / `"selected_value"` (任意) も atlas_choice と同様に対応。
 
 #### 排他グループの分離 (atlas_choice / radio_button)
 
@@ -373,7 +374,9 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
 | `text_list` + `index_var` | label | 読み | 10 進 index (`"2"`) |
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
-| `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **書き** (選択変更時 + build 時に初期 index) / 既値があれば initial 採用 | 10 進 index |
+| `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
+| `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
+| `selected_var` (+`selected_value`) | atlas_choice / radio_button | **双方向** (var == selected_value で選択 / クリックで var へ selected_value を書き戻し) | 任意 string (`selected_value` 既定 `"1"`) |
 | `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
 
@@ -383,6 +386,14 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
   { "at": [80, 470, 128, 128],
     "type": "atlas_image", "atlas": "ui", "rect": [220, 0, 128, 128],
     "at_var": "chara_pos" }   // set_var("chara_pos", "600,400") で移動
+  ```
+
+- `selected_var` — choice をラジオグループ変数パターンで連動させる。 グループ全員に**同じ** `selected_var` と**異なる** `selected_value` を付けると、 「var の現在値 == 自分の selected_value」の 1 個だけが選択状態になる。 ホストの set_var 一発でグループの選択が入れ替わり (quiet、 イベント非発火)、 ユーザクリックでは選ばれた側の `selected_value` が var に書き戻される。 build 時に var へ既値があれば静的 `selected` 指定より優先。 config 画面の初期値注入 (ON/OFF・言語選択等) 向け。
+
+  ```jsonc
+  { "type": "atlas_choice", "id": "CHOICE_ON",  "selected_var": "se_mode", "selected_value": "1", ... },
+  { "type": "atlas_choice", "id": "CHOICE_OFF", "selected_var": "se_mode", "selected_value": "0", ... }
+  // set_var("se_mode", "0") で OFF 側が選択される
   ```
 
 - **picker → text_list / rect_list の選択連動**: picker に `index_var` を付け、 表示側 (label の text_list / atlas_image の rect_list) に同名の `index_var` を付けるだけで、 選択変更が表示に即時反映される (build 時に picker が初期 index を書き込むので初期表示も揃う)。 機種選択 → スクリーンショット / SPEC 表示のような連動 UI が JSON だけで組める。
