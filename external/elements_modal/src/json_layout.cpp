@@ -12,6 +12,7 @@
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 
 #include <cctype>
+#include <cstdlib>   // std::atof (pj_num)
 #include <cstring>
 #include <utility>
 
@@ -136,6 +137,31 @@ const picojson::value* get_field(const picojson::object& o, const char* key)
 	return (it != o.end()) ? &it->second : nullptr;
 }
 
+// picojson を PICOJSON_USE_INT64 でビルドすると、 JSON の整数リテラル (774 等)
+// は double でなく int64_t で保持され、 v.is<double>() が false になる。 数値読取りが
+// is<double>() のみだと整数指定 (座標 "at"・色・"size" 等) が全て既定値 0 に落ち、
+// canvas の座標が全部 0 になって描画されない。
+//
+// ただしこのコードは **int64 無しビルド (elements_console 等) でもコンパイル/動作**
+// する必要があり、 int64_t 型 API (is<int64_t>/get<int64_t>) は非 int64 ビルドの
+// picojson::value に存在しないため使えない。 そこで「double か、 それ以外で
+// string/bool/null/array/object でないもの (= 数値)」で判定し、 int64 側は
+// to_str()→atof で double 化する。 両ビルドで安全。
+inline bool pj_is_num(const picojson::value& v)
+{
+	if (v.is<double>()) return true;
+	if (v.is<bool>() || v.is<std::string>() || v.is<picojson::null>()
+	    || v.is<picojson::array>() || v.is<picojson::object>())
+		return false;
+	return true;   // 残り = 数値 (int64 ビルドの整数)
+}
+inline double pj_num(const picojson::value& v, double dflt = 0.0)
+{
+	if (v.is<double>()) return v.get<double>();
+	if (!pj_is_num(v)) return dflt;
+	return std::atof(v.to_str().c_str());   // int64 も "774" 等になり atof で double 化
+}
+
 std::string string_or(const picojson::object& o, const char* key,
                       const std::string& dflt = "")
 {
@@ -147,8 +173,8 @@ std::string string_or(const picojson::object& o, const char* key,
 
 double number_or(const picojson::object& o, const char* key, double dflt)
 {
-	if (auto* v = get_field(o, key); v && v->is<double>()) {
-		return v->get<double>();
+	if (auto* v = get_field(o, key); v && pj_is_num(*v)) {
+		return pj_num(*v);
 	}
 	return dflt;
 }
@@ -161,7 +187,7 @@ bool bool_field(const picojson::value* v, bool& out)
 {
 	if (!v) return false;
 	if (v->is<bool>()) { out = v->get<bool>(); return true; }
-	if (v->is<double>()) { out = v->get<double>() != 0.0; return true; }
+	if (pj_is_num(*v)) { out = pj_num(*v) != 0.0; return true; }
 	return false;
 }
 
@@ -197,12 +223,12 @@ float resolve_font_px(const picojson::object& o,
                       const char* size_key,
                       const char* scale_key)
 {
-	if (auto* v = get_field(o, size_key); v && v->is<double>()) {
-		return static_cast<float>(v->get<double>());
+	if (auto* v = get_field(o, size_key); v && pj_is_num(*v)) {
+		return static_cast<float>(pj_num(*v));
 	}
 	float base = cycfi::elements::get_theme().label_font._size;
-	if (auto* v = get_field(o, scale_key); v && v->is<double>()) {
-		return base * static_cast<float>(v->get<double>());
+	if (auto* v = get_field(o, scale_key); v && pj_is_num(*v)) {
+		return base * static_cast<float>(pj_num(*v));
 	}
 	return base;
 }
@@ -227,8 +253,8 @@ bool has_font_field(const picojson::object& o,
 
 int int_at(const picojson::array& arr, size_t i, int dflt = 0)
 {
-	if (i < arr.size() && arr[i].is<double>()) {
-		return static_cast<int>(arr[i].get<double>());
+	if (i < arr.size() && pj_is_num(arr[i])) {
+		return static_cast<int>(pj_num(arr[i]));
 	}
 	return dflt;
 }
@@ -792,10 +818,10 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		if (auto* v = get_field(s, key)) {
 			if (v->is<picojson::array>()) {
 				auto& a = v->get<picojson::array>();
-				if (a.size() > 0 && a[0].is<double>()) ox = float(a[0].get<double>());
-				if (a.size() > 1 && a[1].is<double>()) oy = float(a[1].get<double>());
-			} else if (v->is<double>()) {
-				ox = oy = float(v->get<double>());
+				if (a.size() > 0 && pj_is_num(a[0])) ox = float(pj_num(a[0]));
+				if (a.size() > 1 && pj_is_num(a[1])) oy = float(pj_num(a[1]));
+			} else if (pj_is_num(*v)) {
+				ox = oy = float(pj_num(*v));
 			}
 		}
 	};
@@ -813,15 +839,15 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 
 		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
 		float dur_ms;
-		if (auto* fv = get_field(s, "frames"); fv && fv->is<double>())
-			dur_ms = frames_to_ms(float(fv->get<double>()));
+		if (auto* fv = get_field(s, "frames"); fv && pj_is_num(*fv))
+			dur_ms = frames_to_ms(float(pj_num(*fv)));
 		else
 			dur_ms = float(number_or(s, "duration_ms", 300.0));
 		b.prog.from = 0.0f; b.prog.to = 1.0f; b.prog.duration_ms = dur_ms;
 
 		// 開始遅延 (スタッガー/シーケンス用)。 "delay" はフレーム、 "delay_ms" は ms。
-		if (auto* dv = get_field(s, "delay"); dv && dv->is<double>())
-			b.prog.delay_ms = frames_to_ms(float(dv->get<double>()));
+		if (auto* dv = get_field(s, "delay"); dv && pj_is_num(*dv))
+			b.prog.delay_ms = frames_to_ms(float(pj_num(*dv)));
 		else
 			b.prog.delay_ms = float(number_or(s, "delay_ms", 0.0));
 
@@ -1016,8 +1042,8 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	// baseline 起点。 "text_align" (left/center/right) は ax を左端/中央/右端どちらの
 	// 基準にするか。 "font" はフォントファミリ (空なら theme 既定)。
 	if (auto* anc = get_array(o, "text_anchor"); anc && anc->size() >= 2) {
-		float ax = static_cast<float>(anc->at(0).get<double>());
-		float ay = static_cast<float>(anc->at(1).get<double>());
+		float ax = static_cast<float>(pj_num(anc->at(0)));
+		float ay = static_cast<float>(pj_num(anc->at(1)));
 		int halign = ce::canvas::left;
 		std::string ta = string_or(o, "text_align");
 		if (ta == "center")     halign = ce::canvas::center;
@@ -1211,8 +1237,8 @@ element_ptr LayoutBuilder::build_margin(const picojson::object& o)
 		else if (arr->size() == 1) {
 			l = t = r = b = static_cast<float>(int_at(*arr, 0));
 		}
-	} else if (auto* v = get_field(o, "padding"); v && v->is<double>()) {
-		l = t = r = b = static_cast<float>(v->get<double>());
+	} else if (auto* v = get_field(o, "padding"); v && pj_is_num(*v)) {
+		l = t = r = b = static_cast<float>(pj_num(*v));
 	}
 	return ce::share(ce::margin({l, t, r, b}, ce::hold_any(child)));
 }
@@ -1473,8 +1499,8 @@ element_ptr LayoutBuilder::build_selection_menu(const picojson::object& o)
 	}
 
 	int selected = 0;
-	if (auto* v = get_field(o, "selected"); v && v->is<double>()) {
-		selected = static_cast<int>(v->get<double>());
+	if (auto* v = get_field(o, "selected"); v && pj_is_num(*v)) {
+		selected = static_cast<int>(pj_num(*v));
 	}
 	if (selected < 0 || static_cast<size_t>(selected) >= labels.size()) {
 		selected = 0;
@@ -1560,8 +1586,8 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	}
 
 	std::size_t initial = 0;
-	if (auto* v = get_field(o, "initial"); v && v->is<double>()) {
-		auto raw = static_cast<long long>(v->get<double>());
+	if (auto* v = get_field(o, "initial"); v && pj_is_num(*v)) {
+		auto raw = static_cast<long long>(pj_num(*v));
 		if (raw < 0) raw = 0;
 		if (static_cast<size_t>(raw) >= opts.size()) raw = static_cast<long long>(opts.size() - 1);
 		initial = static_cast<std::size_t>(raw);
@@ -2371,8 +2397,8 @@ namespace
 		// anchor は button の左上基準の baseline 起点になる。 align_center_middle は
 		// 使わない (中央寄せではなく PSD 位置)。
 		if (auto* anc = get_array(o, "text_anchor"); anc && anc->size() >= 2) {
-			float ax = static_cast<float>(anc->at(0).get<double>());
-			float ay = static_cast<float>(anc->at(1).get<double>());
+			float ax = static_cast<float>(pj_num(anc->at(0)));
+			float ay = static_cast<float>(pj_num(anc->at(1)));
 			int halign = ce::canvas::left;
 			std::string ta = string_or(o, "text_align");
 			if (ta == "center")     halign = ce::canvas::center;
@@ -2882,8 +2908,8 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 	}
 
 	std::size_t initial = 0;
-	if (auto* v = get_field(o, "initial"); v && v->is<double>()) {
-		auto raw = static_cast<long long>(v->get<double>());
+	if (auto* v = get_field(o, "initial"); v && pj_is_num(*v)) {
+		auto raw = static_cast<long long>(pj_num(*v));
 		if (raw < 0) raw = 0;
 		if (static_cast<std::size_t>(raw) >= tabs_arr->size())
 			raw = static_cast<long long>(tabs_arr->size() - 1);
@@ -3115,13 +3141,13 @@ std::function<void(ce::view&)> build_input_applier(
 		cfg->trigger_set = true;
 		cfg->trigger_mode = parse_axis_mode(v->get<std::string>(), cfg->trigger_mode);
 	}
-	if (auto* v = get_field(input_obj, "stick_deadzone"); v && v->is<double>()) {
+	if (auto* v = get_field(input_obj, "stick_deadzone"); v && pj_is_num(*v)) {
 		cfg->deadzone_set = true;
-		cfg->deadzone = static_cast<float>(v->get<double>());
+		cfg->deadzone = static_cast<float>(pj_num(*v));
 	}
-	if (auto* v = get_field(input_obj, "stick_value_speed"); v && v->is<double>()) {
+	if (auto* v = get_field(input_obj, "stick_value_speed"); v && pj_is_num(*v)) {
 		cfg->speed_set = true;
-		cfg->value_speed = static_cast<float>(v->get<double>());
+		cfg->value_speed = static_cast<float>(pj_num(*v));
 	}
 
 	// pad_bindings
@@ -3417,8 +3443,8 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 				ts.target = string_or(obj, "target");
 				ts.effect = string_or(obj, "effect");
 				if (auto* d = get_field(obj, "duration");
-				    d && d->is<double>()) {
-					ts.duration_ms = static_cast<int>(d->get<double>());
+				    d && pj_is_num(*d)) {
+					ts.duration_ms = static_cast<int>(pj_num(*d));
 				}
 			} else {
 				em_logf("elements_modal: transitions[\"%s\"] must be string "
