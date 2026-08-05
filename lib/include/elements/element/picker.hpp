@@ -50,6 +50,9 @@ namespace cycfi::elements
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
+      std::size_t             num_options() const { return _options.size(); }
+      std::string const&      option_text(std::size_t i) const { return _options[i]; }
+
       void                    font_size(float s) { _font_size = s; }
       float                   font_size() const  { return _font_size; }
 

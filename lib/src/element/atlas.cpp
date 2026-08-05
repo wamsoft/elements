@@ -4,6 +4,8 @@
 =============================================================================*/
 #include <elements/element/atlas.hpp>
 #include <elements/support/context.hpp>
+#include <elements/support/theme.hpp>
+#include <elements/view.hpp>
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
@@ -204,5 +206,89 @@ namespace cycfi::elements
       if (v < 0.0) v = 0.0;
       if (v > 1.0) v = 1.0;
       _value = v;
+   }
+
+   //---------------------------------------------------------------------
+   // atlas_cycle_picker
+   //---------------------------------------------------------------------
+   namespace
+   {
+      // bounds 左上原点の相対矩形 → 画面座標
+      rect offset_rect(rect at, rect bounds)
+      {
+         return rect{
+            bounds.left + at.left,
+            bounds.top  + at.top,
+            bounds.left + at.right,
+            bounds.top  + at.bottom
+         };
+      }
+   }
+
+   atlas_cycle_picker::atlas_cycle_picker(
+      pixmap_ptr atlas,
+      std::vector<std::string> options, std::size_t initial,
+      arrow_frames left, arrow_frames right,
+      rect left_at, rect right_at, rect text_at)
+    : cycle_picker(std::move(options), initial)
+    , _atlas(std::move(atlas))
+    , _left(left)
+    , _right(right)
+    , _left_at(left_at)
+    , _right_at(right_at)
+    , _text_at(text_at)
+   {}
+
+   view_limits atlas_cycle_picker::limits(basic_context const& /*ctx*/) const
+   {
+      // 最小 = 3 パーツの相対矩形を包む extent。 max は full_extent にして
+      // canvas floating の "at" 矩形サイズをそのまま受け入れる (パーツ配置は
+      // 左上原点の絶対 px なので bounds が大きくても描画位置は不変)。
+      float w = std::max({_left_at.right, _right_at.right, _text_at.right});
+      float h = std::max({_left_at.bottom, _right_at.bottom, _text_at.bottom});
+      return {{w, h}, {full_extent, full_extent}};
+   }
+
+   void atlas_cycle_picker::draw(context const& ctx)
+   {
+      auto& cnv = ctx.canvas;
+      auto  st = cnv.new_state();
+
+      bool hi = focused();
+      cnv.draw(*_atlas, hi ? _left.hilite : _left.normal,
+               offset_rect(_left_at, ctx.bounds));
+      cnv.draw(*_atlas, hi ? _right.hilite : _right.normal,
+               offset_rect(_right_at, ctx.bounds));
+
+      if (num_options())
+      {
+         auto font = get_theme().label_font;
+         font = font.size(font._size * font_size());
+         cnv.font(font);
+         cnv.fill_style(_color);
+         cnv.text_align(cnv.center | cnv.middle);
+         auto tr = offset_rect(_text_at, ctx.bounds);
+         cnv.fill_text(
+            option_text(index()),
+            {tr.left + tr.width() / 2.0f, tr.top + tr.height() / 2.0f});
+      }
+   }
+
+   bool atlas_cycle_picker::click(context const& ctx, mouse_button btn)
+   {
+      if (!ctx.enabled)
+         return false;
+      if (btn.state != mouse_button::left || !btn.down)
+         return false;
+      ctx.view.focus(shared_from_this());
+
+      int delta = 0;
+      if (offset_rect(_left_at, ctx.bounds).includes(btn.pos))
+         delta = -1;
+      else if (offset_rect(_right_at, ctx.bounds).includes(btn.pos))
+         delta = +1;
+      if (delta != 0 && step(delta))
+         ctx.view.refresh(ctx);
+      return true;
    }
 }

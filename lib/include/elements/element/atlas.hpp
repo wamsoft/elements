@@ -6,6 +6,7 @@
 #define ELEMENTS_ATLAS_JUNE_13_2026
 
 #include <elements/element/image.hpp>
+#include <elements/element/picker.hpp>
 #include <vector>
 #include <chrono>
 
@@ -159,6 +160,50 @@ namespace cycfi::elements
       rect                    _fill_at;
       double                  _value;
       bool                    _vertical;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // atlas_cycle_picker — cycle_picker の選択モデル (step / select / key /
+   // pad_axis / wrap-around) をそのまま継承し、 描画をアトラス素材に置き換えた
+   // 画像ボタン式ピッカー。
+   //
+   //   [左矢印絵]  現在の選択テキスト  [右矢印絵]
+   //
+   // 左右の矢印はそれぞれ normal / hilite の 2 フレームを持ち、 フォーカス中は
+   // 両矢印が hilite になる (= フォーカス表示を兼ねる)。 各パーツの配置は
+   // widget bounds 左上原点の相対 px 矩形 (left_at / right_at / text_at) で
+   // 指定する (PSD 由来の絶対配置向け)。 クリックは left_at / right_at の
+   // ヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_cycle_picker : public cycle_picker
+   {
+   public:
+
+      struct arrow_frames { rect normal, hilite; };
+
+                              atlas_cycle_picker(
+                                 pixmap_ptr atlas,
+                                 std::vector<std::string> options,
+                                 std::size_t initial,
+                                 arrow_frames left, arrow_frames right,
+                                 rect left_at, rect right_at, rect text_at);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      void                    draw(context const& ctx) override;
+      bool                    click(context const& ctx, mouse_button btn) override;
+
+      void                    text_color(color c) { _color = c; }
+      color                   text_color() const  { return _color; }
+
+   private:
+
+      pixmap_ptr              _atlas;
+      arrow_frames            _left;
+      arrow_frames            _right;
+      rect                    _left_at;
+      rect                    _right_at;
+      rect                    _text_at;
+      color                   _color = colors::white;
    };
 }
 

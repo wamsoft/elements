@@ -666,6 +666,19 @@ private:
 	element_ptr build_hmin_size   (const picojson::object& o);
 	element_ptr build_vmin_size   (const picojson::object& o);
 	element_ptr build_cycle_picker(const picojson::object& o, int variant); // 0=cycle, 1=framed, 2=segmented
+	element_ptr build_atlas_cycle_picker(const picojson::object& o);
+
+	// picker 系共通: "options" / "options_id" (StringStore 解決、 優先) /
+	// "initial" のパース。 options が空なら false (ビルド中止)。
+	bool parse_picker_options(const picojson::object& o, const char* type_name,
+	                          std::vector<std::string>& opts,
+	                          std::vector<std::string>& opt_ids,
+	                          std::size_t& initial);
+
+	// picker 系共通: "index_var" — 選択 index を VariableStore と連動させる。
+	// 変数に既に値があれば initial をそれで上書き (範囲内のみ)。
+	std::string resolve_index_var(const picojson::object& o,
+	                              std::size_t n_options, std::size_t& initial);
 	element_ptr build_invert_button(const picojson::object& o);
 	element_ptr build_ring_button (const picojson::object& o);
 
@@ -765,6 +778,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "cycle_picker")        return build_cycle_picker(o, 0);
 	if (type == "framed_cycle_picker") return build_cycle_picker(o, 1);
 	if (type == "segmented_picker")    return build_cycle_picker(o, 2);
+	if (type == "atlas_cycle_picker")  return build_atlas_cycle_picker(o);
 	if (type == "invert_button") return build_invert_button(o);
 	if (type == "ring_button")   return build_ring_button(o);
 	if (type == "slider")        return build_slider(o);
@@ -1618,11 +1632,16 @@ element_ptr LayoutBuilder::build_vmin_size(const picojson::object& o)
 //   { "type": "framed_cycle_picker",   ... }
 //   { "type": "segmented_picker",      ... }
 // 選択変更時に event_callback(id, false, int64_t index)。
+// "index_var" (任意) で選択 index を VariableStore と連動: build 時に初期
+// index を書き込み (text_list / rect_list 等の依存 widget と初期表示を揃える)、
+// 選択変更のたびに set する。 変数に既に値があれば initial として採用。
 //---------------------------------------------------------------------------
-element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int variant)
+bool LayoutBuilder::parse_picker_options(const picojson::object& o,
+                                         const char* type_name,
+                                         std::vector<std::string>& opts,
+                                         std::vector<std::string>& opt_ids,
+                                         std::size_t& initial)
 {
-	std::string id = string_or(o, "id");
-	std::vector<std::string> opts;
 	if (auto* arr = get_array(o, "options")) {
 		opts.reserve(arr->size());
 		for (const auto& v : *arr) {
@@ -1631,7 +1650,6 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	}
 	// i18n: "options_id" — 各要素を StringStore の textID として現在言語で
 	// 解決 ("options" より優先)。 言語切替は subscribe_picker_options で追従。
-	std::vector<std::string> opt_ids;
 	if (auto* arr = get_array(o, "options_id")) {
 		opt_ids.reserve(arr->size());
 		for (const auto& v : *arr) {
@@ -1644,27 +1662,59 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		for (const auto& tid : opt_ids) opts.push_back(_strings->resolve(tid));
 	}
 	if (opts.empty()) {
-		em_logf("elements_modal: %s without 'options'",
-			variant == 0 ? "cycle_picker"
-			: variant == 1 ? "framed_cycle_picker"
-			: "segmented_picker");
-		return nullptr;
+		em_logf("elements_modal: %s without 'options'", type_name);
+		return false;
 	}
 
-	std::size_t initial = 0;
+	initial = 0;
 	if (auto* v = get_field(o, "initial"); v && pj_is_num(*v)) {
 		auto raw = static_cast<long long>(pj_num(*v));
 		if (raw < 0) raw = 0;
 		if (static_cast<size_t>(raw) >= opts.size()) raw = static_cast<long long>(opts.size() - 1);
 		initial = static_cast<std::size_t>(raw);
 	}
+	return true;
+}
+
+std::string LayoutBuilder::resolve_index_var(const picojson::object& o,
+                                             std::size_t n_options,
+                                             std::size_t& initial)
+{
+	std::string index_var = string_or(o, "index_var");
+	if (!index_var.empty()) {
+		if (auto* cur = _vars->get(index_var)) {
+			try {
+				auto v = std::stol(*cur);
+				if (v >= 0 && static_cast<std::size_t>(v) < n_options)
+					initial = static_cast<std::size_t>(v);
+			} catch (...) { /* fallback */ }
+		}
+	}
+	return index_var;
+}
+
+element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int variant)
+{
+	std::string id = string_or(o, "id");
+	std::vector<std::string> opts;
+	std::vector<std::string> opt_ids;
+	std::size_t initial = 0;
+	if (!parse_picker_options(o,
+			variant == 0 ? "cycle_picker"
+			: variant == 1 ? "framed_cycle_picker"
+			: "segmented_picker",
+			opts, opt_ids, initial))
+		return nullptr;
+	std::string index_var = resolve_index_var(o, opts.size(), initial);
 
 	// picker は内部で `font._size * _font_size` 計算するので scale を渡す。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
 
 	auto cb_id = id;
 	auto user_cb = _cb;
-	auto on_change = [cb_id, user_cb](std::size_t i) {
+	auto vars = _vars;
+	auto on_change = [cb_id, user_cb, vars, index_var](std::size_t i) {
+		if (!index_var.empty()) vars->set(index_var, std::to_string(i));
 		if (user_cb && !cb_id.empty()) {
 			user_cb(cb_id, /*is_button_click=*/false,
 			        value_t{static_cast<std::int64_t>(i)});
@@ -1697,6 +1747,8 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_vars_on_focus(o, id);
+	// 依存 widget (text_list / rect_list 等) の初期表示を initial に揃える。
+	if (!index_var.empty()) _vars->set(index_var, std::to_string(initial));
 	return shared;
 }
 
@@ -2975,6 +3027,98 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 
 	register_id(o, shared);
 	return shared;
+}
+
+//---------------------------------------------------------------------------
+// atlas_cycle_picker — 左右矢印ボタン絵 + 選択テキスト表示領域の画像ピッカー。
+// 選択モデル (step / wrap / key / pad) は cycle_picker と同一。 フォーカス中は
+// 両矢印が hilite フレームになる (= フォーカス表示)。
+//   { "type": "atlas_cycle_picker", "atlas": "ui", "id": "machine",
+//     "left":  { "normal": [x,y,w,h], "hilite": [x,y,w,h] },
+//     "right": { "normal": [x,y,w,h], "hilite": [x,y,w,h] },
+//     "left_at": [dx,dy,w,h], "right_at": [dx,dy,w,h], "text_at": [dx,dy,w,h],
+//     "options": [..] / "options_id": [..], "initial": 0,
+//     "font_size": px, "color": [r,g,b,a], "index_var": "machine" }
+// *_at は widget bounds 左上原点の相対 px (canvas floating "at" と併用)。
+// 選択変更時に event_callback(id, false, int64_t index)。 options_id /
+// index_var の意味は cycle_picker と同じ。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		em_logf("elements_modal: atlas_cycle_picker without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	std::string id = string_or(o, "id");
+	std::vector<std::string> opts;
+	std::vector<std::string> opt_ids;
+	std::size_t initial = 0;
+	if (!parse_picker_options(o, "atlas_cycle_picker", opts, opt_ids, initial))
+		return nullptr;
+	std::string index_var = resolve_index_var(o, opts.size(), initial);
+
+	// "left"/"right": { "normal": [..], "hilite": [..] }。 hilite 省略時は
+	// normal と同じ (= フォーカス表示なし)。
+	auto parse_arrow = [&o](const char* key,
+	                        ce::atlas_cycle_picker::arrow_frames& out) -> bool {
+		auto* v = get_field(o, key);
+		if (!v || !v->is<picojson::object>()) return false;
+		const auto& ao = v->get<picojson::object>();
+		auto* n = get_array(ao, "normal");
+		if (!n || n->size() < 4) return false;
+		out.normal = parse_xywh(*n);
+		auto* h = get_array(ao, "hilite");
+		out.hilite = (h && h->size() >= 4) ? parse_xywh(*h) : out.normal;
+		return true;
+	};
+	ce::atlas_cycle_picker::arrow_frames left{}, right{};
+	if (!parse_arrow("left", left) || !parse_arrow("right", right)) {
+		em_logf("elements_modal: atlas_cycle_picker \"%s\" needs 'left'/'right' "
+		        "{normal:[x,y,w,h], hilite:[..]}", atlas_name.c_str());
+		return nullptr;
+	}
+
+	auto rect_or_empty = [&o](const char* key) -> ce::rect {
+		if (auto* arr = get_array(o, key); arr && arr->size() >= 4)
+			return parse_xywh(*arr);
+		return ce::rect{};
+	};
+	ce::rect left_at  = rect_or_empty("left_at");
+	ce::rect right_at = rect_or_empty("right_at");
+	ce::rect text_at  = rect_or_empty("text_at");
+	if (left_at.width() <= 0 || right_at.width() <= 0 || text_at.width() <= 0) {
+		em_logf("elements_modal: atlas_cycle_picker \"%s\" needs 'left_at'/"
+		        "'right_at'/'text_at' as [dx,dy,w,h]", atlas_name.c_str());
+		return nullptr;
+	}
+
+	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
+
+	auto cb_id = id;
+	auto user_cb = _cb;
+	auto vars = _vars;
+	auto p = std::make_shared<ce::atlas_cycle_picker>(
+		pm, std::move(opts), initial, left, right, left_at, right_at, text_at);
+	p->on_change = [cb_id, user_cb, vars, index_var](std::size_t i) {
+		if (!index_var.empty()) vars->set(index_var, std::to_string(i));
+		if (user_cb && !cb_id.empty()) {
+			user_cb(cb_id, /*is_button_click=*/false,
+			        value_t{static_cast<std::int64_t>(i)});
+		}
+	};
+	p->font_size(fs);
+	if (auto* arr = get_array(o, "color")) p->text_color(parse_color(*arr));
+	note_focusable(id, p);
+	subscribe_picker_options(p, opt_ids);
+	register_id(o, p);
+	note_initial_focus(o, p);
+	note_vars_on_focus(o, id);
+	if (!index_var.empty()) _vars->set(index_var, std::to_string(initial));
+	return p;
 }
 
 //---------------------------------------------------------------------------
