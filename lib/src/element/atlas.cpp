@@ -142,10 +142,11 @@ namespace cycfi::elements
    // atlas_progress
    //---------------------------------------------------------------------
    atlas_progress::atlas_progress(pixmap_ptr atlas, rect track, rect fill,
-                                  double value, bool vertical)
+                                  double value, bool vertical, rect fill_at)
     : _atlas(std::move(atlas))
     , _track(track)
     , _fill(fill)
+    , _fill_at(fill_at)
     , _value(value < 0.0 ? 0.0 : (value > 1.0 ? 1.0 : value))
     , _vertical(vertical)
    {}
@@ -167,6 +168,20 @@ namespace cycfi::elements
       // (= 左/下端固定、 残り 1-value 分を捨てる)。
       auto sf = _fill;
       auto df = ctx.bounds;
+      if (_fill_at.width() > 0 && _fill_at.height() > 0 &&
+          _track.width() > 0 && _track.height() > 0)
+      {
+         // fill_at (track ソース矩形の左上原点 px) を bounds 空間へ写像
+         // (fill が track にインセットされた素材向け)。
+         float sx = ctx.bounds.width()  / _track.width();
+         float sy = ctx.bounds.height() / _track.height();
+         df = rect{
+            ctx.bounds.left + _fill_at.left   * sx,
+            ctx.bounds.top  + _fill_at.top    * sy,
+            ctx.bounds.left + _fill_at.right  * sx,
+            ctx.bounds.top  + _fill_at.bottom * sy
+         };
+      }
       if (_vertical)
       {
          float h_src = sf.height() * static_cast<float>(_value);

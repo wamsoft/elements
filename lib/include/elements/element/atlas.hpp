@@ -132,13 +132,18 @@ namespace cycfi::elements
    //
    // limits / size は track の矩形を採用する (= 描画サイズは track と同じ)。
    // set_value() で値を 0..1 にクランプして更新。 次フレームで反映される。
+   //
+   // fill_at: fill の配置先を track ソース矩形の左上原点の px で指定する
+   // (fill が track に対してインセットされている画像素材向け。 例: ゲージ枠
+   // の内側にバーが入るデザイン)。 空 (既定) なら従来どおり bounds 全域。
    ////////////////////////////////////////////////////////////////////////////
    class atlas_progress : public element
    {
    public:
                               atlas_progress(pixmap_ptr atlas, rect track,
                                              rect fill, double value = 0.0,
-                                             bool vertical = false);
+                                             bool vertical = false,
+                                             rect fill_at = {});
 
       view_limits             limits(basic_context const& ctx) const override;
       void                    draw(context const& ctx) override;
@@ -151,6 +156,7 @@ namespace cycfi::elements
       pixmap_ptr              _atlas;
       rect                    _track;
       rect                    _fill;
+      rect                    _fill_at;
       double                  _value;
       bool                    _vertical;
    };

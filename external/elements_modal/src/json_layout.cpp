@@ -2768,13 +2768,39 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
-// atlas_slider — track + thumb をアトラスの sub-rect で構築する 0..1 スライダ。
+// atlas_slider — track + thumb (または fill) をアトラスの sub-rect で構築する
+// 0..1 スライダ。
 //   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
 //     "track": [x, y, w, h], "thumb": [x, y, w, h],
 //     "initial": 0.5, "vertical": false }
 // track はスライダ軸方向に stretchable (親 floating の bounds に合わせる)。
 // thumb は固定サイズ。 値変化で value_t{double pos} を発火。
+//
+// fill 形式 (ゲージ型スライダ): "thumb" の代わりに "fill" を指定すると、
+// atlas_progress と同じ track+fill 描画のまま**操作可能**なスライダになる
+// (クリック/ドラッグ/矢印キー/パッドで値変更)。 "fill_at" は fill の配置先を
+// track ソース矩形の左上原点 px で指定 (インセットされたバー素材向け)。
+//   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
+//     "track": [x, y, w, h], "fill": [x, y, w, h], "fill_at": [dx, dy, w, h],
+//     "initial": 0.5 }
+//
+// どちらの形式も "value_var" (任意) で VariableStore と連動: 変数変更で
+// 値が追従し (通知のみ、 イベントは発火しない)、 ユーザ操作の on_change は
+// 通常どおり発火する。 値は "0.75" 形式の 10 進文字列。
 //---------------------------------------------------------------------------
+namespace {
+// fill 形式スライダの見えない thumb (0x0)。 slider_base は thumb の大きさを
+// 差し引いて可動域を計算するので、 0 サイズなら track 全域が可動域になる。
+struct em_null_thumb : cycfi::elements::element
+{
+	cycfi::elements::view_limits
+	limits(cycfi::elements::basic_context const&) const override
+	{
+		return {{0, 0}, {0, 0}};
+	}
+};
+} // anonymous
+
 element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 {
 	auto atlas_name = string_or(o, "atlas");
@@ -2787,13 +2813,14 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 
 	auto* tr = get_array(o, "track");
 	auto* th = get_array(o, "thumb");
-	if (!tr || !th || tr->size() < 4 || th->size() < 4) {
-		em_logf("elements_modal: atlas_slider \"%s\" needs 'track' and 'thumb' "
-		        "as [x, y, w, h]", atlas_name.c_str());
+	auto* fl = get_array(o, "fill");
+	bool fill_mode = (fl && fl->size() >= 4);
+	if (!tr || tr->size() < 4 || (!fill_mode && (!th || th->size() < 4))) {
+		em_logf("elements_modal: atlas_slider \"%s\" needs 'track' and "
+		        "'thumb' (or 'fill') as [x, y, w, h]", atlas_name.c_str());
 		return nullptr;
 	}
 	ce::rect track_src = parse_xywh(*tr);
-	ce::rect thumb_src = parse_xywh(*th);
 
 	bool vertical = false;
 	bool_field(get_field(o, "vertical"), vertical);
@@ -2803,29 +2830,74 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	if (initial > 1.0) initial = 1.0;
 
 	std::string id = string_or(o, "id");
+	std::string value_var = string_or(o, "value_var");
+	if (!value_var.empty()) {
+		if (auto* cur = _vars->get(value_var)) {
+			try {
+				initial = std::stod(*cur);
+				if (initial < 0.0) initial = 0.0;
+				if (initial > 1.0) initial = 1.0;
+			} catch (...) { /* fallback */ }
+		}
+	}
 
-	// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
-	auto track_img = ce::share(ce::atlas_image(pm, track_src,
-	                                          /*stretch_h=*/!vertical,
-	                                          /*stretch_v=*/ vertical));
-	auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
-	                                          /*stretch_h=*/false,
-	                                          /*stretch_v=*/false));
-
-	auto sl = ce::slider(ce::hold(thumb_img), ce::hold(track_img), initial);
-	if (!id.empty()) {
+	element_ptr shared;
+	std::shared_ptr<ce::atlas_progress> gauge;   // fill 形式のみ
+	if (fill_mode) {
+		ce::rect fill_src = parse_xywh(*fl);
+		ce::rect fill_at{};
+		if (auto* fa = get_array(o, "fill_at"); fa && fa->size() >= 4)
+			fill_at = parse_xywh(*fa);
+		gauge = std::make_shared<ce::atlas_progress>(
+			pm, track_src, fill_src, initial, vertical, fill_at);
+		auto sl = ce::slider(em_null_thumb{}, ce::hold(gauge), initial);
 		auto cb_id = id;
 		auto user_cb = _cb;
-		sl.on_change = [cb_id, user_cb](double pos) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false,
-			                     value_t{pos});
+		std::weak_ptr<ce::atlas_progress> wg = gauge;
+		sl.on_change = [cb_id, user_cb, wg](double pos) {
+			if (auto g = wg.lock()) g->set_value(pos);
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{pos});
 		};
+		shared = ce::share(std::move(sl));
+	} else {
+		ce::rect thumb_src = parse_xywh(*th);
+		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
+		auto track_img = ce::share(ce::atlas_image(pm, track_src,
+		                                          /*stretch_h=*/!vertical,
+		                                          /*stretch_v=*/ vertical));
+		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
+		                                          /*stretch_h=*/false,
+		                                          /*stretch_v=*/false));
+		auto sl = ce::slider(ce::hold(thumb_img), ce::hold(track_img), initial);
+		if (!id.empty()) {
+			auto cb_id = id;
+			auto user_cb = _cb;
+			sl.on_change = [cb_id, user_cb](double pos) {
+				if (user_cb) user_cb(cb_id, /*is_button_click=*/false,
+				                     value_t{pos});
+			};
+		}
+		shared = ce::share(std::move(sl));
 	}
-	auto shared = ce::share(std::move(sl));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
+		if (!value_var.empty()) {
+			// 変数 → スライダ値 (+fill 描画) の一方向同期。 on_change は
+			// 発火しない (ホスト起点の更新をエコーバックしないため)。
+			std::weak_ptr<ce::basic_slider_base> ws = sb;
+			std::weak_ptr<ce::atlas_progress> wg = gauge;
+			_vars->subscribe(value_var, [ws, wg](const std::string& v) {
+				double d = 0.0;
+				try { d = std::stod(v); } catch (...) { return; }
+				if (d < 0.0) d = 0.0;
+				if (d > 1.0) d = 1.0;
+				if (auto s = ws.lock()) s->value(d);
+				if (auto g = wg.lock()) g->set_value(d);
+			});
+		}
 	}
 	note_vars_on_focus(o, id);
 	return shared;
@@ -2863,6 +2935,9 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 	}
 	ce::rect track_src = parse_xywh(*tr);
 	ce::rect fill_src  = parse_xywh(*fl);
+	ce::rect fill_at{};
+	if (auto* fa = get_array(o, "fill_at"); fa && fa->size() >= 4)
+		fill_at = parse_xywh(*fa);
 
 	bool vertical = false;
 	bool_field(get_field(o, "vertical"), vertical);
@@ -2877,7 +2952,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 		}
 	}
 
-	auto pg = ce::atlas_progress(pm, track_src, fill_src, init, vertical);
+	auto pg = ce::atlas_progress(pm, track_src, fill_src, init, vertical, fill_at);
 	auto shared = ce::share(std::move(pg));
 
 	if (!value_var.empty()) {
