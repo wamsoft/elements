@@ -1016,6 +1016,22 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	} else {
 		text = string_or(o, "text");
 	}
+	// "text_list": [...] + "index_var": "name" — テキストリストの指定番号を表示する
+	// 高度なラベル。 index_var の値 (整数文字列) を添字にリストから引く。 button の
+	// "vars_on_focus":{name:"N"} で focus 連動、 或いはホストの setVar で切替。 i18n は
+	// リスト自体を言語別に差し替える (別途)。 text_id/text_var と併用時は index_var 優先。
+	std::string index_var = string_or(o, "index_var");
+	std::vector<std::string> text_list;
+	if (auto* la = get_array(o, "text_list")) {
+		for (auto& v : *la) if (v.is<std::string>()) text_list.push_back(v.get<std::string>());
+	}
+	if (!index_var.empty() && !text_list.empty()) {
+		int idx = 0;
+		if (auto* init = _vars->get(index_var)) idx = std::atoi(init->c_str());
+		if (idx < 0) idx = 0;
+		if (idx >= static_cast<int>(text_list.size())) idx = static_cast<int>(text_list.size()) - 1;
+		text = text_list[idx];
+	}
 	std::string locale = string_or(o, "locale", _default_locale);
 
 	// "size" = px 絶対 / "size_scale" = テーマ倍率 (両方なしなら theme 既定)。
@@ -1136,6 +1152,21 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			em_logf("elements_modal: label with text_id=\"%s\" text_var=\"%s\" — "
 			        "text_writer 未継承で set_text 仕掛け失敗",
 			        text_id.c_str(), text_var.c_str());
+		}
+	}
+	// index_var + text_list: index 変化でリストから引いて set_text (指定番号表示ラベル)。
+	if (!index_var.empty() && !text_list.empty()) {
+		if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(out)) {
+			std::weak_ptr<ce::text_writer> w = sp;
+			auto list = text_list;
+			_vars->subscribe(index_var, [w, list](const std::string& v) {
+				if (auto p = w.lock()) {
+					int idx = std::atoi(v.c_str());
+					if (idx < 0) idx = 0;
+					if (idx >= static_cast<int>(list.size())) idx = static_cast<int>(list.size()) - 1;
+					p->set_text(list[idx]);
+				}
+			});
 		}
 	}
 	// "id" があれば id→element に登録し、 ホストから label を参照可能にする
