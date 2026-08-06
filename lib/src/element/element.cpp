@@ -347,6 +347,11 @@ namespace cycfi::elements
       return false;
    }
 
+   point element::focus_hot_point(context const& ctx)
+   {
+      return center_point(ctx.bounds);
+   }
+
    bool element::key(context const& /* ctx */, key_info /* k */)
    {
       return false;

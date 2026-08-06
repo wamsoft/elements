@@ -55,6 +55,11 @@ struct input_action_config
 	std::vector<action_binding> bindings;
 	std::map<std::string, std::string> se;   //!< action 名 or カテゴリ → SE 名
 	std::string initial_focus_id;            //!< "initial_focus": "<id>" (画面別のみ有効)
+
+	//! "cursor_warp": bool — キー/パッド由来のフォーカス変化をホストへ通知し、
+	//! ホストがマウスカーソルを focus hot point へ warp する運用を有効化。
+	//! -1=未指定 (下層の値を継承) / 0=off / 1=on。 組込既定は off。
+	int cursor_warp = -1;
 };
 
 //! @brief JSON 1 件のパース結果。

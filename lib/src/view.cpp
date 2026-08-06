@@ -592,6 +592,51 @@
       return _hover_focus;
    }
 
+   bool view::focused_hot_point(point& out)
+   {
+      if (_content.empty())
+         return false;
+
+      // Collect the current focus chain (top-down).
+      std::vector<element*> path;
+      with_context_do(
+         [&path](auto const& /*ctx*/, auto& _main_element)
+         {
+            walk_focus_path(_main_element, path);
+         },
+         *this, _current_bounds
+      );
+
+      // The shallowest custom hot point wins (a wrapping group knows
+      // better than its inner leaf); fall back to the deepest
+      // wants_focus() leaf with the default center.
+      element* target = nullptr;
+      for (element* e : path)
+         if (e->has_custom_focus_hot_point())
+         {
+            target = e;
+            break;
+         }
+      if (!target)
+      {
+         for (element* e : path)
+            if (e->wants_focus())
+               target = e;
+      }
+      if (!target)
+         return false;
+
+      bool ok = false;
+      in_context_do(*target,
+         [&ok, &out, target](context const& ectx)
+         {
+            out = target->focus_hot_point(ectx);
+            ok = true;
+         }
+      );
+      return ok;
+   }
+
    void view::focus(element& e)
    {
       // Address the element by raw pointer; it lives in the view tree for

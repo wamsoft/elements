@@ -104,6 +104,15 @@ namespace cycfi::elements
       // (addressed by raw pointer). No-op if the element is not found.
       void                    focus(element& e);
 
+      // Resolve the focus hot point (view coordinates) of the element
+      // that currently holds keyboard focus — where a host should place
+      // the pointer for cursor-warp navigation. Picks the shallowest
+      // element on the focus chain with a custom hot point (e.g. a
+      // choice-nav group pointing at its selected member), else the
+      // deepest wants_focus() leaf with the default bounds center.
+      // Returns false when nothing holds focus.
+      bool                    focused_hot_point(point& out);
+
       // ---- Gamepad button → key synthesis -----------------------------
       // Map a gamepad button to a key event. When the bound pad button is
       // pressed and no shortcut intercepts it, the bound key_info is

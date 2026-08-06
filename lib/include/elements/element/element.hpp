@@ -86,6 +86,18 @@ namespace cycfi::elements
       // axis then falls through to focus-move synthesis.
       virtual bool            pad_axis(context const& ctx, pad_axis_info info);
 
+      // Focus hot point: the point (view coordinates) a host should
+      // move the pointer to when this element gains keyboard/pad focus
+      // (cursor-warp navigation). Defaults to the center of ctx.bounds.
+      // Widgets whose clickable/visual anchor is not the bounds center
+      // override this (e.g. slider -> thumb center, choice-nav group ->
+      // selected member) and return true from
+      // has_custom_focus_hot_point() so view::focused_hot_point picks
+      // the override even when it sits above the focus leaf in the
+      // proxy chain.
+      virtual point           focus_hot_point(context const& ctx);
+      virtual bool            has_custom_focus_hot_point() const { return false; }
+
       // Returns true if this element is currently in a state that
       // consumes generic textual input (e.g. an editable text box with
       // focus). The view uses this to decide whether non-forced

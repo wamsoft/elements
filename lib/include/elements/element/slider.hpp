@@ -55,6 +55,11 @@ namespace cycfi::elements
       rect                    thumb_bounds(context const& ctx) const;
       virtual double          value_from_point(context const& ctx, point p);
 
+      // Cursor-warp navigation lands on the thumb (not the track
+      // center): clicking the warped position must not jump the value.
+      point                   focus_hot_point(context const& ctx) override;
+      bool                    has_custom_focus_hot_point() const override { return true; }
+
       virtual element const&  thumb() const = 0;
       virtual element&        thumb() = 0;
       virtual element const&  track() const = 0;

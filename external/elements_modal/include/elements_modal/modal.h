@@ -347,6 +347,16 @@ public:
 	//!        この矩形位置を引いて view local 座標に変換する。
 	render_rect get_current_rect() const;
 
+	//! @brief cursor-warp ナビ: キー/パッド由来のフォーカス変化のワンショット
+	//!        取得。 "input":{"cursor_warp":true} (input_defaults.jsonc 可) の
+	//!        画面で、 キー/パッド入力によりフォーカスが移動した後の
+	//!        render_to_buffer で 1 回だけ true を返し、 新フォーカス要素の
+	//!        focus hot point (**surface logical 座標**) を返す。 ホストは
+	//!        これを実マウスカーソルの warp 先に使う (取得で消費される)。
+	//!        マウス由来 (hover_focus) の移動では発火しない。
+	//! @return true: 未消費のフォーカス移動があった / false: なし
+	bool take_key_focus_move(float& out_surface_x, float& out_surface_y);
+
 	//! @brief content の自然サイズ (view limits の min、 logical 座標) を取得。
 	//!        run_modal が独立ウィンドウを内容サイズに縮めるのと同じ値で、
 	//!        ホストが overlay の view extent を内容にフィットさせて上下の

@@ -136,6 +136,11 @@ namespace cycfi::elements
       }
    }
 
+   point slider_base::focus_hot_point(context const& ctx)
+   {
+      return center_point(thumb_bounds(ctx));
+   }
+
    double slider_base::value_from_point(context const& ctx, point p)
    {
       auto  bounds = ctx.bounds;

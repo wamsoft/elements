@@ -289,6 +289,17 @@ struct overlay_session::impl
 	std::string se_last_focused;
 	bool se_focus_seen = false;
 
+	// cursor-warp ナビ: "input":{"cursor_warp":true} で有効。 直近のナビ入力
+	// 種別を追跡し、 キー/パッド由来のフォーカス変化を検出したら hot point
+	// (surface 座標) をワンショットで積む。 ホストが take_key_focus_move で
+	// 消費し、 実マウスカーソルを warp する。
+	bool cursor_warp_enabled = false;
+	enum class nav_source { none, key, mouse };
+	nav_source last_nav_source = nav_source::none;
+	bool  warp_pending = false;
+	float warp_sx = 0.0f;
+	float warp_sy = 0.0f;
+
 	// 合成キーイベントを view へ送る (press + release)。 named-action の
 	// accept/nav/focus/page はネイティブキー経路の再利用としてこれで実装する。
 	void send_key(ce::key_code kc, int mods = 0)
@@ -573,6 +584,16 @@ bool overlay_session::start(const std::string& json_utf8,
 		gdef ? &gdef->actions.se : nullptr,
 		&layout.actions.se });
 
+	// cursor-warp 有効判定 (3層マージ: 組込 off → 共通 → 画面別)。
+	{
+		int warp = 0;
+		if (gdef && gdef->actions.cursor_warp >= 0)
+			warp = gdef->actions.cursor_warp;
+		if (layout.actions.cursor_warp >= 0)
+			warp = layout.actions.cursor_warp;
+		_impl->cursor_warp_enabled = (warp == 1);
+	}
+
 	// JSON "input" ブロックの設定 (arrow_focus_nav / pad mode / bind 等) を適用。
 	// id 解決に内部 element map を使うため content() 後でないと駄目。
 	// legacy "shortcuts" / tab_view の登録は action バインドの後に走るので、
@@ -719,6 +740,16 @@ overlay_session::render_rect overlay_session::get_current_rect() const
 	return _impl->last_rect;
 }
 
+bool overlay_session::take_key_focus_move(float& out_surface_x,
+                                          float& out_surface_y)
+{
+	if (!_impl || !_impl->warp_pending) return false;
+	_impl->warp_pending = false;
+	out_surface_x = _impl->warp_sx;
+	out_surface_y = _impl->warp_sy;
+	return true;
+}
+
 bool overlay_session::measure_content(int& out_w, int& out_h) const
 {
 	out_w = 0;
@@ -749,14 +780,28 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 	if (_impl->focus_poll) _impl->focus_poll();
 	if (_impl->hover_poll) _impl->hover_poll();
 
-	// nav SE: focus 変化を検出して発火。 キーボード/dpad/stick/hover どの
-	// 経路のフォーカス移動も focused_id_slot の変化として一元的に拾える。
-	// 初期フォーカス (未観測→初observe) では鳴らさない。
-	if (!_impl->se_map.empty() && _impl->focused_id_slot) {
+	// focus 変化検出 (nav SE + cursor-warp 共用)。 キーボード/dpad/stick/
+	// hover どの経路のフォーカス移動も focused_id_slot の変化として一元的に
+	// 拾える (id 付き widget が対象)。 初期フォーカス (未観測→初observe) では
+	// 発火しない。
+	if ((_impl->cursor_warp_enabled || !_impl->se_map.empty())
+	    && _impl->focused_id_slot) {
 		const std::string& cur = *_impl->focused_id_slot;
 		if (_impl->se_focus_seen && cur != _impl->se_last_focused
 		    && !cur.empty()) {
 			_impl->play_se("nav");
+			// キー/パッド由来の移動のみ warp イベントを積む (hover_focus に
+			// よるマウス由来の移動で warp するとカーソルと喧嘩する)。
+			if (_impl->cursor_warp_enabled
+			    && _impl->last_nav_source == impl::nav_source::key) {
+				ce::point hp{};
+				if (_impl->view->focused_hot_point(hp)) {
+					// view-local → surface logical (直近の描画矩形基準)
+					_impl->warp_sx = hp.x + _impl->last_rect.x;
+					_impl->warp_sy = hp.y + _impl->last_rect.y;
+					_impl->warp_pending = true;
+				}
+			}
 		}
 		_impl->se_last_focused = cur;
 		_impl->se_focus_seen = true;
@@ -888,6 +933,7 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 void overlay_session::on_mouse_move(float sx, float sy, int mods)
 {
 	if (!active()) return;
+	_impl->last_nav_source = impl::nav_source::mouse;
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
 	if (_impl->mouse_down) {
@@ -937,6 +983,7 @@ void overlay_session::on_mouse_leave()
 bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
+	_impl->last_nav_source = impl::nav_source::key;
 	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
 	// escape→cancel が view の key shortcut (force=true) として登録されて
 	// いるので、 view->key 経由で同じ「閉じる」に到達する (画面 JSON /
@@ -977,6 +1024,7 @@ bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 {
 	if (!active()) return false;
 	if (button == ce::pad_button::unknown) return false;
+	_impl->last_nav_source = impl::nav_source::key;
 	_impl->view->pad_button_event({button, down});
 	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
 }
@@ -985,6 +1033,10 @@ void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
 {
 	if (!active()) return;
 	if (axis == ce::pad_axis::unknown) return;
+	// スティック/dpad 軸によるナビもキー系入力として扱う (deadzone 未満の
+	// 微小ノイズは無視して mouse 判定を上書きしない)。
+	if (value > 0.5f || value < -0.5f)
+		_impl->last_nav_source = impl::nav_source::key;
 	if (value < -1.0f) value = -1.0f;
 	if (value >  1.0f) value =  1.0f;
 	_impl->view->pad_axis_event({axis, value});

@@ -847,6 +847,50 @@ private:
 	void register_id(const picojson::object& o, const element_ptr& shared);
 };
 
+//---------------------------------------------------------------------------
+// "focus_point": [ax, ay] — focus hot point のアンカー比 (0..1、 既定 0.5,0.5
+// = 中心) を widget 単位で上書きする proxy。 cursor-warp ナビでカーソルを
+// 飛ばす先を、 透過の大きい絵や特殊形状の widget で個別調整するための逃がし。
+// has_custom を返すので widget 既定 (slider の thumb 等) より優先される。
+//---------------------------------------------------------------------------
+namespace {
+
+template <typename Subject>
+class focus_point_element : public ce::proxy<Subject>
+{
+public:
+	focus_point_element(Subject subject, float ax, float ay)
+	 : ce::proxy<Subject>(std::move(subject)), _ax(ax), _ay(ay)
+	{}
+
+	bool has_custom_focus_hot_point() const override { return true; }
+	ce::point focus_hot_point(ce::context const& ctx) override
+	{
+		return ce::point{
+			ctx.bounds.left + ctx.bounds.width()  * _ax,
+			ctx.bounds.top  + ctx.bounds.height() * _ay };
+	}
+
+private:
+	float _ax, _ay;
+};
+
+element_ptr apply_focus_point(const picojson::object& o, element_ptr el)
+{
+	auto* v = get_field(o, "focus_point");
+	if (!v || !v->is<picojson::array>()) return el;
+	const auto& arr = v->get<picojson::array>();
+	if (arr.size() < 2 || !pj_is_num(arr[0]) || !pj_is_num(arr[1])) {
+		em_logf("elements_modal: focus_point must be [ax, ay] (0..1)");
+		return el;
+	}
+	float ax = static_cast<float>(pj_num(arr[0]));
+	float ay = static_cast<float>(pj_num(arr[1]));
+	return ce::share(focus_point_element(ce::hold_any(std::move(el)), ax, ay));
+}
+
+} // anonymous (focus_point)
+
 element_ptr LayoutBuilder::build(const picojson::value& v)
 {
 	if (!v.is<picojson::object>()) return nullptr;
@@ -856,6 +900,8 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	element_ptr el = build_dispatch(o, type);
 	// "animate" 指定があれば変換 proxy で包み、 演出束縛を登録する (Phase A)。
 	if (el) el = apply_animation(o, std::move(el));
+	// "focus_point" 指定があれば focus hot point 上書き proxy で包む。
+	if (el) el = apply_focus_point(o, std::move(el));
 	return el;
 }
 
@@ -2418,6 +2464,26 @@ namespace
 			ce::proxy_base::draw(ctx);
 		}
 
+		// cursor-warp ナビの飛び先はグループ中心でなく「選択中メンバーの
+		// hot point」。 グループ全体が 1 focusable (focus_unit) なので、
+		// 中心だとメンバー間の空白に飛びうる。
+		bool has_custom_focus_hot_point() const override { return true; }
+		ce::point focus_hot_point(ce::context const& ctx) override
+		{
+			int sel = selected_index();
+			if (sel >= 0 && sel < int(_members.size())) {
+				ce::point out{};
+				bool got = false;
+				this->in_context_do(ctx, *_members[sel],
+					[&out, &got, this, sel](ce::context const& mctx) {
+						out = _members[sel]->focus_hot_point(mctx);
+						got = true;
+					});
+				if (got) return out;
+			}
+			return ce::center_point(ctx.bounds);
+		}
+
 		bool key(ce::context const& ctx, ce::key_info k) override
 		{
 			if (!ctx.enabled)
@@ -3909,6 +3975,11 @@ input_action_config parse_input_actions(const picojson::object& input_obj)
 	// 要素側の "initial_focus": true と併存した場合はこちらが勝つ (後から適用)。
 	if (auto* v = get_field(input_obj, "initial_focus"); v && v->is<std::string>())
 		cfg.initial_focus_id = v->get<std::string>();
+
+	// "cursor_warp": bool — キー/パッドでフォーカスが動いた時、 ホストがマウス
+	// カーソルを focus hot point へ warp する運用 (通知は take_key_focus_move)。
+	if (bool b = false; bool_field(get_field(input_obj, "cursor_warp"), b))
+		cfg.cursor_warp = b ? 1 : 0;
 
 	return cfg;
 }
