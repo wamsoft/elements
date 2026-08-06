@@ -2830,28 +2830,6 @@ element_ptr LayoutBuilder::build_image(const picojson::object& o)
 	}
 }
 
-// 実行時画像ストア ("mem://mem_key") のバイト更新後に呼ぶと、 その key で
-// 構築済みの image widget を set_image で再デコードして即時反映する。
-// 失効した widget は掃除する。 host 側 registerImage() から呼ばれる。
-// ※呼出側は ImageStore のロックを解放してから呼ぶこと (set_image が
-//   resource_loader 経由で ImageStore を読むため、 保持したままだと再入する)。
-void refresh_mem_image(const std::string& mem_key)
-{
-	std::lock_guard<std::mutex> lk(mem_image_mutex());
-	auto it = mem_image_map().find(mem_key);
-	if (it == mem_image_map().end()) return;
-	auto& vec = it->second;
-	for (auto e = vec.begin(); e != vec.end(); ) {
-		if (auto p = e->widget.lock()) {
-			try { p->set_image(e->src, e->scale); } catch (...) {}
-			++e;
-		} else {
-			e = vec.erase(e);   // 失効 widget を掃除
-		}
-	}
-	if (vec.empty()) mem_image_map().erase(it);
-}
-
 //---------------------------------------------------------------------------
 // animated_sprite — アトラスのフレーム列を fps で自動送りするスプライトアニメ
 // (パラパラ / スプライトシート再生)。 アニメアイコン、 スピナー、 待機ループ等。
@@ -4250,6 +4228,30 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 //---------------------------------------------------------------------------
 // 公開 API
 //---------------------------------------------------------------------------
+
+// 実行時画像ストア ("mem://mem_key") のバイト更新後に呼ぶと、 その key で
+// 構築済みの image widget を set_image で再デコードして即時反映する。 失効した
+// widget は掃除する。 host 側 registerImage() から呼ばれる (外部リンケージが要る
+// ので匿名 namespace の外=この公開 API 区画に置く)。
+// ※呼出側は ImageStore のロックを解放してから呼ぶこと (set_image が
+//   resource_loader 経由で ImageStore を読むため、 保持したままだと再入する)。
+void refresh_mem_image(const std::string& mem_key)
+{
+	std::lock_guard<std::mutex> lk(mem_image_mutex());
+	auto it = mem_image_map().find(mem_key);
+	if (it == mem_image_map().end()) return;
+	auto& vec = it->second;
+	for (auto e = vec.begin(); e != vec.end(); ) {
+		if (auto p = e->widget.lock()) {
+			try { p->set_image(e->src, e->scale); } catch (...) {}
+			++e;
+		} else {
+			e = vec.erase(e);   // 失効 widget を掃除
+		}
+	}
+	if (vec.empty()) mem_image_map().erase(it);
+}
+
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb,
                                 const std::string& resource_base)
