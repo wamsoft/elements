@@ -3393,12 +3393,16 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	auto* th = get_array(o, "thumb");
 	auto* fl = get_array(o, "fill");
 	bool fill_mode = (fl && fl->size() >= 4);
-	if (!tr || tr->size() < 4 || (!fill_mode && (!th || th->size() < 4))) {
-		em_logf("elements_modal: atlas_slider \"%s\" needs 'track' and "
-		        "'thumb' (or 'fill') as [x, y, w, h]", atlas_name.c_str());
+	bool has_track = (tr && tr->size() >= 4);
+	// track は thumb 形式では省略可 (溝が背景画像側に描いてある素材)。
+	// fill 形式はゲージ描画の基準に track が必須。
+	if ((fill_mode && !has_track) || (!fill_mode && (!th || th->size() < 4))) {
+		em_logf("elements_modal: atlas_slider \"%s\" needs 'thumb' "
+		        "(track optional) or 'track'+'fill' as [x, y, w, h]",
+		        atlas_name.c_str());
 		return nullptr;
 	}
-	ce::rect track_src = parse_xywh(*tr);
+	ce::rect track_src = has_track ? parse_xywh(*tr) : ce::rect{};
 
 	bool vertical = false;
 	bool_field(get_field(o, "vertical"), vertical);
@@ -3441,9 +3445,13 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	} else {
 		ce::rect thumb_src = parse_xywh(*th);
 		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
-		auto track_img = ce::share(ce::atlas_image(pm, track_src,
-		                                          /*stretch_h=*/!vertical,
-		                                          /*stretch_v=*/ vertical));
+		// track 省略時 (溝が背景側に描いてある素材) は見えない stretchable 要素を
+		// 敷く (widget の box いっぱいが可動域になる)。
+		element_ptr track_img = has_track
+			? ce::share(ce::atlas_image(pm, track_src,
+			                            /*stretch_h=*/!vertical,
+			                            /*stretch_v=*/ vertical))
+			: ce::share(cycfi::elements::element{});
 		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
 		                                          /*stretch_h=*/false,
 		                                          /*stretch_v=*/false));
