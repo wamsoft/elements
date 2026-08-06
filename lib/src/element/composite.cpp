@@ -153,7 +153,12 @@ namespace cycfi::elements
                context ectx{ctx, &ce, bounds};
                if (&e == &ce)
                {
-                  f(ctx);
+                  // Pass the child's own context (bounds = the child's
+                  // rect), not the composite's. Passing `ctx` here handed
+                  // direct children their parent's bounds, which broke
+                  // bounds-derived queries (e.g. focus_hot_point resolving
+                  // to the canvas center instead of the focused button).
+                  f(ectx);
                   return true; // break the for loop
                }
                else

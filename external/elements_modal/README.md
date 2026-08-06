@@ -642,9 +642,22 @@ view 全体のナビゲーション設定。 全フィールドが任意:
     // action 発火時の SE 名 (ホスト通知のみ、 再生はホスト責務)。
     // キーはカテゴリ (nav / accept / cancel / page / scroll) または
     // 個別 action 名・button id (そちらが優先)
-    "se": { "nav": "cursor.ogg", "accept": "ok.ogg", "cancel": "cancel.ogg" }
+    "se": { "nav": "cursor.ogg", "accept": "ok.ogg", "cancel": "cancel.ogg" },
+
+    // cursor-warp ナビ: キー/パッドでフォーカスが動いたとき、 ホストが実マウス
+    // カーソルをフォーカス先の hot point へ warp する運用を有効化 (既定 false)。
+    // session は take_key_focus_move() でワンショット通知するだけで、 実際の
+    // warp / カーソル非表示はホスト責務。 hover 由来 (hover_focus) の移動では
+    // 発火しない。 warp によりカーソルがフォーカス widget に乗るので、 hover の
+    // 見た目 (hilite フレーム / hover 演出) がフォーカスに自然追従する
+    "cursor_warp": true
 }
 ```
+
+widget 側の `"focus_point": [ax, ay]` (0..1 アンカー比、 既定 [0.5,0.5]=中心)
+で warp の飛び先を個別調整できる。 widget 既定: slider = thumb 中心 (トラック
+クリックの値ジャンプ防止)、 choice_nav グループ = 選択中メンバー中心、 他 =
+bounds 中心。
 
 #### named-action と組込デフォルト標準バインド (overlay_session)
 
