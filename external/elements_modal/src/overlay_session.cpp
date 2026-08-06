@@ -452,10 +452,18 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 	std::fill_n(pixel_buffer, pixel_count, 0u);
 
 	{
+		// 描画密度は「呼出側が確保した buffer サイズ ÷ view logical サイズ」から
+		// 毎回導出する (start() の pixel_scale 固定でなく)。 呼出側は buffer を
+		// 最終 present サイズで確保すればその密度で直接ラスタライズでき、 縮小
+		// present 前提の過剰レンダリングを避けられる。 従来どおり
+		// view_w * pixel_scale で確保すれば従来と同じ倍率になる (後方互換)。
+		const float render_scale = (_impl->view_w > 0)
+			? static_cast<float>(buffer_w_px) / _impl->view_w
+			: _impl->scale;
 		ce::canvas cnv{ pixel_buffer,
 		                static_cast<std::uint32_t>(buffer_w_px),
 		                static_cast<std::uint32_t>(buffer_h_px),
-		                _impl->scale };
+		                render_scale };
 		_impl->view->draw(cnv);
 	}
 

@@ -313,9 +313,14 @@ public:
 	};
 
 	//! @brief ピクセルバッファに描画 + サーフェスへの貼付位置を計算。
+	//!        描画密度は buffer サイズ ÷ view logical サイズから毎回導出する。
+	//!        呼出側は任意の密度で buffer を確保してよい (最終 present サイズで
+	//!        確保すればその密度で直接ラスタライズされ、 縮小 present 前提の
+	//!        過剰レンダリングを避けられる)。 view_width * pixel_scale で確保
+	//!        すれば start() 時の指定どおり (後方互換)。
 	//! @param pixel_buffer  ARGB8888 (LE = BGRA byte order) の書き込み先
-	//! @param buffer_w_px   バッファ幅 (ピクセル、 = view_width * pixel_scale)
-	//! @param buffer_h_px   バッファ高 (ピクセル、 = view_height * pixel_scale)
+	//! @param buffer_w_px   バッファ幅 (ピクセル)。 view とアスペクト一致想定
+	//! @param buffer_h_px   バッファ高 (ピクセル)
 	//! @param surface_w     呼出側サーフェスの幅 (logical)。 中央配置の基準。
 	//!                      通常 = ウィンドウクライアント領域 logical サイズ。
 	//! @param surface_h     呼出側サーフェスの高さ (logical)
