@@ -529,6 +529,9 @@
                continue;
 
             point c = center_point(f.bounds);
+            // Moving Down past the bottom wraps to the topmost candidate
+            // (minimize c.y); Up wraps to the bottommost (minimize -c.y);
+            // Right wraps to the leftmost; Left wraps to the rightmost.
             float primary, secondary;
             switch (dir)
             {
@@ -538,9 +541,7 @@
                case arrow_dir::down:  primary =  c.y; secondary = std::abs(c.x - cur_c.x); break;
                default: return nullptr;
             }
-            // Smallest coordinate toward the far (opposite) edge wins;
-            // negate for left/up so "min" is uniform.
-            float score = -primary + secondary * 4.0f;
+            float score = primary + secondary * 4.0f;
             if (score < best_score)
             {
                best_score = score;

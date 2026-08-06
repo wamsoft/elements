@@ -169,13 +169,14 @@ const input_defaults_data* global_input_defaults(const std::string& resource_bas
 			if (!bytes.empty()) {
 				d = parse_input_defaults(
 					std::string(bytes.begin(), bytes.end()));
-				if (d.ok) {
-					em_logf("elements_modal: loaded input defaults "
-					        "from \"%s\"", name.c_str());
-				}
 			}
+			em_logf("elements_modal: input defaults \"%s\": %s (%u bytes)",
+			        name.c_str(), d.ok ? "loaded" : "not used",
+			        static_cast<unsigned>(bytes.size()));
 		} catch (...) {
 			// ローダが missing を例外で表す実装でも「無し」として続行。
+			em_logf("elements_modal: input defaults \"%s\": read threw",
+			        name.c_str());
 		}
 		it = cache.emplace(resource_base, std::move(d)).first;
 	}
