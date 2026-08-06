@@ -55,6 +55,10 @@ view.trigger_mode(pad_axis_mode::disabled);
 // アナログ感度
 view.stick_deadzone(0.18f);          // 既定 0.15
 view.stick_value_speed(1.5f);        // 既定 1.0 (= max tilt で 1 秒に 0→1)
+
+// focus モード軸のオートリピート間隔 (dpad / stick 長押し)。
+// rate_ms=0 (既定) は倒し量スケール (60〜250ms 可変) を維持。
+view.axis_repeat(/*delay_ms=*/400, /*rate_ms=*/80);
 ```
 
 ### widget 側 (任意のアナログ受け口)
@@ -108,8 +112,8 @@ view.bind_shortcut(
 | 操作 | 結果 |
 |---|---|
 | しきい値 (0.5) 越え | 即座に矢印キーを 1 回 synthesize |
-| そのまま保持 | 400ms 後にオートリピート開始 |
-| リピート間隔 | `60 + (1-tilt) * 190` ms (60〜250ms, tilt 大ほど高速) |
+| そのまま保持 | `axis_repeat_delay()` (既定 400ms) 後にオートリピート開始 |
+| リピート間隔 | `axis_repeat_rate()` 固定。0 (既定) なら `60 + (1-tilt) * 190` ms (60〜250ms, tilt 大ほど高速) |
 | しきい値以下に戻す | 状態リセット (再度越えたとき again エッジトリガ) |
 
 ### スティック → 値変更の挙動 (slider など)

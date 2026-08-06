@@ -49,6 +49,24 @@ class view {
    void arrow_focus_navigation(bool on);
    bool arrow_focus_navigation() const;
 
+   // 2D ナビが端に到達したとき反対端へ回り込む (コンソール UI のループ
+   // メニュー)。要 arrow_focus_navigation。OFF (デフォルト) では端で停止。
+   void arrow_focus_wrap(bool on);
+   bool arrow_focus_wrap() const;
+
+   // 2D ナビが disabled (is_enabled()==false) の要素を飛ばす。
+   // OFF (デフォルト) では従来どおり disabled もフォーカス対象。
+   // ※Tab 巡回は composite 側の機構のため対象外 (2D ナビのみ)。
+   void focus_skip_disabled(bool on);
+   bool focus_skip_disabled() const;
+
+   // focus モード軸 (dpad / stick) の長押しリピート間隔。delay_ms は初回
+   // リピートまでの待ち (既定 400)、rate_ms は固定間隔。rate_ms=0 (既定)
+   // は従来の倒し量スケール (60〜250ms 可変) を維持する。
+   void axis_repeat(int delay_ms, int rate_ms);
+   int  axis_repeat_delay() const;
+   int  axis_repeat_rate() const;
+
    // 任意の要素へプログラムでフォーカスを移動する。
    // 指定要素は view のツリーに既に含まれている必要がある。
    // 呼び出しは次の idle で実行 (event 配送中でも安全)。
@@ -83,7 +101,11 @@ view_.content(
    強く優先し、無ければ近い行の右側を選ぶ
 
 候補が無ければ (= 端到達)、フォーカスは現状のままで何もしない。Tab ナビとは
-別系統なのでループはしない (端は端でナビ終了)。
+別系統なのでデフォルトではループしない (端は端でナビ終了)。
+`arrow_focus_wrap(true)` にすると端到達時に**反対端の候補** (Down なら最上段、
+Right なら最左) へ回り込む。回り込み先の選定も直交軸ズレ ×4 の重み付きで
+「同じ列/行」を優先する。`focus_skip_disabled(true)` なら候補列挙の段階で
+disabled 要素を除外する (通常ナビ・回り込みの両方に効く)。
 
 ## フォーカスリング描画
 
