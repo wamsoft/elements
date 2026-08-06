@@ -507,6 +507,48 @@
          }
          return best;
       }
+
+      // Wrap-around fallback for pick_directional: when a move in 'dir'
+      // finds no candidate (we are at the edge), pick the candidate
+      // nearest the *opposite* edge — i.e. moving Down past the bottom
+      // lands on the topmost widget — biased toward staying in the same
+      // perpendicular band, mirroring pick_directional's scoring.
+      element* pick_wrapped(
+         std::vector<focusable_entry> const& list,
+         element const* current,
+         rect const& cur_bounds,
+         arrow_dir dir)
+      {
+         point cur_c = center_point(cur_bounds);
+         element* best = nullptr;
+         float best_score = std::numeric_limits<float>::max();
+
+         for (auto const& f : list)
+         {
+            if (f.el == current)
+               continue;
+
+            point c = center_point(f.bounds);
+            float primary, secondary;
+            switch (dir)
+            {
+               case arrow_dir::left:  primary = -c.x; secondary = std::abs(c.y - cur_c.y); break;
+               case arrow_dir::right: primary =  c.x; secondary = std::abs(c.y - cur_c.y); break;
+               case arrow_dir::up:    primary = -c.y; secondary = std::abs(c.x - cur_c.x); break;
+               case arrow_dir::down:  primary =  c.y; secondary = std::abs(c.x - cur_c.x); break;
+               default: return nullptr;
+            }
+            // Smallest coordinate toward the far (opposite) edge wins;
+            // negate for left/up so "min" is uniform.
+            float score = -primary + secondary * 4.0f;
+            if (score < best_score)
+            {
+               best_score = score;
+               best = f.el;
+            }
+         }
+         return best;
+      }
    }
 
    void view::arrow_focus_navigation(bool on)
@@ -517,6 +559,26 @@
    bool view::arrow_focus_navigation() const
    {
       return _arrow_focus_nav;
+   }
+
+   void view::arrow_focus_wrap(bool on)
+   {
+      _arrow_focus_wrap = on;
+   }
+
+   bool view::arrow_focus_wrap() const
+   {
+      return _arrow_focus_wrap;
+   }
+
+   void view::focus_skip_disabled(bool on)
+   {
+      _focus_skip_disabled = on;
+   }
+
+   bool view::focus_skip_disabled() const
+   {
+      return _focus_skip_disabled;
    }
 
    void view::hover_focus(bool on)
@@ -625,11 +687,19 @@
          }
          if (is_arrow)
          {
+            bool const wrap = _arrow_focus_wrap;
+            bool const skip_disabled = _focus_skip_disabled;
             with_context_do(
-               [d, &handled](auto const& ctx, auto& _main_element)
+               [d, wrap, skip_disabled, &handled](auto const& ctx, auto& _main_element)
                {
                   std::vector<focusable_entry> list;
                   collect_focusables(ctx, _main_element, list);
+                  if (skip_disabled)
+                     list.erase(
+                        std::remove_if(list.begin(), list.end(),
+                           [](focusable_entry const& f)
+                           { return !f.el->is_enabled(); }),
+                        list.end());
                   if (list.empty())
                      return;
 
@@ -665,6 +735,8 @@
                   else
                   {
                      target = pick_directional(list, cur_collected, cur_bounds, d);
+                     if (!target && wrap)
+                        target = pick_wrapped(list, cur_collected, cur_bounds, d);
                   }
 
                   if (!target || target == cur_collected)
@@ -941,6 +1013,15 @@
    void view::stick_value_speed(float per_sec)  { _stick_value_speed = per_sec; }
    float view::stick_value_speed() const        { return _stick_value_speed; }
 
+   void view::axis_repeat(int delay_ms, int rate_ms)
+   {
+      if (delay_ms > 0)
+         _axis_repeat_delay_ms = delay_ms;
+      _axis_repeat_rate_ms = (rate_ms > 0) ? rate_ms : 0;
+   }
+   int view::axis_repeat_delay() const          { return _axis_repeat_delay_ms; }
+   int view::axis_repeat_rate() const           { return _axis_repeat_rate_ms; }
+
    pad_axis_mode view::mode_for(pad_axis a) const
    {
       switch (a)
@@ -994,7 +1075,7 @@
          return;
 
       constexpr float threshold       = 0.5f;
-      auto const initial_delay        = std::chrono::milliseconds(400);
+      auto const initial_delay        = std::chrono::milliseconds(_axis_repeat_delay_ms);
 
       // Locate the deepest focus-owning element once — value-mode axes
       // all dispatch to the same leaf. We can't just take path.back():
@@ -1080,8 +1161,13 @@
          else if (now >= st.next_repeat)
          {
             synthesize_axis_key(axis, sign);
-            float const mag = std::min(1.0f, std::abs(v));
-            int   const rep_ms = int(60 + (1.0f - mag) * 190);
+            int rep_ms = _axis_repeat_rate_ms;
+            if (rep_ms <= 0)
+            {
+               // Legacy magnitude-scaled interval (faster when pushed hard).
+               float const mag = std::min(1.0f, std::abs(v));
+               rep_ms = int(60 + (1.0f - mag) * 190);
+            }
             st.next_repeat = now + std::chrono::milliseconds(rep_ms);
          }
       }

@@ -22,10 +22,14 @@
 #include "em_platform.h"
 
 #include <elements.hpp>
+#include <elements/support/resource_loader.hpp>
 
 #include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 namespace ce = cycfi::elements;
 
@@ -49,6 +53,133 @@ std::uint32_t decode_utf8(const char*& p, const char* end)
 		cp = (cp << 6) | (static_cast<unsigned char>(*p++) & 0x3F);
 	}
 	return cp;
+}
+
+//---------------------------------------------------------------------------
+// named-action 入力バインド: 組込デフォルト標準バインド (3層の最下層)。
+//
+//   accept      : A (pad)         ※ Enter / 左click はネイティブ経路が実装
+//   cancel      : Esc / B / 右click
+//   focus_prev  : X (pad)         ※ Shift+Tab はネイティブ
+//   focus_next  : Y (pad)         ※ Tab はネイティブ
+//   nav_*       : (登録なし)      ※ 方向キー / dpad / 左stick は axis 機構
+//   page_prev/next : LB / RB      ※ PageUp/Down キーはネイティブ (tab_view)
+//   scroll_up/down : wheel        ※ 右stick(value) は axis 機構
+//
+// enter/tab/矢印/pgup/pgdn キー自体は「ネイティブ経路がその action の実装」
+// なので登録しない (登録するとキー合成が自己再帰する。 is_identity_binding
+// も参照)。
+//---------------------------------------------------------------------------
+const std::vector<action_binding>& builtin_default_bindings()
+{
+	static const std::vector<action_binding> defaults = [] {
+		std::vector<action_binding> v;
+		auto K = [&v](ce::key_code k, const char* a) {
+			action_binding b;
+			b.src = action_binding::source::key;
+			b.key = k;
+			b.action = a;
+			v.push_back(std::move(b));
+		};
+		auto P = [&v](ce::pad_button p, const char* a) {
+			action_binding b;
+			b.src = action_binding::source::pad;
+			b.pad = p;
+			b.action = a;
+			v.push_back(std::move(b));
+		};
+		auto M = [&v](ce::mouse_button::what m, const char* a) {
+			action_binding b;
+			b.src = action_binding::source::mouse;
+			b.mbtn = m;
+			b.action = a;
+			v.push_back(std::move(b));
+		};
+		auto W = [&v](int dir, const char* a) {
+			action_binding b;
+			b.src = action_binding::source::wheel;
+			b.wheel_dir = dir;
+			b.action = a;
+			v.push_back(std::move(b));
+		};
+		K(ce::key_code::escape,      "cancel");
+		P(ce::pad_button::b,         "cancel");
+		M(ce::mouse_button::right,   "cancel");
+		P(ce::pad_button::a,         "accept");
+		P(ce::pad_button::x,         "focus_prev");
+		P(ce::pad_button::y,         "focus_next");
+		P(ce::pad_button::lb,        "page_prev");
+		P(ce::pad_button::rb,        "page_next");
+		W(+1,                        "scroll_up");
+		W(-1,                        "scroll_down");
+		return v;
+	}();
+	return defaults;
+}
+
+// action のキー合成実装と同一のキーへのバインドか (= identity)。 これらは
+// ネイティブ経路 (view::key の focus dispatch / arrow nav / tab_view の
+// pgup/pgdn shortcut) が既に同じ意味を実装しているので、 shortcut 登録すると
+// 「合成キー → shortcut → 再び合成」の無限ループになる。 登録スキップで
+// ネイティブ経路に任せる。
+bool is_identity_binding(const std::string& action, ce::key_code key, int mods)
+{
+	using k = ce::key_code;
+	if (action == "accept")     return key == k::enter && mods == 0;
+	if (action == "nav_left")   return key == k::left;
+	if (action == "nav_right")  return key == k::right;
+	if (action == "nav_up")     return key == k::up;
+	if (action == "nav_down")   return key == k::down;
+	if (action == "focus_next") return key == k::tab && mods == 0;
+	if (action == "focus_prev") return key == k::tab && mods == ce::mod_shift;
+	if (action == "page_prev")  return key == k::page_up;
+	if (action == "page_next")  return key == k::page_down;
+	return false;
+}
+
+// action 名 → SE カテゴリ ("se" ブロックのキー)。 個別 action 名での指定が
+// あればそちらが優先される (play_se_for_action 参照)。
+const char* action_se_category(const std::string& a)
+{
+	if (a == "cancel") return "cancel";
+	if (a == "accept") return "accept";
+	if (a.rfind("nav_", 0) == 0 || a.rfind("focus_", 0) == 0) return "nav";
+	if (a.rfind("page_", 0) == 0)   return "page";
+	if (a.rfind("scroll_", 0) == 0) return "scroll";
+	return nullptr;
+}
+
+//---------------------------------------------------------------------------
+// プロジェクト共通バインド (3層の中層): resource_base ごとに 1 回だけ
+// "input_defaults.jsonc" をリソースローダ (Storages VFS 等) 経由で読み、
+// 解析結果をキャッシュする。 ファイルが無ければ「無し」をキャッシュして
+// 以後試さない (毎画面の起動コストゼロ)。 変更反映はアプリ再起動。
+//---------------------------------------------------------------------------
+const input_defaults_data* global_input_defaults(const std::string& resource_base)
+{
+	static std::mutex mtx;
+	static std::map<std::string, input_defaults_data> cache;
+	std::lock_guard<std::mutex> lk(mtx);
+	auto it = cache.find(resource_base);
+	if (it == cache.end()) {
+		input_defaults_data d;
+		const std::string name = resource_base + "input_defaults.jsonc";
+		try {
+			auto bytes = ce::get_resource_loader().read(name);
+			if (!bytes.empty()) {
+				d = parse_input_defaults(
+					std::string(bytes.begin(), bytes.end()));
+				if (d.ok) {
+					em_logf("elements_modal: loaded input defaults "
+					        "from \"%s\"", name.c_str());
+				}
+			}
+		} catch (...) {
+			// ローダが missing を例外で表す実装でも「無し」として続行。
+		}
+		it = cache.emplace(resource_base, std::move(d)).first;
+	}
+	return it->second.ok ? &it->second : nullptr;
 }
 
 } // anonymous
@@ -141,6 +272,168 @@ struct overlay_session::impl
 	animator anim;
 	std::uint64_t last_anim_ms = 0;
 
+	// named-action 入力バインド (組込デフォルト ⊕ input_defaults.jsonc ⊕
+	// 画面別 "input"."bindings" のマージ結果)。 key/pad は view の shortcut
+	// 機構に登録済みなのでここには持たない。 mouse/wheel はセッションが
+	// on_mouse_down / on_mouse_wheel で直接ディスパッチする。
+	std::map<int, std::string> mouse_actions;   // ce::mouse_button::what → action
+	std::map<int, std::string> wheel_actions;   // +1(up) / -1(down) → action
+
+	// SE マップ (マージ済)。 action 名 or カテゴリ → SE 名。 発火は
+	// external_cb("<se>", false, SE名) でホスト通知 (ホストが kag.se 等で鳴らす)。
+	std::map<std::string, std::string> se_map;
+
+	// nav SE 用: focus 変化検出 (キーボード/dpad/stick/hover どの経路でも
+	// focused_id_slot の変化として一元的に拾える)。
+	std::string se_last_focused;
+	bool se_focus_seen = false;
+
+	// 合成キーイベントを view へ送る (press + release)。 named-action の
+	// accept/nav/focus/page はネイティブキー経路の再利用としてこれで実装する。
+	void send_key(ce::key_code kc, int mods = 0)
+	{
+		if (!view) return;
+		view->key(ce::key_info{kc, ce::key_action::press, mods});
+		view->key(ce::key_info{kc, ce::key_action::release, mods});
+	}
+
+	// スクロールを view へ送る。 amount は wheel ノッチ相当 (+ = 上)。
+	// 位置はカーソル既知ならそこ、 未知 (パッド/キー操作のみ) なら view 中央。
+	void scroll_amount(float amount)
+	{
+		if (!view) return;
+		ce::point p = last_cursor;
+		if (p.x <= 0.0f && p.y <= 0.0f) {
+			p = ce::point{view_w * 0.5f, view_h * 0.5f};
+		}
+		view->scroll(ce::point{0.0f, amount}, p);
+	}
+
+	// SE 発火: se_map をキー名で引き external_cb へ通知。 未登録キーは無音。
+	void play_se(const std::string& key)
+	{
+		if (!external_cb) return;
+		auto it = se_map.find(key);
+		if (it == se_map.end()) return;
+		external_cb("<se>", false, value_t{it->second});
+	}
+
+	// action 名 → SE。 個別 action 名の登録が優先、 無ければカテゴリで引く。
+	// accept はここでは鳴らさない (button click = fire() 側で一元発火。
+	// pad A → enter 合成 → button activate → fire と二重になるため)。
+	void play_se_for_action(const std::string& action)
+	{
+		if (action == "accept") return;
+		if (se_map.count(action)) { play_se(action); return; }
+		if (const char* cat = action_se_category(action)) play_se(cat);
+	}
+
+	// named UI action のディスパッチ本体。 key/pad は view shortcut callback
+	// から (fire_shortcut の遅延タスク内)、 mouse/wheel は on_mouse_* から
+	// 直接呼ばれる。 組込 action 以外はホストへ通知する (quick action 枠:
+	// 例 {"pad":"start","action":"open_menu"} → onAction("<action>", "open_menu"))。
+	void dispatch_action(const std::string& action)
+	{
+		if (action.empty() || action == "none") return;
+		play_se_for_action(action);
+		if (action == "cancel")           { begin_finish("");                  return; }
+		if (action == "accept")           { send_key(ce::key_code::enter);     return; }
+		if (action == "nav_up")           { send_key(ce::key_code::up);        return; }
+		if (action == "nav_down")         { send_key(ce::key_code::down);      return; }
+		if (action == "nav_left")         { send_key(ce::key_code::left);      return; }
+		if (action == "nav_right")        { send_key(ce::key_code::right);     return; }
+		if (action == "focus_next")       { send_key(ce::key_code::tab);       return; }
+		if (action == "focus_prev")       { send_key(ce::key_code::tab, ce::mod_shift); return; }
+		if (action == "page_prev")        { send_key(ce::key_code::page_up);   return; }
+		if (action == "page_next")        { send_key(ce::key_code::page_down); return; }
+		if (action == "scroll_up")        { scroll_amount(+1.0f); return; }
+		if (action == "scroll_down")      { scroll_amount(-1.0f); return; }
+		if (action == "scroll_page_up")   { scroll_amount(+8.0f); return; }
+		if (action == "scroll_page_down") { scroll_amount(-8.0f); return; }
+		if (external_cb) external_cb("<action>", false, value_t{action});
+	}
+
+	// 3層マージ済みのバインド列を適用する。 key/pad は view の shortcut 機構へ
+	// (repeat / force / 優先順位を既存機構と共有)、 mouse/wheel は impl の
+	// マップへ。 後勝ちマージは layers の順序で表現する。
+	// この適用は apply_input (画面別 legacy "shortcuts" / tab_view の登録) より
+	// 先に行うこと — 明示宣言が同一入力の action バインドを上書きできるように。
+	void apply_action_bindings(
+		std::initializer_list<const std::vector<action_binding>*> layers)
+	{
+		// マージ (後層が同一入力を上書き)
+		std::map<std::pair<int, int>, action_binding> keym;
+		std::map<int, action_binding> padm;
+		mouse_actions.clear();
+		wheel_actions.clear();
+		for (const auto* layer : layers) {
+			if (!layer) continue;
+			for (const auto& b : *layer) {
+				switch (b.src) {
+				case action_binding::source::key:
+					keym[{static_cast<int>(b.key), b.mods}] = b;
+					break;
+				case action_binding::source::pad:
+					padm[static_cast<int>(b.pad)] = b;
+					break;
+				case action_binding::source::mouse:
+					mouse_actions[static_cast<int>(b.mbtn)] = b.action;
+					break;
+				case action_binding::source::wheel:
+					wheel_actions[b.wheel_dir] = b.action;
+					break;
+				}
+			}
+		}
+
+		// force 既定: cancel と none は text input focus 中も効かせる
+		// (従来の ESC hard-code と同挙動)。 他は非 force (text 編集を優先し、
+		// pad はキー合成へフォールスルーする)。
+		auto default_force = [](const std::string& action) {
+			return action == "cancel" || action == "none";
+		};
+
+		impl* p = this;
+		for (auto& [kk, b] : keym) {
+			ce::key_info ki{static_cast<ce::key_code>(kk.first),
+			                ce::key_action::press, kk.second};
+			if (b.action == "none") {
+				// 入力を消費して何もしない (下層バインド/ネイティブ経路も遮断)
+				view->bind_shortcut(ki, []() {}, /*force=*/true);
+				continue;
+			}
+			if (is_identity_binding(b.action, ki.key, ki.modifiers)) {
+				continue;   // ネイティブ経路がその action の実装 (再帰防止)
+			}
+			bool force = b.force_set ? b.force : default_force(b.action);
+			std::string action = b.action;
+			view->bind_shortcut(ki,
+				[p, action]() { p->dispatch_action(action); }, force);
+		}
+		for (auto& [pk, b] : padm) {
+			auto btn = static_cast<ce::pad_button>(pk);
+			if (b.action == "none") {
+				view->bind_shortcut(btn, []() {}, /*force=*/true);
+				continue;
+			}
+			bool force = b.force_set ? b.force : default_force(b.action);
+			std::string action = b.action;
+			view->bind_shortcut(btn,
+				[p, action]() { p->dispatch_action(action); }, force);
+		}
+	}
+
+	// SE マップの3層マージ (後勝ち)。
+	void merge_se(std::initializer_list<const std::map<std::string,
+	              std::string>*> layers)
+	{
+		se_map.clear();
+		for (const auto* layer : layers) {
+			if (!layer) continue;
+			for (const auto& kv : *layer) se_map[kv.first] = kv.second;
+		}
+	}
+
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
@@ -148,6 +441,12 @@ struct overlay_session::impl
 		std::string id_s(id);
 		if (!is_button_click) {
 			accumulated.values[id_s] = payload;
+		}
+		// accept SE は button click で一元発火 (マウス左click / Enter /
+		// pad A→enter 合成、 どの経路でもここに集約される)。
+		if (is_button_click) {
+			if (se_map.count(id_s)) play_se(id_s);   // 個別 button id 指定が優先
+			else                    play_se("accept");
 		}
 		if (external_cb) {
 			external_cb(id_s, is_button_click, payload);
@@ -260,14 +559,41 @@ bool overlay_session::start(const std::string& json_utf8,
 		            static_cast<float>(view_height) });
 	_impl->view->content(ce::hold_any(_impl->layout_root));
 
+	// 入力バインド3層 (後勝ち): ①組込デフォルト → ②プロジェクト共通
+	// input_defaults.jsonc → ③画面別 "input"."bindings"。 view settings も
+	// 同順 (②を先に適用し、 ③は下の apply_input が上書き)。
+	const input_defaults_data* gdef = global_input_defaults(resource_base);
+	if (gdef && gdef->apply_settings) gdef->apply_settings(*_impl->view);
+	_impl->apply_action_bindings({
+		&builtin_default_bindings(),
+		gdef ? &gdef->actions.bindings : nullptr,
+		&layout.actions.bindings });
+	_impl->merge_se({
+		gdef ? &gdef->actions.se : nullptr,
+		&layout.actions.se });
+
 	// JSON "input" ブロックの設定 (arrow_focus_nav / pad mode / bind 等) を適用。
 	// id 解決に内部 element map を使うため content() 後でないと駄目。
+	// legacy "shortcuts" / tab_view の登録は action バインドの後に走るので、
+	// 同一入力に対する明示宣言が優先される。
 	if (layout.apply_input) layout.apply_input(*_impl->view);
 
 	// JSON "initial_focus": true 指定があればフォーカス。 view::focus() は
 	// asio::post で次 idle へデファードされるので順序問題なし。
 	if (layout.initial_focus) {
 		_impl->view->focus(layout.initial_focus);
+	}
+
+	// "input":{"initial_focus":"<id>"} — id 指定の初期フォーカス。 要素側
+	// フラグと併存した場合はこちらが勝つ (後から post されるため)。
+	if (!layout.actions.initial_focus_id.empty()) {
+		auto fit = _impl->id_map.find(layout.actions.initial_focus_id);
+		if (fit != _impl->id_map.end()) {
+			_impl->view->focus(fit->second);
+		} else {
+			em_logf("elements_modal: input.initial_focus id '%s' not found",
+			        layout.actions.initial_focus_id.c_str());
+		}
 	}
 
 	_impl->started          = true;
@@ -422,6 +748,19 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 	if (_impl->focus_poll) _impl->focus_poll();
 	if (_impl->hover_poll) _impl->hover_poll();
 
+	// nav SE: focus 変化を検出して発火。 キーボード/dpad/stick/hover どの
+	// 経路のフォーカス移動も focused_id_slot の変化として一元的に拾える。
+	// 初期フォーカス (未観測→初observe) では鳴らさない。
+	if (!_impl->se_map.empty() && _impl->focused_id_slot) {
+		const std::string& cur = *_impl->focused_id_slot;
+		if (_impl->se_focus_seen && cur != _impl->se_last_focused
+		    && !cur.empty()) {
+			_impl->play_se("nav");
+		}
+		_impl->se_last_focused = cur;
+		_impl->se_focus_seen = true;
+	}
+
 	// focus / hover 変化を演出へ通知 (取得で前進、 喪失で復帰再生)。 poll の後に呼ぶ。
 	// focus_anim=false なら focus トリガは止める (hover_focus 併用時の多重発火回避)。
 	if (!_impl->anim.empty()) {
@@ -504,6 +843,13 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
+	// mouse バインド (既定: 右click→cancel)。 マッチしたら action を発火して
+	// クリック自体は消費する (widget へは流さない)。 "none" は消費のみ。
+	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
+	    it != _impl->mouse_actions.end()) {
+		_impl->dispatch_action(it->second);
+		return;
+	}
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
 	_impl->mouse_down = true;
@@ -521,6 +867,10 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
+	// mouse バインド対象ボタンは down 側で消費済みなので up も揃えて消費。
+	if (_impl->mouse_actions.count(static_cast<int>(button))) {
+		return;
+	}
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
 	_impl->mouse_down = false;
@@ -557,6 +907,23 @@ void overlay_session::on_mouse_wheel(float dx, float dy,
 {
 	if (!active()) return;
 	auto p = _impl->to_view(surface_mouse_x, surface_mouse_y);
+	// wheel バインド (既定: up/down→scroll_up/down = 従来の view->scroll 素通し)。
+	// scroll_* は生 delta のまま流して滑らかさを保存、 それ以外の action
+	// (page_next 等) はノッチ 1 回分として発火、 "none" は消費のみ。
+	const int dir = (dy > 0.0f) ? +1 : (dy < 0.0f ? -1 : 0);
+	if (dir != 0) {
+		if (auto it = _impl->wheel_actions.find(dir);
+		    it != _impl->wheel_actions.end()) {
+			const std::string& act = it->second;
+			if (act == "none") return;
+			if (act == "scroll_up" || act == "scroll_down") {
+				_impl->view->scroll(ce::point{ dx, dy }, p);
+				return;
+			}
+			_impl->dispatch_action(act);
+			return;
+		}
+	}
 	_impl->view->scroll(ce::point{ dx, dy }, p);
 }
 
@@ -569,16 +936,16 @@ void overlay_session::on_mouse_leave()
 bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
-	if (key == ce::key_code::escape) {
-		_impl->begin_finish("");   // exit 演出があれば再生してから終了
-		return true;   // Esc はダイアログが消費
-	}
+	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
+	// escape→cancel が view の key shortcut (force=true) として登録されて
+	// いるので、 view->key 経由で同じ「閉じる」に到達する (画面 JSON /
+	// input_defaults.jsonc で差し替え・無効化可能)。
 	ce::key_info ki{
 		.key = key,
 		.action = ce::key_action::press,
 		.modifiers = mods
 	};
-	return _impl->view->key(ki);   // focus widget が処理したら true
+	return _impl->view->key(ki);   // focus widget / shortcut が処理したら true
 }
 
 bool overlay_session::on_key_up(ce::key_code key, int mods)

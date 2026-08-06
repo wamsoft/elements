@@ -137,7 +137,7 @@ int main()
 - `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
 - `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (**px 絶対**) または `"font_size_scale"` (倍率) + `"child"`。 child の最初の focusable を click-focus target にする。
-- `tab_view` — タブ + ページの組合せ (1 画面内で複数 pane を切替)。 `"tabs": [{ "label": string, "child": element, "id"?: string }, ...]` + `"initial": int` (初期 index、 default 0) + `"tab_size": double` (タブ文字 px、 任意) または `"tab_size_scale"` (倍率)。 lib の `deck_composite` + `tab` (basic_choice ベース) を組み合わせて生成。 タブクリックで該当 pane に瞬時切替、 兄弟タブは自動 deselect (basic_choice の choice 機構)。 タブの見た目は **lib 既定の button_styler (角丸 / アクティブ色)**。 各タブの `id` を付ければ shortcut / vars_on_focus 等で参照可能。 状態 (focus 位置 / 入力途中の値 / 変数 store) は session が同じなので保持される。 さらに **PageUp/PageDown** キーと **LB/RB** パッドボタンが前/次タブ切替に bind される (force shortcut、 テキスト入力中もスキップ)。
+- `tab_view` — タブ + ページの組合せ (1 画面内で複数 pane を切替)。 `"tabs": [{ "label": string, "child": element, "id"?: string }, ...]` + `"initial": int` (初期 index、 default 0) + `"tab_size": double` (タブ文字 px、 任意) または `"tab_size_scale"` (倍率)。 lib の `deck_composite` + `tab` (basic_choice ベース) を組み合わせて生成。 タブクリックで該当 pane に瞬時切替、 兄弟タブは自動 deselect (basic_choice の choice 機構)。 タブの見た目は **lib 既定の button_styler (角丸 / アクティブ色)**。 各タブの `id` を付ければ shortcut / vars_on_focus 等で参照可能。 状態 (focus 位置 / 入力途中の値 / 変数 store) は session が同じなので保持される。 さらに **PageUp/PageDown** キーが前/次タブ切替に bind される (force shortcut、 テキスト入力中もスキップ)。 **LB/RB** パッドボタンは組込デフォルトの `page_prev/next` アクション (PageUp/Down 合成) 経由で同じ切替に届く (画面 JSON の `"bindings"` で差替可)。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
   - **SVG モード (default)**: `"height": logical_pixels` (default 48) + `"colored": bool` (default false、 true で `_color_` バリアントを優先 — Xbox / PS の face button のみ対応、 無ければ通常版にフォールバック) + `"outline": bool` (default false、 true で `*_outline.svg` バリアントを優先、 colored と併用時は `_color_*_outline.svg` → `_color_*.svg` → `*_outline.svg` → `*.svg` の順でフォールバック)
   - **font モード**: `"use_font": true` + `"size": px` (**px 絶対**) または `"size_scale"` (倍率) + `"color": [r,g,b,a]` (任意、 default 白) — Kenney 同梱 TTF + codepoint で label として描画。 ベクター + フォントの両対応 (画面用途は SVG、 本文インラインは font 推奨)。
@@ -609,9 +609,72 @@ view 全体のナビゲーション設定。 全フィールドが任意:
         { "key": "f",  "mods": ["ctrl"], "target": "search_btn" },
         { "pad": "lb",                    "target": "cancel" },
         { "pad": "rb",                    "target": "ok", "force": true }
-    ]
+    ],
+
+    // ---- named-action バインド (overlay_session) ----
+
+    // 2D 方向移動の端で反対端へ回り込む (要 arrow_focus_nav、 既定 false)
+    "focus_wrap": true,
+
+    // 2D 方向移動が disabled (enabled_var="0" 等) の要素を飛ばす (既定 false)
+    "skip_disabled": true,
+
+    // focus モード軸 (dpad / stick) の長押しリピート。 rate 0 = 倒し量で
+    // 60〜250ms 可変 (既定)。 delay 既定 400ms
+    "repeat_delay_ms": 400,
+    "repeat_rate_ms": 80,
+
+    // 画面を開いた時の初期フォーカス (id 指定)。 要素側 "initial_focus": true
+    // と併存した場合はこちらが勝つ
+    "initial_focus": "BTN_START",
+
+    // 入力 → named action のバインド (組込デフォルトへの差分)。
+    // 同一入力の再宣言で上書き、 "action": "none" で無効化。
+    // mouse は "right"/"middle" (左クリックは widget 直接操作)、 wheel は "up"/"down"
+    "bindings": [
+        { "key": "escape", "action": "cancel" },
+        { "pad": "b",      "action": "cancel" },
+        { "mouse": "right","action": "cancel" },
+        { "pad": "start",  "action": "open_menu" },   // 未知 action → ホスト通知
+        { "wheel": "up",   "action": "scroll_up" }
+    ],
+
+    // action 発火時の SE 名 (ホスト通知のみ、 再生はホスト責務)。
+    // キーはカテゴリ (nav / accept / cancel / page / scroll) または
+    // 個別 action 名・button id (そちらが優先)
+    "se": { "nav": "cursor.ogg", "accept": "ok.ogg", "cancel": "cancel.ogg" }
 }
 ```
+
+#### named-action と組込デフォルト標準バインド (overlay_session)
+
+「閉じる / 決定 / フォーカス移動 / ページ送り / スクロール」は **名前付き
+アクション**への 3 層バインドで決まる (後勝ち):
+①組込デフォルト → ②`input_defaults.jsonc` (resource_base 直下、 起動後の
+初回 start() で 1 回ロード・キャッシュ。 top-level が `"input"` ブロックと
+同形) → ③画面別 `"input"."bindings"`。
+
+| action | 意味 | 既定バインド (key / pad / mouse) |
+|---|---|---|
+| `accept` | 決定 (focus widget を起動) | Enter† / A / 左click (widget 直) |
+| `cancel` | 戻る / 閉じる (`begin_finish("")`) | Esc / B / **右click** |
+| `nav_up/down/left/right` | focus 方向移動 | 矢印キー† / dpad† / 左stick† |
+| `focus_prev/next` | tab 順移動 | Shift+Tab† / Tab† / X, Y |
+| `page_prev/next` | ページ / タブ送り | PageUp/Down† / LB, RB |
+| `scroll_up/down` | スクロール | — / 右stick(value)† / ホイール |
+| `scroll_page_up/down` | ページ単位スクロール | (既定バインド無し) |
+| (その他任意名) | ホスト通知 (`onAction("<action>", 名前)`) | — |
+
+† = ネイティブ経路 (view の focus dispatch / arrow nav / axis 機構 /
+tab_view の PageUp/Down shortcut) がそのまま実装。 これらのキーを同じ意味の
+action に再宣言しても登録はスキップされる (キー合成の自己再帰防止)。
+
+- `cancel` / `none` の force 既定は true (text input focus 中も効く)。
+  他 action は false (text 編集優先)。 `"force"` で個別上書き可。
+- Esc の旧 hard-code (`on_key_down` 直 `begin_finish`) は撤廃済み。 バインド
+  差し替え / 無効化で画面ごとに戻る挙動を制御できる。
+- SE はアクション発火時に `event_callback("<se>", false, SE名)` で通知
+  (`nav` は focus 変化検出、 `accept` は button click で一元発火)。
 
 #### 名前リファレンス
 

@@ -136,6 +136,15 @@ ce::pad_axis_mode parse_axis_mode(const std::string& s, ce::pad_axis_mode dflt)
 	return dflt;
 }
 
+//! "right"/"middle" → mouse_button::what。 左は widget 直接操作専用なので
+//! バインド対象外 (false)。
+bool parse_mouse_button(const std::string& s, ce::mouse_button::what& out)
+{
+	if (s == "right")  { out = ce::mouse_button::right;  return true; }
+	if (s == "middle") { out = ce::mouse_button::middle; return true; }
+	return false;
+}
+
 
 //---------------------------------------------------------------------------
 // picojson helpers
@@ -3767,6 +3776,10 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 					if (next != cur) activate(static_cast<std::size_t>(next));
 				};
 
+				// PageUp/Down キーが page_prev/next アクションの実装点。
+				// LB/RB は既定バインド (pad lb/rb → page_prev/next action) が
+				// page_up/down キー合成でここへ届くため、 直接の pad バインドは
+				// 持たない (バインド一元化。 画面 JSON の "bindings" で差替可)。
 				ce::key_info pgup{ce::key_code::page_up,
 				                  ce::key_action::press, 0};
 				ce::key_info pgdn{ce::key_code::page_down,
@@ -3774,10 +3787,6 @@ element_ptr LayoutBuilder::build_tab_view(const picojson::object& o)
 				vw.bind_shortcut(pgup,
 				    [step]() { step(-1); }, /*force=*/true);
 				vw.bind_shortcut(pgdn,
-				    [step]() { step(+1); }, /*force=*/true);
-				vw.bind_shortcut(ce::pad_button::lb,
-				    [step]() { step(-1); }, /*force=*/true);
-				vw.bind_shortcut(ce::pad_button::rb,
 				    [step]() { step(+1); }, /*force=*/true);
 			});
 	}
@@ -3805,6 +3814,103 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 	// labeled_row の font_size は内部 label.relative_font_size 用 scale。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
 	return ce::share(ce::labeled_row(std::move(text), child, lw, fs));
+}
+
+//---------------------------------------------------------------------------
+// "input" ブロック → action バインド関連 ("bindings" / "se" / "initial_focus")
+// の解析。 画面別 "input" と input_defaults.jsonc (top-level 同形) の両方から
+// 呼ばれる。 view settings 系は build_input_applier が別途担当。
+//
+// "bindings" の 1 要素 = { "key"|"pad"|"mouse"|"wheel": "<name>",
+//                          "action": "<action>", ["mods": [...]],
+//                          ["force": bool], ["target": "<id>"] }
+//   - key:   "escape"/"enter"/"a".. (parse_key_code)
+//   - pad:   "a"/"b"/"lb".. (parse_pad_button)
+//   - mouse: "right"/"middle" (左クリックは widget 直接操作のため対象外)
+//   - wheel: "up"/"down"
+//   - action "none" = 該当入力を無効化 (消費するが何もしない)
+//---------------------------------------------------------------------------
+input_action_config parse_input_actions(const picojson::object& input_obj)
+{
+	input_action_config cfg;
+
+	if (auto* arr = get_array(input_obj, "bindings")) {
+		for (const auto& v : *arr) {
+			if (!v.is<picojson::object>()) continue;
+			const auto& bo = v.get<picojson::object>();
+			action_binding b;
+			b.action = string_or(bo, "action");
+			if (b.action.empty()) {
+				em_logf("elements_modal: bindings: 'action' required");
+				continue;
+			}
+			b.target = string_or(bo, "target");
+			if (bool f = false; bool_field(get_field(bo, "force"), f)) {
+				b.force = f;
+				b.force_set = true;
+			}
+
+			if (auto key_name = string_or(bo, "key"); !key_name.empty()) {
+				auto kc = parse_key_code(key_name);
+				if (kc == ce::key_code::unknown) {
+					em_logf("elements_modal: bindings: unknown key=%s",
+					        key_name.c_str());
+					continue;
+				}
+				b.src = action_binding::source::key;
+				b.key = kc;
+				if (auto* ma = get_array(bo, "mods")) b.mods = parse_modifiers(*ma);
+			} else if (auto pad_name = string_or(bo, "pad"); !pad_name.empty()) {
+				auto pb = parse_pad_button(pad_name);
+				if (pb == ce::pad_button::unknown) {
+					em_logf("elements_modal: bindings: unknown pad=%s",
+					        pad_name.c_str());
+					continue;
+				}
+				b.src = action_binding::source::pad;
+				b.pad = pb;
+			} else if (auto ms = string_or(bo, "mouse"); !ms.empty()) {
+				if (!parse_mouse_button(ms, b.mbtn)) {
+					em_logf("elements_modal: bindings: mouse must be "
+					        "right/middle (got %s)", ms.c_str());
+					continue;
+				}
+				b.src = action_binding::source::mouse;
+			} else if (auto wh = string_or(bo, "wheel"); !wh.empty()) {
+				if      (wh == "up")   b.wheel_dir = +1;
+				else if (wh == "down") b.wheel_dir = -1;
+				else {
+					em_logf("elements_modal: bindings: wheel must be up/down "
+					        "(got %s)", wh.c_str());
+					continue;
+				}
+				b.src = action_binding::source::wheel;
+			} else {
+				em_logf("elements_modal: bindings: needs one of "
+				        "key/pad/mouse/wheel");
+				continue;
+			}
+			cfg.bindings.push_back(std::move(b));
+		}
+	}
+
+	// "se": { "nav": "cursor.ogg", "accept": "...", "cancel": "...",
+	//         "page": "...", "scroll": "...", "<action名>": "..." }
+	// キーはカテゴリ名 or 個別 action 名。 発火は external_cb("<se>") 経由で
+	// ホストに通知される (Elements 自体は音を持たない)。
+	if (auto* v = get_field(input_obj, "se"); v && v->is<picojson::object>()) {
+		for (auto& kv : v->get<picojson::object>()) {
+			if (kv.second.is<std::string>())
+				cfg.se[kv.first] = kv.second.get<std::string>();
+		}
+	}
+
+	// "initial_focus": "<id>" — 画面を開いた時の初期 focus (画面別のみ意味を持つ)。
+	// 要素側の "initial_focus": true と併存した場合はこちらが勝つ (後から適用)。
+	if (auto* v = get_field(input_obj, "initial_focus"); v && v->is<std::string>())
+		cfg.initial_focus_id = v->get<std::string>();
+
+	return cfg;
 }
 
 //---------------------------------------------------------------------------
@@ -3840,6 +3946,16 @@ std::function<void(ce::view&)> build_input_applier(
 		bool arrow_nav_set = false;
 		bool arrow_nav = false;
 
+		bool focus_wrap_set = false;
+		bool focus_wrap = false;
+
+		bool skip_disabled_set = false;
+		bool skip_disabled = false;
+
+		bool repeat_set = false;
+		int  repeat_delay_ms = 400;
+		int  repeat_rate_ms  = 0;
+
 		bool hover_focus_set = false;
 		bool hover_focus = true;
 
@@ -3868,6 +3984,22 @@ std::function<void(ce::view&)> build_input_applier(
 	if (bool b = false; bool_field(get_field(input_obj, "arrow_focus_nav"), b)) {
 		cfg->arrow_nav_set = true;
 		cfg->arrow_nav = b;
+	}
+	if (bool b = false; bool_field(get_field(input_obj, "focus_wrap"), b)) {
+		cfg->focus_wrap_set = true;
+		cfg->focus_wrap = b;
+	}
+	if (bool b = false; bool_field(get_field(input_obj, "skip_disabled"), b)) {
+		cfg->skip_disabled_set = true;
+		cfg->skip_disabled = b;
+	}
+	if (auto* v = get_field(input_obj, "repeat_delay_ms"); v && pj_is_num(*v)) {
+		cfg->repeat_set = true;
+		cfg->repeat_delay_ms = static_cast<int>(pj_num(*v));
+	}
+	if (auto* v = get_field(input_obj, "repeat_rate_ms"); v && pj_is_num(*v)) {
+		cfg->repeat_set = true;
+		cfg->repeat_rate_ms = static_cast<int>(pj_num(*v));
 	}
 	if (bool b = false; bool_field(get_field(input_obj, "hover_focus"), b)) {
 		cfg->hover_focus_set = true;
@@ -3959,6 +4091,10 @@ std::function<void(ce::view&)> build_input_applier(
 	auto id_map_shared = std::make_shared<std::map<std::string, element_ptr>>(std::move(id_map));
 	return [cfg, id_map_shared](ce::view& view_) {
 		if (cfg->arrow_nav_set)   view_.arrow_focus_navigation(cfg->arrow_nav);
+		if (cfg->focus_wrap_set)  view_.arrow_focus_wrap(cfg->focus_wrap);
+		if (cfg->skip_disabled_set) view_.focus_skip_disabled(cfg->skip_disabled);
+		if (cfg->repeat_set)      view_.axis_repeat(cfg->repeat_delay_ms,
+		                                            cfg->repeat_rate_ms);
 		if (cfg->hover_focus_set) view_.hover_focus(cfg->hover_focus);
 		if (cfg->dpad_set)        view_.dpad_mode(cfg->dpad_mode);
 		if (cfg->lstick_set)      view_.left_stick_mode(cfg->lstick_mode);
@@ -4161,10 +4297,14 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /
 	// pad bindings / shortcuts を設定するクロージャを作る。
+	// action バインド関連 ("bindings"/"se"/"initial_focus") は data として
+	// parsed_layout.actions に載せ、 overlay_session が組込デフォルト +
+	// input_defaults.jsonc とマージして適用する。
 	std::function<void(ce::view&)> input_cb;
 	if (auto* v = get_field(o, "input"); v && v->is<picojson::object>()) {
-		input_cb = build_input_applier(v->get<picojson::object>(),
-			builder.take_id_map());
+		const auto& input_obj = v->get<picojson::object>();
+		result.actions = parse_input_actions(input_obj);
+		input_cb = build_input_applier(input_obj, builder.take_id_map());
 	}
 	// deferred_view_cbs: build 中に積まれた追加 view-setup (例: tab_view
 	// の PageUp/Down + LB/RB バインド)。 input_cb の後に順次実行する。
@@ -4250,6 +4390,30 @@ void refresh_mem_image(const std::string& mem_key)
 		}
 	}
 	if (vec.empty()) mem_image_map().erase(it);
+}
+
+// input_defaults.jsonc (top-level が画面別 "input" ブロックと同形) を解析する。
+// overlay_session が resource_base ごとに 1 回ロードし、 全画面の組込デフォルト
+// の上へ重ねる (最後に画面別 "input" が勝つ)。 settings 部は build_input_applier
+// を id_map 無しで使う (legacy "shortcuts" の target 解決は不可 = 共通ファイル
+// では新形式 "bindings" を使うこと)。
+input_defaults_data parse_input_defaults(const std::string& json_utf8)
+{
+	input_defaults_data out;
+	const std::string preprocessed = preprocess_jsonc(json_utf8);
+	picojson::value v;
+	std::string err;
+	picojson::parse(v, preprocessed.cbegin(), preprocessed.cend(), &err);
+	if (!err.empty() || !v.is<picojson::object>()) {
+		em_logf("elements_modal: input_defaults parse error: %s",
+		        err.empty() ? "top-level must be an object" : err.c_str());
+		return out;
+	}
+	const auto& o = v.get<picojson::object>();
+	out.apply_settings = build_input_applier(o, {});
+	out.actions = parse_input_actions(o);
+	out.ok = true;
+	return out;
 }
 
 parsed_layout parse_from_string(const std::string& json_utf8,

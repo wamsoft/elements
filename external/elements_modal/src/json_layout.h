@@ -26,6 +26,37 @@ namespace elements_modal {
 // event_callback は modal.h で公開定義済 (std::string id ベース)。
 // 内部 layout builder もこれと同じ型を使う。
 
+//! @brief named UI action への 1 バインド宣言 ("input"."bindings" の 1 要素、
+//! および input_defaults.jsonc のもの)。 src で key / pad / mouse / wheel の
+//! どれか 1 入力を指し、 action に解決先アクション名を持つ。
+//! action "none" は該当入力の無効化 (入力は消費するが何もしない)。
+struct action_binding
+{
+	enum class source { key, pad, mouse, wheel };
+	source src = source::key;
+
+	cycfi::elements::key_code   key = cycfi::elements::key_code::unknown;   // src==key
+	int                         mods = 0;                                    // src==key
+	cycfi::elements::pad_button pad = cycfi::elements::pad_button::unknown;  // src==pad
+	cycfi::elements::mouse_button::what
+	                            mbtn = cycfi::elements::mouse_button::left;  // src==mouse
+	int                         wheel_dir = 0;                               // src==wheel (+1=up / -1=down)
+
+	std::string action;        //!< named action ("cancel"/"accept"/"nav_*"/... 未知名はホスト通知)
+	bool        force = false; //!< text input focus 中も発火するか
+	bool        force_set = false; //!< JSON で force 明示があったか (無ければ action 既定)
+	std::string target;        //!< 予約: page/scroll 対象 widget id (現状未使用)
+};
+
+//! @brief "input" ブロックのうち action バインド関連の解析結果。
+//! (arrow_focus_nav / axis mode 等の view settings は apply_input closure が担当)
+struct input_action_config
+{
+	std::vector<action_binding> bindings;
+	std::map<std::string, std::string> se;   //!< action 名 or カテゴリ → SE 名
+	std::string initial_focus_id;            //!< "initial_focus": "<id>" (画面別のみ有効)
+};
+
 //! @brief JSON 1 件のパース結果。
 struct parsed_layout
 {
@@ -114,7 +145,25 @@ struct parsed_layout
 	//! 駆動する。 ホスト (overlay_session) が animator に積んで毎フレーム tick する。
 	//! Phase A は全て画面表示時 (enter) 発火。
 	std::vector<anim_binding> animations;
+
+	//! "input" ブロックの action バインド関連 ("bindings" / "se" /
+	//! "initial_focus")。 overlay_session が組込デフォルト + input_defaults.jsonc
+	//! とマージして view / セッションに適用する。
+	input_action_config actions;
 };
+
+//! @brief input_defaults.jsonc (top-level が画面別 "input" ブロックと同形) の
+//! 解析結果。 apply_settings は arrow_focus_nav / axis mode 等の view settings
+//! 適用クロージャ (画面別 apply_input より先に呼ぶ = 画面別が勝つ)。
+struct input_defaults_data
+{
+	bool ok = false;
+	std::function<void(cycfi::elements::view&)> apply_settings;
+	input_action_config actions;
+};
+
+//! @brief input_defaults.jsonc テキストの解析。 JSONC 可。 失敗時 ok=false。
+input_defaults_data parse_input_defaults(const std::string& json_utf8);
 
 //! @brief JSON 文字列を Elements ツリーに変換する。
 //!        失敗時 root=nullptr。 詳細は SDL_Log に出力。

@@ -71,6 +71,19 @@ namespace cycfi::elements
       void                    arrow_focus_navigation(bool on);
       bool                    arrow_focus_navigation() const;
 
+      // When enabled (together with arrow_focus_navigation), an arrow move
+      // that walks off the edge of the focusable set wraps around to the
+      // opposite edge (console-style menu looping). Defaults to false to
+      // preserve legacy behavior.
+      void                    arrow_focus_wrap(bool on);
+      bool                    arrow_focus_wrap() const;
+
+      // When enabled, disabled elements (is_enabled() == false) are
+      // skipped by arrow-based 2D focus navigation. Defaults to false to
+      // preserve legacy behavior.
+      void                    focus_skip_disabled(bool on);
+      bool                    focus_skip_disabled() const;
+
       // When enabled, moving the mouse over a focusable widget also moves
       // keyboard focus to it, so the hovered widget and the focused widget
       // stay in sync (pointer-driven focus). Defaults to true. Widgets opt
@@ -136,6 +149,14 @@ namespace cycfi::elements
       // delivered to a widget's pad_axis(). Default 1.0.
       void                    stick_value_speed(float per_sec);
       float                   stick_value_speed() const;
+
+      // Focus-mode axis auto-repeat timing. delay_ms is the pause before
+      // the first repeat (default 400). rate_ms is the fixed repeat
+      // interval; 0 (default) keeps the legacy magnitude-scaled interval
+      // (60..250ms depending on how far the stick is pushed).
+      void                    axis_repeat(int delay_ms, int rate_ms);
+      int                     axis_repeat_delay() const;
+      int                     axis_repeat_rate() const;
 
       // Time elapsed (seconds) between the previous poll() and the
       // current one. Used by widgets implementing pad_axis to scale the
@@ -230,6 +251,8 @@ namespace cycfi::elements
       mouse_button            _current_button;
       bool                    _is_focus = false;
       bool                    _arrow_focus_nav = false;
+      bool                    _arrow_focus_wrap = false;
+      bool                    _focus_skip_disabled = false;
       bool                    _hover_focus = true;
 
       struct pad_key_binding
@@ -270,6 +293,8 @@ namespace cycfi::elements
       pad_axis_mode           _trigger_mode      = pad_axis_mode::disabled;
       float                   _stick_deadzone    = 0.15f;
       float                   _stick_value_speed = 1.0f;
+      int                     _axis_repeat_delay_ms = 400;
+      int                     _axis_repeat_rate_ms  = 0;   // 0 = magnitude-scaled
       float                   _frame_dt          = 0.0f;
       std::chrono::steady_clock::time_point _last_poll_time{};
 
