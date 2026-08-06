@@ -801,6 +801,7 @@ private:
 	element_ptr build_canvas      (const picojson::object& o);
 	element_ptr build_locale_variant(const picojson::object& o);
 	element_ptr build_atlas_image (const picojson::object& o);
+	element_ptr build_image       (const picojson::object& o);
 	element_ptr build_animated_sprite(const picojson::object& o);
 	element_ptr build_atlas_button(const picojson::object& o);
 	element_ptr build_atlas_toggle(const picojson::object& o);
@@ -897,6 +898,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "canvas")        return build_canvas(o);
 	if (type == "locale_variant") return build_locale_variant(o);
 	if (type == "atlas_image")    return build_atlas_image(o);
+	if (type == "image")          return build_image(o);
 	if (type == "animated_sprite") return build_animated_sprite(o);
 	if (type == "atlas_button")   return build_atlas_button(o);
 	if (type == "atlas_toggle")   return build_atlas_toggle(o);
@@ -2725,6 +2727,48 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	ce::rect src = parse_xywh(*arr);
 
 	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
+}
+
+//---------------------------------------------------------------------------
+// image — 単一の画像ファイルをパス指定で読み込み、 与えられた bounds に
+// アスペクト比維持で fit 描画する飾り要素 (atlas 非依存)。
+//   { "type": "image", "image": "resources/logo.png", "at": [x,y,w,h] }
+// "image" のパスは resource_loader (Storages VFS) で解決 → stb / ThorVG で
+// デコード。 "mem://<name>" を渡すとホスト注入画像ストア (TJS
+// ElementsDialog.registerImage で登録) から読む。 セーブサムネイル等の
+// 実行時画像に使う。 読込に失敗 (未登録 / ファイル無し) した場合は空要素を
+// 返す (レイアウトは維持、 何も描かない)。 pixmap は build 時に一度読むので、
+// 実行時に差し替えるときは画像を再登録して画面を開き直す。
+//   "scale": float (任意) — 指定時は fit でなく native×scale 固定サイズ。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_image(const picojson::object& o)
+{
+	auto path = string_or(o, "image");
+	if (path.empty()) {
+		em_logf("elements_modal: image without 'image' path");
+		return ce::share(ce::element{});
+	}
+	try {
+		// "mem://" はホスト注入ストアのキーなので resource_base を前置しない。
+		// それ以外は通常のリソースパス解決 (resource_base 起点)。
+		cycfi::fs::path fp = (path.rfind("mem://", 0) == 0)
+			? cycfi::fs::path(path)
+			: resolve_resource(path);
+		double scale = number_or(o, "scale", 0.0);
+		element_ptr img;
+		if (scale > 0.0) {
+			img = ce::share(ce::image(fp, static_cast<float>(scale)));
+		} else {
+			// 既定: 与えられた bounds にアスペクト維持で収める
+			img = ce::share(ce::image(fp, ce::image::fit));
+		}
+		register_id(o, img);
+		return img;
+	} catch (...) {
+		// pixmap 読込失敗 (未登録 mem:// / ファイル無し / デコード失敗)。
+		// 空スロット等では想定内なので空要素で継続。
+		return ce::share(ce::element{});
+	}
 }
 
 //---------------------------------------------------------------------------
