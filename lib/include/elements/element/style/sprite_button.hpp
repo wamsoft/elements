@@ -81,10 +81,15 @@ namespace cycfi::elements
          auto value = this->value();
          auto hilite = this->hilite();
          auto nframes = sp->num_frames();
+         // Dim disabled buttons that have no dedicated disabled frame, so the
+         // disabled state is still visible without requiring extra art.
+         bool dim = false;
          if (!ctx.enabled && nframes > 4)
-            sp->index(4); // disabled
+            sp->index(4); // disabled frame supplied by the sprite
          else
          {
+            if (!ctx.enabled)
+               dim = true;                     // no disabled frame → fade instead
             // Logical frame: 0=normal, 1=hilite, 2=pressed, 3=pressed+hilite.
             // When a sprite supplies fewer frames (e.g. a 3-state PSD button
             // with only normal/hilite/pressed), fall back by dropping the
@@ -102,7 +107,18 @@ namespace cycfi::elements
             }
             sp->index(idx);
          }
-         Base::draw(ctx);
+         if (dim)
+         {
+            auto& cnv = ctx.canvas;
+            float prev = cnv.global_alpha();
+            cnv.global_alpha(prev * 0.4f);
+            Base::draw(ctx);
+            cnv.global_alpha(prev);
+         }
+         else
+         {
+            Base::draw(ctx);
+         }
       }
    }
 

@@ -724,6 +724,27 @@ private:
 		});
 	}
 
+	// "enabled_var": button (atlas_button / button / invert_button / ring_button)
+	// の有効/無効を変数連動にする。 値 "0" で無効、 それ以外 (既定) で有効。
+	// 無効時は click が効かず、 描画は disabled frame があればそれ、 無ければ
+	// 半透明 (sprite_button_styler / basic_button::draw のフェード) になる。
+	void wire_button_enabled_var(const element_ptr& shared,
+	                             const picojson::object& o)
+	{
+		std::string var = string_or(o, "enabled_var");
+		if (var.empty()) return;
+		auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared);
+		if (!bp) return;
+		auto apply = [](ce::basic_button& b, const std::string& v) {
+			b.enable(v != "0");
+		};
+		if (auto* cur = _vars->get(var)) apply(*bp, *cur);
+		std::weak_ptr<ce::basic_button> w = bp;
+		_vars->subscribe(var, [w, apply](const std::string& v) {
+			if (auto sp = w.lock()) apply(*sp, v);
+		});
+	}
+
 	// type ごとのビルダ
 	element_ptr build_label       (const picojson::object& o);
 	element_ptr build_button      (const picojson::object& o);
@@ -1340,6 +1361,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);   // focus 追跡 (focused_id / focus トリガ演出 用)
+	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);    // focus 時に vars を書込む (メニュー説明欄など)
 	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
@@ -1870,6 +1892,7 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
+	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);
 	if (!id.empty()) {
 		if (truthy_field(get_field(o, "close_on_click"))) {
@@ -2985,6 +3008,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
+	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);
 	if (!id.empty()) {
 		if (truthy_field(get_field(o, "close_on_click"))) {
