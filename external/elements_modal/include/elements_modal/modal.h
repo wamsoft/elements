@@ -176,6 +176,16 @@ bool init(const std::string& font_directory = {},
 //! @brief ライブラリ全体の終了処理。 通常はプロセス終了時に自動。
 void shutdown();
 
+//! @brief 実行時画像ストア ("mem://<key>") のバイトが差し替わったとき、その
+//!        key を参照して構築済みの image widget を再デコードして即時反映する。
+//!
+//!        ホスト側が registerImage(key, ...) で mem:// バイトを更新した直後に
+//!        呼ぶと、 表示中のセーブサムネイル等がその場で新しい絵へ差し替わる
+//!        (画面を作り直さずに更新できる)。 未構築 / 失効した widget は無視。
+//!
+//! @param mem_key "mem://" スキームを除いたストアキー (例 "slot_thumb_5")。
+void refresh_mem_image(const std::string& mem_key);
+
 //---------------------------------------------------------------------------
 // overlay_session — 既存 SDL_Window/SDL_Renderer 等のサーフェス上に
 // モーダルダイアログを動かす低レベル API。

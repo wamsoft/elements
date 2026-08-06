@@ -10,6 +10,8 @@
 #include "em_platform.h"
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
+#include <elements/element/image.hpp>            // ce::image (mem:// サムネ再ロード)
+#include <elements_modal/modal.h>                // refresh_mem_image 宣言
 
 #include <cctype>
 #include <chrono>    // choice_nav_group の pad エッジ検出
@@ -17,7 +19,11 @@
 #include <cstdio>    // std::sscanf (at_var)
 #include <cstdlib>   // std::atof (pj_num)
 #include <cstring>
+#include <map>       // mem:// image widget レジストリ
+#include <memory>    // weak_ptr / shared_ptr
+#include <mutex>
 #include <utility>
+#include <vector>
 
 namespace ce = cycfi::elements;
 using element_ptr = std::shared_ptr<ce::element>;
@@ -2734,11 +2740,57 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 // アスペクト比維持で fit 描画する飾り要素 (atlas 非依存)。
 //   { "type": "image", "image": "resources/logo.png", "at": [x,y,w,h] }
 // "image" のパスは resource_loader (Storages VFS) で解決 → stb / ThorVG で
+// mem:// image widget レジストリ — registerImage でバイトが差し替わった際に、
+// 構築済みの image を set_image で再デコードして即時反映するための対応表。
+//   build_image が mem:// image を登録 → ホストが registerImage(key,..) 後に
+//   refresh_mem_image(key) を呼ぶ → 該当 widget を再ロード (画面再構築不要)。
+//---------------------------------------------------------------------------
+namespace {
+
+struct MemImageEntry {
+	std::weak_ptr<ce::image> widget;
+	cycfi::fs::path          src;    // 再デコード元 ("mem://key")
+	float                    scale;  // fit は 1.0f (set_image は _fit を変えない)
+};
+
+std::mutex& mem_image_mutex() { static std::mutex m; return m; }
+std::map<std::string, std::vector<MemImageEntry>>& mem_image_map()
+{
+	static std::map<std::string, std::vector<MemImageEntry>> m;
+	return m;
+}
+
+// "mem:" + 任意個スラッシュ を除いた残りを key に。 非 mem:// は false。
+// (fs::path 正規化で "mem://"→"mem:/" 等になっても拾えるよう、 ホスト側
+//  ParseMemName と同じくスラッシュ数に依存しない)
+bool parse_mem_key(const std::string& name, std::string& out)
+{
+	constexpr char scheme[] = "mem:";
+	constexpr std::size_t slen = 4;
+	if (name.size() <= slen || name.compare(0, slen, scheme) != 0) return false;
+	std::size_t i = slen;
+	while (i < name.size() && (name[i] == '/' || name[i] == '\\')) ++i;
+	if (i >= name.size()) return false;
+	out = name.substr(i);
+	return true;
+}
+
+void mem_image_registry_add(const std::string& key,
+                            const std::shared_ptr<ce::image>& img,
+                            const cycfi::fs::path& src, float scale)
+{
+	std::lock_guard<std::mutex> lk(mem_image_mutex());
+	mem_image_map()[key].push_back(MemImageEntry{ img, src, scale });
+}
+
+} // namespace
+
+//---------------------------------------------------------------------------
 // デコード。 "mem://<name>" を渡すとホスト注入画像ストア (TJS
 // ElementsDialog.registerImage で登録) から読む。 セーブサムネイル等の
 // 実行時画像に使う。 読込に失敗 (未登録 / ファイル無し) した場合は空要素を
-// 返す (レイアウトは維持、 何も描かない)。 pixmap は build 時に一度読むので、
-// 実行時に差し替えるときは画像を再登録して画面を開き直す。
+// 返す (レイアウトは維持、 何も描かない)。 pixmap は build 時に一度読むが、
+// mem:// は登録し直して refresh_mem_image() を呼べばその場で差し替わる。
 //   "scale": float (任意) — 指定時は fit でなく native×scale 固定サイズ。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_image(const picojson::object& o)
@@ -2755,7 +2807,7 @@ element_ptr LayoutBuilder::build_image(const picojson::object& o)
 			? cycfi::fs::path(path)
 			: resolve_resource(path);
 		double scale = number_or(o, "scale", 0.0);
-		element_ptr img;
+		std::shared_ptr<ce::image> img;
 		if (scale > 0.0) {
 			img = ce::share(ce::image(fp, static_cast<float>(scale)));
 		} else {
@@ -2763,12 +2815,41 @@ element_ptr LayoutBuilder::build_image(const picojson::object& o)
 			img = ce::share(ce::image(fp, ce::image::fit));
 		}
 		register_id(o, img);
+		// "mem://" は実行時に registerImage でバイトが差し替わりうる。 差し替え
+		// 時に refresh_mem_image() で set_image できるよう widget を登録しておく
+		// (セーブ直後のサムネイル即時反映)。
+		if (std::string key; parse_mem_key(path, key)) {
+			float reload_scale = (scale > 0.0) ? static_cast<float>(scale) : 1.0f;
+			mem_image_registry_add(key, img, fp, reload_scale);
+		}
 		return img;
 	} catch (...) {
 		// pixmap 読込失敗 (未登録 mem:// / ファイル無し / デコード失敗)。
 		// 空スロット等では想定内なので空要素で継続。
 		return ce::share(ce::element{});
 	}
+}
+
+// 実行時画像ストア ("mem://mem_key") のバイト更新後に呼ぶと、 その key で
+// 構築済みの image widget を set_image で再デコードして即時反映する。
+// 失効した widget は掃除する。 host 側 registerImage() から呼ばれる。
+// ※呼出側は ImageStore のロックを解放してから呼ぶこと (set_image が
+//   resource_loader 経由で ImageStore を読むため、 保持したままだと再入する)。
+void refresh_mem_image(const std::string& mem_key)
+{
+	std::lock_guard<std::mutex> lk(mem_image_mutex());
+	auto it = mem_image_map().find(mem_key);
+	if (it == mem_image_map().end()) return;
+	auto& vec = it->second;
+	for (auto e = vec.begin(); e != vec.end(); ) {
+		if (auto p = e->widget.lock()) {
+			try { p->set_image(e->src, e->scale); } catch (...) {}
+			++e;
+		} else {
+			e = vec.erase(e);   // 失効 widget を掃除
+		}
+	}
+	if (vec.empty()) mem_image_map().erase(it);
 }
 
 //---------------------------------------------------------------------------
