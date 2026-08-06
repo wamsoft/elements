@@ -131,7 +131,7 @@ namespace cycfi { namespace elements
       std::string name = path.string();
       auto bytes = get_resource_loader().read(name);
       if (bytes.empty())
-         throw failed_to_load_pixmap{"File does not exist."};
+         throw failed_to_load_pixmap{"File does not exist: " + name};
 
       std::string mime = lower_ext(path);
 
@@ -153,7 +153,9 @@ namespace cycfi { namespace elements
          return;
       }
 
-      throw failed_to_load_pixmap{"Failed to load pixmap."};
+      throw failed_to_load_pixmap{
+         "Failed to decode pixmap (unsupported or corrupt image data): " + name
+         + " (" + std::to_string(bytes.size()) + " bytes, ext '" + mime + "')"};
    }
 
    pixmap::~pixmap()

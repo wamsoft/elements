@@ -515,7 +515,11 @@ namespace cycfi::elements
             if (!RegisterClassW(&windowClass))
                MessageBoxW(nullptr, L"Could not register class", L"Error", MB_OK);
 
-            // Get executable directory (not current working directory)
+#if defined(ELEMENTS_FILE_IO_SUPPORT)
+            // Load fonts from the exe-relative resources directory. Without
+            // filesystem support the host app is expected to install a
+            // resource_loader and register fonts itself, so skip the probes
+            // entirely (no direct filesystem access).
             wchar_t exe_path[MAX_PATH] = {};
             GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
             auto exe_dir = fs::path(exe_path).parent_path();
@@ -531,6 +535,7 @@ namespace cycfi::elements
             // Also scan resources/ directly (build output puts fonts here)
             if (fs::exists(res_dir))
                load_fonts_from_directory(res_dir.string());
+#endif
          }
       };
    }

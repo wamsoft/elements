@@ -8,6 +8,7 @@
 #include <elements/support/canvas.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/font.hpp>
+#include <elements/support/resource_loader.hpp>
 #include <elements/support/theme.hpp>
 
 #include <algorithm>
@@ -15,7 +16,6 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
-#include <fstream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -312,13 +312,19 @@ namespace cycfi::elements
             candidates.push_back(dir + "/kenney_input_keyboard_&_mouse_map.txt");
          }
 
-         std::ifstream f;
+         // Read through the active resource_loader so virtual/embedded
+         // filesystems work the same as image and font loading.
+         std::string text;
          for (auto const& c : candidates) {
-            f.open(c, std::ios::binary);
-            if (f) break;
+            auto bytes = get_resource_loader().read(c);
+            if (!bytes.empty()) {
+               text.assign(bytes.begin(), bytes.end());
+               break;
+            }
          }
-         if (!f) return;
+         if (text.empty()) return;
 
+         std::istringstream f(text);
          std::string line;
          while (std::getline(f, line)) {
             auto colon = line.find(':');
@@ -456,9 +462,9 @@ namespace cycfi::elements
          }
 
          for (auto const& path : candidates) {
-            std::ifstream probe(path, std::ios::binary);
-            if (!probe) continue;
-            probe.close();
+            // Probe through the resource_loader (register_font reads through
+            // it as well) so no direct filesystem access happens here.
+            if (!get_resource_loader().exists(path)) continue;
             auto family = register_font(kThemeStatic[i].font_family, path);
             if (!family.empty()) {
                g_runtime[i].registered_family = family;
