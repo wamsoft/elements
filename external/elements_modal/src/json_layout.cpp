@@ -502,6 +502,14 @@ public:
 	// styler の size 引数に、 label は font_size(px) の既定に流す。 1.0 のとき
 	// 従来と完全一致 (opt-in)。
 	void set_font_scale(float s) { _font_scale = (s > 0.0f) ? s : 1.0f; }
+
+	// top-level "style" ブロックの既定値 (いずれも 0 = 無効 = 従来一致)。
+	//   tile_gap   : "gap" 未指定の vtile/htile の子間隙間 px
+	//   row_height : button / toggle_button / check_box / slide_switch /
+	//                input_box / selection_menu の既定最小高 px (vmin_size 相当)
+	void set_tile_gap(float g)   { _tile_gap = (g > 0.0f) ? g : 0.0f; }
+	void set_row_height(float h) { _row_height = (h > 0.0f) ? h : 0.0f; }
+
 	std::map<std::string, cycfi::elements::pixmap_ptr>& atlases() { return _atlases; }
 	element_ptr build(const picojson::value& v);
 
@@ -597,6 +605,8 @@ private:
 	std::string _default_locale;
 	std::string _resource_base;
 	float _font_scale = 1.0f;   // top-level "font_scale" (既定 1.0 = 従来一致)
+	float _tile_gap = 0.0f;     // style.tile_gap (0 = 従来どおり密着)
+	float _row_height = 0.0f;   // style.row_height (0 = 無効)
 
 	// widget の実効フォント倍率。 明示 "size"/"size_scale" があればそれを
 	// 優先 (resolve_font_scale = px/base)、 なければ top-level _font_scale。
@@ -606,6 +616,15 @@ private:
 		if (has_font_field(o, "size", "size_scale"))
 			return resolve_font_scale(o, "size", "size_scale");
 		return _font_scale;
+	}
+
+	// style.row_height: 行ウィジェット (button 系 / input_box 等) に既定の
+	// 最小高を与える。 vmin_size で包むだけなので、 明示の vsize/vmin_size
+	// 指定や自然サイズがこれより大きい場合は影響しない (最小値のみ)。
+	element_ptr apply_row_height(element_ptr el) const
+	{
+		if (_row_height <= 0.0f || !el) return el;
+		return ce::share(ce::vmin_size(_row_height, ce::hold_any(el)));
 	}
 
 	// アトラス画像 (atlas_image / atlas_button / atlas_slider 用) を JSON
@@ -1464,20 +1483,37 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 			_close_button_ids.insert(id);
 		}
 	}
-	return shared;
+	return apply_row_height(shared);
 }
 
 element_ptr LayoutBuilder::build_vtile(const picojson::object& o)
 {
+	// "gap": 子要素間の隙間 px (未指定なら style.tile_gap、 それも無ければ 0 =
+	// 従来どおり密着)。 子の間へ vspacer を自動挿入するのと等価。
+	const float gap = static_cast<float>(number_or(o, "gap", _tile_gap));
 	ce::vtile_composite tile;
-	for (auto& c : build_children(o)) tile.push_back(c);
+	bool first = true;
+	for (auto& c : build_children(o)) {
+		if (!first && gap > 0.0f)
+			tile.push_back(ce::share(ce::vsize(gap, ce::element{})));
+		tile.push_back(c);
+		first = false;
+	}
 	return ce::share(std::move(tile));
 }
 
 element_ptr LayoutBuilder::build_htile(const picojson::object& o)
 {
+	// "gap": build_vtile と同じ (横方向は hspacer 相当を挿入)。
+	const float gap = static_cast<float>(number_or(o, "gap", _tile_gap));
 	ce::htile_composite tile;
-	for (auto& c : build_children(o)) tile.push_back(c);
+	bool first = true;
+	for (auto& c : build_children(o)) {
+		if (!first && gap > 0.0f)
+			tile.push_back(ce::share(ce::hsize(gap, ce::element{})));
+		tile.push_back(c);
+		first = false;
+	}
 	return ce::share(std::move(tile));
 }
 
@@ -1654,7 +1690,7 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	auto shared = ce::share(std::move(cb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	return shared;
+	return apply_row_height(shared);
 }
 
 element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
@@ -1676,7 +1712,7 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	auto shared = ce::share(std::move(tb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	return shared;
+	return apply_row_height(shared);
 }
 
 element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
@@ -1697,7 +1733,7 @@ element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
 	auto shared = ce::share(std::move(sw));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	return shared;
+	return apply_row_height(shared);
 }
 
 element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
@@ -1726,7 +1762,7 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 	auto shared = ce::share(std::move(pair.first));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	return shared;
+	return apply_row_height(shared);
 }
 
 element_ptr LayoutBuilder::build_group(const picojson::object& o)
@@ -1784,7 +1820,7 @@ element_ptr LayoutBuilder::build_selection_menu(const picojson::object& o)
 	auto shared = ce::share(std::move(sm.first));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	return shared;
+	return apply_row_height(shared);
 }
 
 //---------------------------------------------------------------------------
@@ -4295,6 +4331,23 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// 省略 (=1.0) 時は従来と完全一致 (opt-in、 他メニューへ不影響)。
 	builder.set_font_scale(static_cast<float>(number_or(o, "font_scale", 1.0)));
 
+	// "style" ブロック (任意) — 未指定値の既定をまとめて与えるテーマ入口。
+	//   font_scale : top-level "font_scale" と同じ (両方あれば style 側が優先)
+	//   tile_gap   : "gap" 未指定の vtile/htile の子間隙間 px
+	//   row_height : button 系 / input_box / selection_menu の既定最小高 px
+	//   padding    : content 全体を包む外側余白 px
+	// いずれも省略 (= 0) で従来と完全一致。 将来のテーマ一括指定 (9patch /
+	// atlas スキン等) はこのブロックを拡張して受ける想定。
+	float style_padding = 0.0f;
+	if (auto* v = get_field(o, "style"); v && v->is<picojson::object>()) {
+		const auto& so = v->get<picojson::object>();
+		if (auto* fs = get_field(so, "font_scale"); fs && pj_is_num(*fs))
+			builder.set_font_scale(static_cast<float>(pj_num(*fs)));
+		builder.set_tile_gap(static_cast<float>(number_or(so, "tile_gap", 0.0)));
+		builder.set_row_height(static_cast<float>(number_or(so, "row_height", 0.0)));
+		style_padding = static_cast<float>(number_or(so, "padding", 0.0));
+	}
+
 	// "vars": {name: value} — VariableStore に初期値を登録。 build_label
 	// の text_var が参照する。 build より先に流し込んでおく。
 	if (auto* v = get_field(o, "vars"); v && v->is<picojson::object>()) {
@@ -4375,6 +4428,12 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	if (!content) {
 		em_logf("elements_modal: missing or invalid 'content'");
 		return result;
+	}
+
+	// style.padding: content 全体を外側余白で包む (背景 box の内側)。
+	if (style_padding > 0.0f) {
+		const float p = style_padding;
+		content = ce::share(ce::margin({p, p, p, p}, ce::hold_any(content)));
 	}
 
 	if (auto* arr = get_array(o, "background")) {

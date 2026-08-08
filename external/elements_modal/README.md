@@ -89,11 +89,30 @@ int main()
 | `lang` | `"ja"` 等 | i18n の初期表示言語。 実行中の切替はホストの `set_language()` |
 | `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
 | `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
+| `font_scale` | number | 明示 `size` を持たない button / toggle / radio / check_box / label の既定フォント倍率 (既定 1.0 = 従来一致) |
+| `style` | object | 未指定値の既定をまとめて与えるテーマ入口 (下記「style ブロック」)。 いずれも省略で従来一致 |
+
+#### `style` ブロック
+
+```jsonc
+"style": { "font_scale": 1.25, "row_height": 44, "tile_gap": 8, "padding": 24 }
+```
+
+| キー | 意味 |
+|---|---|
+| `font_scale` | top-level `font_scale` と同じ (両方あれば style 側が優先) |
+| `tile_gap` | `"gap"` 未指定の `vtile` / `htile` の子要素間隙間 px (spacer 自動挿入と等価) |
+| `row_height` | `button` / `toggle_button` / `check_box` / `slide_switch` / `input_box` / `selection_menu` の既定最小高 px (`vmin_size` 相当、 明示サイズや自然サイズがこれより大きければ影響しない) |
+| `padding` | `content` 全体を包む外側余白 px (`background` の内側) |
+
+既定で「詰まった」見た目になるのを避けたいとき、 spacer を並べずにこのブロック 1 つで
+余白 / 行間 / 行高 / フォントの密度をまとめて指定できる。 将来のテーマ一括指定
+(9patch / atlas スキン等) はこのブロックを拡張して受ける想定。
 
 ### 要素タイプ (`"type"`)
 
 #### レイアウト系
-- `vtile` / `htile` — 縦・横タイル。 `"children"`: 子要素配列。
+- `vtile` / `htile` — 縦・横タイル。 `"children"`: 子要素配列。 `"gap"`: 子要素間の隙間 px (省略時は `style.tile_gap`、 それも無ければ 0 = 密着。 spacer 自動挿入と等価)。
 - `margin` — 内側マージン。 `"padding"`: `[l, t, r, b]` / `[h, v]` / `n`、 `"child"`: 子要素。
 - `top_margin` / `left_margin` / `right_margin` / `bottom_margin` — 単方向マージン。 `"value"` + `"child"`。
 - `hsize` / `vsize` — 固定サイズ。 `"width"` / `"height"` + `"child"`。
