@@ -4443,6 +4443,12 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 				    d && pj_is_num(*d)) {
 					ts.duration_ms = static_cast<int>(pj_num(*d));
 				}
+				// "universal" 用: rule 画像パスと境界ぼかし幅 (0-255)。
+				ts.rule = string_or(obj, "rule");
+				if (auto* vg = get_field(obj, "vague");
+				    vg && pj_is_num(*vg)) {
+					ts.vague = static_cast<int>(pj_num(*vg));
+				}
 			} else {
 				em_logf("elements_modal: transitions[\"%s\"] must be string "
 				        "or object", kv.first.c_str());

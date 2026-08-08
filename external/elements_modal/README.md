@@ -482,10 +482,13 @@ target syntax:
 |---|---|
 | `""` / 省略 | 即切替 (デフォルト) |
 | `"fade"` | クロスフェード (旧画面の最終フレーム ↔ 新画面を時間で lerp 混色) |
+| `"universal"` | rule 画像によるユニバーサルトランジション。 追加キー `"rule"` (画像パス、 解決・ロードはホスト責務) / `"vague"` (境界ぼかし幅、 rule 値スケール 0-255、 既定 64) |
 
 `duration`: ms。 省略 / 0 でホスト既定 (= 200ms 程度)。 未対応 effect は警告 + 即切替フォールバック。
 
 `"fade"` の混色そのものは `<elements_modal/effects.h>` の `blend_argb8888(from, to, t, out, count)` (ヘッダオンリー) を使う。 旧画面の最終フレームを `from`、 新画面を `to`、 `t = elapsed / duration` (0→1) で channel 別 lerp する。 `out` は `to` と同一バッファでよい (in-place)。
+
+`"universal"` の混色は同ヘッダの `blend_universal_argb8888(from, to, rule, phase01, vague, out, count)`。 `rule` は from/to と同画素数の 8bit グレースケールバッファ (ロード・スケーリングはホスト責務) で、 値が小さい画素ほど早く `to` へ切り替わる。 `phase01` (0→1) が内部で `0 → 255+vague` の閾値スイープに展開される。 rule バッファを用意しないホストは fade へフォールバックすればよい。
 
 #### ホスト連携: `navigator` (画面遷移ドライバ)
 
@@ -493,7 +496,7 @@ target syntax:
 
 | API | 役割 |
 |---|---|
-| `resolve_transition(action, transitions, is_entry) -> nav_step` | 純関数。 action を transitions で解決し `nav_step{action, name, effect, duration_ms}` を返す。 `nav_action` は `push` / `pop` / `replace` / `stay` / `exit` |
+| `resolve_transition(action, transitions, is_entry) -> nav_step` | 純関数。 action を transitions で解決し `nav_step{action, name, effect, duration_ms, rule, vague}` を返す。 `nav_action` は `push` / `pop` / `replace` / `stay` / `exit` |
 | `navigator(app_manifest)` | スタック + manifest + 画面ごと focus 記憶 + 表示言語の保持 |
 | `navigator::reset_to(entry)` | スタックを `{entry}` に初期化 (entry 空ならマニフェストの entry) |
 | `navigator::advance(action, transitions) -> nav_step` | session 完了時に呼ぶ。 `is_entry` を深度から自動判定して解決 + スタック更新。 戻り値で effect 演出を処理 |

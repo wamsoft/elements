@@ -47,11 +47,15 @@ struct nav_step
 	//! push / replace のときの遷移先画面名 (それ以外は空)。
 	std::string name;
 
-	//! 遷移エフェクト ("" = なし / "fade")。 transition_spec から引き継ぐ。
+	//! 遷移エフェクト ("" = なし / "fade" / "universal")。 transition_spec から引き継ぐ。
 	std::string effect;
 
 	//! エフェクト所要時間 ms (0 = ホスト既定)。
 	int duration_ms = 0;
+
+	//! effect=="universal" の rule 画像パス / ぼかし幅。 transition_spec から引き継ぐ。
+	std::string rule;
+	int vague = 64;
 };
 
 //! @brief action を transitions で lookup し、 次手を返す純関数。

@@ -75,12 +75,20 @@ struct transition_spec
 	//!   "<stay>"         — 現画面を再 enter (stack 不変)
 	std::string target;
 
-	//! 遷移エフェクト。 空文字 = なし (即切替)、 "fade" = クロスフェード。
+	//! 遷移エフェクト。 空文字 = なし (即切替)、 "fade" = クロスフェード、
+	//! "universal" = rule 画像によるユニバーサルトランジション。
 	//! 未対応エフェクトはホスト側で警告 + 即切替フォールバック。
 	std::string effect;
 
 	//! エフェクト所要時間 ms。 0 = ホスト既定 (= 200ms 程度)。
 	int duration_ms = 0;
+
+	//! effect=="universal" の rule 画像パス (グレースケール想定)。 解決・ロードは
+	//! ホスト責務 (画面 JSON からの相対 / ホスト独自 VFS 等)。 空 = 未指定。
+	std::string rule;
+
+	//! effect=="universal" の境界ぼかし幅 (0-255、 rule 値スケール)。
+	int vague = 64;
 };
 
 //! @brief アプリマニフェスト (entry + 画面レジストリ)。 別途用意した

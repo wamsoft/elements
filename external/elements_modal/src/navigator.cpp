@@ -33,6 +33,8 @@ nav_step resolve_transition(
 		const std::string& target = it->second.target;
 		step.effect      = it->second.effect;
 		step.duration_ms = it->second.duration_ms;
+		step.rule        = it->second.rule;
+		step.vague       = it->second.vague;
 
 		if (target.empty() || target == "<exit>") {
 			step.action = nav_action::exit;
