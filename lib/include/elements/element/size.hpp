@@ -373,8 +373,15 @@ namespace cycfi::elements
    template <concepts::Element Subject>
    inline void vmin_size_element<Subject>::prepare_subject(context& ctx)
    {
-      if (ctx.bounds.height() < _height)
-         ctx.bounds.height(_height);
+      // limits() と同じく subject の縦 limits でクランプする。 以前は無条件に
+      // _height へ拡大していたため、 subject の縦 max が _height より小さいと
+      // 「親 (tile 等) が割り当てた高さ < 描画高さ」になり、 隣接要素へ
+      // はみ出して描画される不整合があった。
+      auto  e_limits = this->subject().limits(ctx);
+      float height = _height;
+      clamp(height, e_limits.min.y, e_limits.max.y);
+      if (ctx.bounds.height() < height)
+         ctx.bounds.height(height);
    }
 
    ////////////////////////////////////////////////////////////////////////////

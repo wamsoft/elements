@@ -489,6 +489,38 @@ private:
 //---------------------------------------------------------------------------
 // LayoutBuilder — element ツリーを再帰生成
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+// style.row_height 用: 子の縦 min/max を height まで引き上げる proxy。
+// ce::vmin_size は子の縦 max でクランプされるため、 固定高ウィジェット
+// (button 等、 縦 max = 自然高) には効かない。 こちらは行としての高さを
+// 親 (vtile) に確保させ、 子には行全体の bounds を渡す — button は行
+// いっぱいの body を描き、 glyph 系 (check_box 等) は自分の bounds 内に
+// 収まるので隣接要素への干渉は起きない。
+//---------------------------------------------------------------------------
+class row_min_size_element : public ce::proxy_base
+{
+public:
+	row_min_size_element(float height, element_ptr subject_)
+	 : _height(height)
+	 , _subject(std::move(subject_))
+	{}
+
+	ce::element const& subject() const override { return *_subject; }
+	ce::element&       subject() override       { return *_subject; }
+
+	ce::view_limits limits(ce::basic_context const& ctx) const override
+	{
+		auto l = _subject->limits(ctx);
+		if (l.min.y < _height) l.min.y = _height;
+		if (l.max.y < l.min.y) l.max.y = l.min.y;
+		return l;
+	}
+
+private:
+	float       _height;
+	element_ptr _subject;
+};
+
 class LayoutBuilder
 {
 public:
@@ -619,12 +651,13 @@ private:
 	}
 
 	// style.row_height: 行ウィジェット (button 系 / input_box 等) に既定の
-	// 最小高を与える。 vmin_size で包むだけなので、 明示の vsize/vmin_size
-	// 指定や自然サイズがこれより大きい場合は影響しない (最小値のみ)。
+	// 最小高を与える。 row_min_size_element で包む (縦 min/max を引き上げる
+	// ので固定高ウィジェットにも効く)。 自然サイズがこれより大きい場合は
+	// 影響しない (最小値のみ)。
 	element_ptr apply_row_height(element_ptr el) const
 	{
 		if (_row_height <= 0.0f || !el) return el;
-		return ce::share(ce::vmin_size(_row_height, ce::hold_any(el)));
+		return std::make_shared<row_min_size_element>(_row_height, std::move(el));
 	}
 
 	// アトラス画像 (atlas_image / atlas_button / atlas_slider 用) を JSON

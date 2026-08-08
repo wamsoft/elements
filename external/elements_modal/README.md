@@ -102,7 +102,7 @@ int main()
 |---|---|
 | `font_scale` | top-level `font_scale` と同じ (両方あれば style 側が優先) |
 | `tile_gap` | `"gap"` 未指定の `vtile` / `htile` の子要素間隙間 px (spacer 自動挿入と等価) |
-| `row_height` | `button` / `toggle_button` / `check_box` / `slide_switch` / `input_box` / `selection_menu` の既定最小高 px (`vmin_size` 相当、 明示サイズや自然サイズがこれより大きければ影響しない) |
+| `row_height` | `button` / `toggle_button` / `check_box` / `slide_switch` / `input_box` / `selection_menu` の既定最小高 px。 固定高ウィジェット (button 等) にも効く専用 proxy で行高を確保する (自然サイズがこれより大きければ影響しない)。 button は行いっぱいの body を描くので「高さのあるボタン」になる |
 | `padding` | `content` 全体を包む外側余白 px (`background` の内側) |
 
 既定で「詰まった」見た目になるのを避けたいとき、 spacer を並べずにこのブロック 1 つで
