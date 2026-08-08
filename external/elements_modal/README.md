@@ -308,7 +308,9 @@ lib の `basic_choice::activate / click` は次の処理をする:
 
 #### resource_base (相対パスの解決起点)
 
-`sprite_button` / `gizmo_image` / `atlases` などが受け取る相対パスは、 `overlay_session::start(..., resource_base)` (または `run_modal` のホスト側設定) で渡された **resource_base** ディレクトリを起点に resolve される。 絶対パスはそのまま使用。 マニフェスト駆動の elements_console ランナは exe のあるディレクトリ (または `--base` 指定) を resource_base として渡す。
+`sprite_button` / `gizmo_image` / `atlases` などが受け取る相対パスは、 `overlay_session::start(..., resource_base)` (または `run_modal` のホスト側設定) で渡された **resource_base** ディレクトリを起点に resolve される。 絶対パスはそのまま使用。 マニフェスト駆動の elements_console ランナは「その画面 JSON が見つかった検索ルート」を resource_base として渡す。
+
+ホストが `set_resource_resolver()` (modal.h 公開 API) でリゾルバを注入すると、 相対パスの解決はすべてそこを通る (`resolve(rel, origin_base)`。 origin_base = その画面の resource_base)。 elements_console はここでマルチルート検索 (origin → 他ルートの登録順) を実装しており、 吉里吉里ホスト等はアーカイブ内検索 (Storages) を差し込める。 未設定なら従来どおり resource_base 前置。 絶対パスと `mem://` はリゾルバを通さない。 `input_defaults.jsonc` のロードも同じ規則。
 
 ### フォントサイズ指定の方針
 

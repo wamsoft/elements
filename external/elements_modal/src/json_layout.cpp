@@ -30,6 +30,29 @@ using element_ptr = std::shared_ptr<ce::element>;
 
 namespace elements_modal {
 
+//---------------------------------------------------------------------------
+// リソースパスリゾルバ (modal.h 公開 API)。 ホストが set すると、 相対パスの
+// 解決 (resolve_resource / input_defaults) が全てここを通る。 未設定なら
+// 従来どおり origin_base 前置。
+//---------------------------------------------------------------------------
+namespace {
+	resource_resolver& resolver_slot()
+	{
+		static resource_resolver fn;
+		return fn;
+	}
+}
+
+void set_resource_resolver(resource_resolver fn)
+{
+	resolver_slot() = std::move(fn);
+}
+
+const resource_resolver& get_resource_resolver()
+{
+	return resolver_slot();
+}
+
 namespace {
 
 //---------------------------------------------------------------------------
@@ -492,14 +515,21 @@ public:
 	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
 	std::vector<anim_binding> take_animations() { return std::move(_animations); }
 
-	// 相対パスを resource_base (= ホストが指定するベースディレクトリ) で
-	// 解決して fs::path にする。 path が絶対ならそのまま。
+	// 相対パスを解決して fs::path にする。 path が絶対ならそのまま。
+	// ホストが set_resource_resolver() を設定していればそちらへ委譲
+	// (origin = この画面の resource_base)。 未設定なら resource_base 前置。
 	cycfi::fs::path resolve_resource(const std::string& path) const
 	{
 		if (path.empty()) return {};
 		bool absolute = (path[0] == '/' || path[0] == '\\'
 		                 || (path.size() > 1 && path[1] == ':'));
-		if (absolute || _resource_base.empty()) {
+		if (absolute) {
+			return cycfi::fs::path(path);
+		}
+		if (const auto& r = get_resource_resolver()) {
+			return cycfi::fs::path(r(path, _resource_base));
+		}
+		if (_resource_base.empty()) {
 			return cycfi::fs::path(path);
 		}
 		return cycfi::fs::path(_resource_base + path);

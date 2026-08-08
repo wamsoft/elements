@@ -103,6 +103,30 @@ struct app_manifest
 //! 失敗時は ok=false のオブジェクトを返す (詳細は SDL_Log)。
 app_manifest parse_app_manifest(const std::string& json_utf8);
 
+//---------------------------------------------------------------------------
+// リソースパスリゾルバ (マルチルート探索などのホスト注入点)
+//---------------------------------------------------------------------------
+
+//! @brief JSON 中の相対リソースパス (atlas / image / input_defaults 等) を
+//! 実ファイルパスへ解決する関数。 rel = JSON に書かれた相対パス、
+//! origin_base = その JSON の resource_base (overlay_session::start /
+//! parse_from_string に渡されたベース。 末尾 '/'、 空のこともある)。
+//! ホストはここで「origin 優先 → 他の登録ルート順」等の探索や、 アーカイブ
+//! 内ファイルへのマッピング (吉里吉里 Storages 等) を実装できる。
+//! 見つからない場合もエラーにせず「最有力のパス」を返すこと (呼び先の
+//! ロード失敗ログに任せる)。
+using resource_resolver = std::function<std::string(
+	const std::string& rel,
+	const std::string& origin_base)>;
+
+//! @brief プロセス全体のリソースリゾルバを設定する。 未設定 (既定) の場合、
+//! 相対パスは従来どおり origin_base 前置で解決される。 絶対パスと "mem://"
+//! はリゾルバを通さず素通しなので考慮不要。
+void set_resource_resolver(resource_resolver fn);
+
+//! @brief 現在のリゾルバ (未設定なら空の function)。
+const resource_resolver& get_resource_resolver();
+
 //! @brief id 付き widget のイベント callback。
 //!        button の click は is_button_click=true、 state widget の値変化は
 //!        is_button_click=false で呼ばれる。 button の payload は空 (default

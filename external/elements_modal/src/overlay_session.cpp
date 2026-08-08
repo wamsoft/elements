@@ -163,7 +163,12 @@ const input_defaults_data* global_input_defaults(const std::string& resource_bas
 	auto it = cache.find(resource_base);
 	if (it == cache.end()) {
 		input_defaults_data d;
-		const std::string name = resource_base + "input_defaults.jsonc";
+		// ホスト注入リゾルバがあればそちらで解決 (マルチルート探索等)。
+		// キャッシュキーは resource_base のまま (origin 単位で 1 回)。
+		std::string name = resource_base + "input_defaults.jsonc";
+		if (const auto& r = get_resource_resolver()) {
+			name = r("input_defaults.jsonc", resource_base);
+		}
 		try {
 			auto bytes = ce::get_resource_loader().read(name);
 			if (!bytes.empty()) {
