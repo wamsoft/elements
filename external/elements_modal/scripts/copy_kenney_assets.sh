@@ -92,6 +92,15 @@ for pair in "${themes[@]}"; do
    copied_total=$((copied_total + svg_count + font_count))
 done
 
+# License (CC0) — pack 同梱の License.txt を配布物へそのまま同梱できるようコピー
+if [ -f "$src/License.txt" ]; then
+   cp -f "$src/License.txt" "$dst/License.txt"
+   echo "  license: License.txt → $dst/"
+else
+   echo "  note: License.txt not found in source pack" >&2
+   echo "        (Input Prompts by Kenney, CC0: https://kenney.nl/assets/input-prompts)" >&2
+fi
+
 echo
 echo "done. total files copied: $copied_total"
 echo "destination: $dst"
