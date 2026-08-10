@@ -857,6 +857,7 @@ private:
 	element_ptr build_vspacer     (const picojson::object& o);
 	element_ptr build_spacer      (const picojson::object& o);
 	element_ptr build_scroller    (const picojson::object& o);
+	element_ptr build_text_box    (const picojson::object& o);
 	element_ptr build_checkbox    (const picojson::object& o);
 	element_ptr build_toggle_button(const picojson::object& o);
 	element_ptr build_slide_switch(const picojson::object& o);
@@ -1010,6 +1011,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "vspacer")       return build_vspacer(o);
 	if (type == "spacer")        return build_spacer(o);
 	if (type == "scroller")      return build_scroller(o);
+	if (type == "text_box")      return build_text_box(o);
 	if (type == "checkbox")      return build_checkbox(o);
 	if (type == "check_box")     return build_checkbox(o);
 	if (type == "toggle_button") return build_toggle_button(o);
@@ -1702,6 +1704,51 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 	auto child = build_child(o);
 	if (!child) return nullptr;
 	return ce::share(ce::vscroller(ce::hold_any(child)));
+}
+
+//---------------------------------------------------------------------------
+// text_box — 複数行・自動折返しの静的テキスト (cycfi static_text_box)。
+//   { "type": "text_box", "text": "...", "size": 13, "color": [r,g,b,a],
+//     "mono": 1, "text_var": "varname" }
+//   幅は親のレイアウト (hsize 等) が決め、 高さは折返し結果に追従する。
+//   長文は親に scroller を置いてスクロールする。 "text_var" は label と同じ
+//   変数 store 購読で、 ホストの setVar により本文を丸ごと差し替えられる
+//   (ライセンス表示等の長文ビューア向け。 行 label を大量に並べるより軽い)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
+{
+	std::string text_var = string_or(o, "text_var");
+	std::string text;
+	if (!text_var.empty()) {
+		if (auto* init = _vars->get(text_var)) text = *init;
+		else                                    text = string_or(o, "text");
+	} else {
+		text = string_or(o, "text");
+	}
+
+	bool mono = truthy_field(get_field(o, "mono"));
+	auto descr = mono ? ce::get_theme().mono_spaced_font
+	                  : ce::get_theme().text_box_font;
+	float px = resolve_font_px(o, "size", "size_scale");
+	if (!has_font_field(o, "size", "size_scale")) {
+		px = descr._size;
+		if (_font_scale != 1.0f) px *= _font_scale;
+	}
+	ce::font fnt{ descr.size(px) };
+
+	auto col = ce::get_theme().text_box_font_color;
+	if (auto* arr = get_array(o, "color")) col = parse_color(*arr);
+
+	auto sp = std::make_shared<ce::static_text_box>(std::move(text), fnt, col);
+	if (!text_var.empty()) {
+		std::weak_ptr<ce::static_text_box> w = sp;
+		_vars->subscribe(text_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		});
+	}
+	element_ptr out = sp;
+	register_id(o, out);
+	return out;
 }
 
 element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
