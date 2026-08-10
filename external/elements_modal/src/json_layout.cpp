@@ -3310,6 +3310,9 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 //     },
 //     "text": "MUSIC", "text_size": 22 }   // overlay 同様
 // 値変化で value_t{bool} を発火。
+// "value_var" (任意) で VariableStore と連動: 変数に既存値があれば初期状態を
+// 上書き ("0" / "false" / 空 = off)、 クリックで "0"/"1" を書き戻し、 変数の
+// 変更は状態へ反映のみ (on_click は発火しない)。 atlas_slider と同じ規約。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 {
@@ -3336,16 +3339,26 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	bool init = false;
 	if (!bool_field(get_field(o, "initial"), init))
 		bool_field(get_field(o, "value"), init);
+	std::string value_var = string_or(o, "value_var");
+	auto var_truthy = [](const std::string& v) {
+		return !(v.empty() || v == "0" || v == "false");
+	};
+	if (!value_var.empty()) {
+		if (auto* cur = _vars->get(value_var)) init = var_truthy(*cur);
+	}
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames),
 	                               truthy_field(get_field(o, "native_frames")));
 	auto tb = ce::toggle_button(std::move(sprite));
 	tb.value(init);
-	if (!id.empty()) {
+	if (!id.empty() || !value_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		tb.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		tb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(tb));
@@ -3353,6 +3366,13 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
+		if (!value_var.empty()) {
+			// 変数 → トグル状態の一方向同期 (on_click は発火しない)。
+			std::weak_ptr<ce::basic_button> w = bp;
+			_vars->subscribe(value_var, [w, var_truthy](const std::string& v) {
+				if (auto sp = w.lock()) sp->value(var_truthy(v));
+			});
+		}
 	}
 	note_vars_on_focus(o, id);
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
