@@ -291,6 +291,8 @@ target_link_libraries(elements PUBLIC thorvg)
 # それ以外は従来の glyph_layout_ft (FreeType+HarfBuzz 直叩き)。
 if(TVG_LOADER_GW)
    target_sources(elements PRIVATE src/support/glyph_layout_gw.cpp)
+   # font.cpp の register_font をホストキー渡し (ゼロコピー) 分岐へ
+   target_compile_definitions(elements PRIVATE ELEMENTS_TVG_GW=1)
 else()
    target_sources(elements PRIVATE src/support/glyph_layout_ft.cpp)
    # FreeType / HarfBuzz: どちらも ThorVG 側で setup 済み。elements も

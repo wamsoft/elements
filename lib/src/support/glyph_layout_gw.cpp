@@ -63,6 +63,25 @@ namespace cycfi { namespace elements
          return s;
       }
 
+      // Cache an opened bridge face handle under `key` (fills the metric
+      // snapshot). Returns false when `handle` is null.
+      bool cache_face(std::string const& key, void* handle)
+      {
+         auto* b = tvgGwGetBridge();
+         if (!b || !handle)
+            return false;
+         gw_face face;
+         face.handle = handle;
+         face.upem = b->unitsPerEm(b->ctx, handle);
+         if (face.upem == 0) face.upem = 1000;
+         face.ascent = std::abs(float(b->ascender(b->ctx, handle)));
+         face.descent = std::abs(float(b->descender(b->ctx, handle)));
+         face.height = float(b->height(b->ctx, handle));
+         auto& gw = get_gw();
+         gw.faces[key] = face;
+         return true;
+      }
+
       // Open a bridge face over font bytes and cache it under `key`.
       // The bridge copies the bytes (copy=1), so the caller may free them.
       bool open_face(std::string const& key, std::uint8_t const* data,
@@ -77,20 +96,25 @@ namespace cycfi { namespace elements
          if (gw.faces.find(key) != gw.faces.end())
             return true;   // already registered
 
-         void* handle = b->openFace(b->ctx, reinterpret_cast<char const*>(data),
-                                    std::uint32_t(size), 1 /*copy*/);
-         if (!handle)
+         return cache_face(key,
+            b->openFace(b->ctx, reinterpret_cast<char const*>(data),
+                        std::uint32_t(size), 1 /*copy*/));
+      }
+
+      // Open a bridge face by HOST KEY (shared bytes on the host side; no
+      // copy). Used by register_font(path) where "path" is a host key.
+      bool open_face_by_key(std::string const& key)
+      {
+         auto* b = tvgGwGetBridge();
+         if (!b || !b->openFaceByKey || key.empty())
             return false;
 
-         gw_face face;
-         face.handle = handle;
-         face.upem = b->unitsPerEm(b->ctx, handle);
-         if (face.upem == 0) face.upem = 1000;
-         face.ascent = std::abs(float(b->ascender(b->ctx, handle)));
-         face.descent = std::abs(float(b->descender(b->ctx, handle)));
-         face.height = float(b->height(b->ctx, handle));
-         gw.faces[key] = face;
-         return true;
+         auto& gw = get_gw();
+         std::lock_guard<std::mutex> lock(gw.mutex);
+         if (gw.faces.find(key) != gw.faces.end())
+            return true;   // already registered
+
+         return cache_face(key, b->openFaceByKey(b->ctx, key.c_str()));
       }
 
       gw_face const* find_face(std::string const& key)
@@ -264,8 +288,11 @@ namespace cycfi { namespace elements
 
       void register_font(std::string const& file_path) override
       {
-         // Read the file and register it as a memory buffer (the ft backend
-         // used FreeType's own file IO here).
+         // Prefer opening by host key (shared bytes through the bridge).
+         if (open_face_by_key(file_path))
+            return;
+         // Fallback: read the file ourselves and register the bytes (hosts
+         // without a key resolver / genuine file paths).
          std::ifstream in(file_path, std::ios::binary);
          if (!in) return;
          std::vector<std::uint8_t> bytes(
