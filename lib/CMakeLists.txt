@@ -57,7 +57,6 @@ set(ELEMENTS_SOURCES
    src/element/tooltip.cpp
    src/support/canvas.cpp
    src/support/text_backend_tvg.cpp
-   src/support/glyph_layout_ft.cpp
    src/support/draw_utils.cpp
    src/support/font.cpp
    src/support/glyphs.cpp
@@ -286,11 +285,19 @@ if(NOT TARGET thorvg)
 endif()
 target_link_libraries(elements PUBLIC thorvg)
 
-# --- FreeType / HarfBuzz ---
-# どちらも ThorVG 側で setup 済み。elements も glyph_layout_ft.cpp 等で
-# 直接 API を呼ぶので PUBLIC でリンクする。
-find_package(freetype CONFIG REQUIRED)
-target_link_libraries(elements PUBLIC freetype harfbuzz)
+# --- glyph layout backend ---
+# TVG_LOADER_GW (ホストブリッジ) の場合は計測系も thorvg_gw_bridge 経由の
+# glyph_layout_gw を使い、FreeType/HarfBuzz を直接リンクしない。
+# それ以外は従来の glyph_layout_ft (FreeType+HarfBuzz 直叩き)。
+if(TVG_LOADER_GW)
+   target_sources(elements PRIVATE src/support/glyph_layout_gw.cpp)
+else()
+   target_sources(elements PRIVATE src/support/glyph_layout_ft.cpp)
+   # FreeType / HarfBuzz: どちらも ThorVG 側で setup 済み。elements も
+   # glyph_layout_ft.cpp で直接 API を呼ぶので PUBLIC でリンクする。
+   find_package(freetype CONFIG REQUIRED)
+   target_link_libraries(elements PUBLIC freetype harfbuzz)
+endif()
 
 ###############################################################################
 # Global options
