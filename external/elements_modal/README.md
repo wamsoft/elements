@@ -788,6 +788,29 @@ auto const& result = sess.get_result();
 
 `close_on_click=true` な button click で session が自動 finish するので、 host は `sess.finished()` でループ脱出を判定する。
 
+### 再ラスタライズの抑止 (update / needs_render)
+
+`render_to_buffer` は毎フレーム全ウィジェットを ThorVG (CPU) で再ラスタライズする。 静止した UI では無駄なので、 ホストは **update と描画を分離**して変化のあるフレームだけ描画できる:
+
+```cpp
+// 毎フレーム: 状態更新 (変数 poll / 演出 tick / キャレット点滅 / 退場演出の完了検出)。
+// 戻り値 = 見た目に影響する変化があり再描画が必要か。
+bool dirty = sess.update();
+
+if (dirty) {
+    overlay_session::render_rect rect;
+    sess.render_to_buffer(my_buffer, buf_w_px, buf_h_px, surface_w, surface_h, rect);
+    // → テクスチャへアップロードして rect の位置に表示
+} else {
+    // 前回アップロード済みのテクスチャを同じ位置にそのまま表示するだけでよい
+}
+```
+
+- **`update()` は描画をスキップするフレームでも毎フレーム呼ぶこと** (止めるとキャレット点滅・遅延 focus 適用・パーツ演出・退場演出の完了検出が止まる)。
+- ダーティになる契機: 入力イベントの転送 / focus・hover の変化 / パーツ演出の再生中 / `set_var`・`set_language` の実変化 (同値書込は無視) / view 内部の refresh 要求 (キャレット点滅等) / `notify_view_resize`。
+- `needs_render()` で現在のダーティ状態だけ読める。 `invalidate()` はセッションから観測できない外部変化 (`refresh_mem_image` による mem:// 画像差替等) 用の明示的な再描画要求。
+- `update()` を呼ばず従来どおり `render_to_buffer` だけ呼ぶホストは無変更で動く (内部で update 相当を自動実行する後方互換)。
+
 ### 入力転送の戻り値 (handled / pass-through)
 
 `on_key_down` / `on_key_up` / `on_pad_button` は **`bool` (このダイアログが入力を消費したか)** を返す。 `true` = Esc / focus 中 widget が処理 / 既知パッドボタン、 `false` = 未処理。 ホストが**複数 UI を重ねる / ゲームと共存させる**場合、 この戻り値を見て「ダイアログが使わなかったキーはゲーム側へ素通しする」といったキーボードフォーカスの pass-through を実装できる (戻り値を無視すれば従来どおり)。 `on_text_input` / `on_mouse_*` / `on_pad_axis` は `void` のまま。

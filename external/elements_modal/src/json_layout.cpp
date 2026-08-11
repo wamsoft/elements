@@ -397,14 +397,18 @@ public:
 		auto it = _values.find(name);
 		return it == _values.end() ? nullptr : &it->second;
 	}
-	void set(const std::string& name, const std::string& value)
+	// 戻り値 = 値が実際に変わったか (同値書込は false、 subscriber も発火しない)。
+	// ホストの再描画要否 (ダーティ) 判定に使える。
+	bool set(const std::string& name, const std::string& value)
 	{
 		auto& cur = _values[name];
-		if (cur == value) return;
+		if (cur == value) return false;
 		cur = value;
 		auto it = _subs.find(name);
-		if (it == _subs.end()) return;
-		for (auto& cb : it->second) cb(cur);
+		if (it != _subs.end()) {
+			for (auto& cb : it->second) cb(cur);
+		}
+		return true;
 	}
 	void subscribe(const std::string& name,
 	               std::function<void(const std::string&)> cb)
@@ -435,9 +439,10 @@ public:
 	}
 
 	// 現在言語を設定。 既に subscribe 済みの label をすべて再解決して通知。
-	void set_language(const std::string& lang)
+	// 戻り値 = 言語が実際に変わったか (同一言語の再設定は false)。
+	bool set_language(const std::string& lang)
 	{
-		if (_lang == lang) return;
+		if (_lang == lang) return false;
 		_lang = lang;
 		for (auto& kv : _subs) {
 			std::string v = resolve(kv.first);
@@ -445,6 +450,7 @@ public:
 		}
 		// text_id に紐づかない一般の言語変更 subscriber (locale_variant 等) を発火。
 		for (auto& cb : _lang_subs) cb(_lang);
+		return true;
 	}
 
 	const std::string& language() const { return _lang; }
@@ -4620,15 +4626,17 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// i18n: 言語切替 closure。 StringStore を shared_ptr 捕捉して保持するので、
 	// この closure を持つ限り対応表 + label subscribers が生存する。 "strings"
 	// 未定義でも StringStore は空のまま生成済みなので no-op として安全。
+	// 戻り値 = 言語が実際に変わったか (ホストの再描画要否判定用)。
 	result.set_language = [strings = builder.strings()](const std::string& lang) {
-		strings->set_language(lang);
+		return strings->set_language(lang);
 	};
 
 	// ホスト主導の変数書込 closure。 VariableStore を shared_ptr 捕捉するので
 	// set_language と同じく closure 保持中は store + subscribers が生存する。
+	// 戻り値 = 値が実際に変わったか (同値書込は false。 再描画要否判定用)。
 	result.set_var = [vars = builder.vars()](const std::string& name,
 	                                         const std::string& value) {
-		vars->set(name, value);
+		return vars->set(name, value);
 	};
 
 	// take 系は最後に。 内部 state を move する。

@@ -352,6 +352,17 @@ namespace cycfi::elements
       virtual void         refresh();
       virtual void         refresh(rect area);
 
+      // refresh() 要求が前回の take_refresh_request() 以降に来ていたかを返し、
+      // フラグを下ろす。 embedded (host_view なし) モードのオフスクリーン
+      // ホスト (elements_modal::overlay_session 等) が「再描画が必要か」の
+      // 判定に使う。 初期値 true (最初のフレームは必ず描く)。
+      bool                 take_refresh_request()
+                           {
+                              bool r = _refresh_requested;
+                              _refresh_requested = false;
+                              return r;
+                           }
+
       point                cursor_pos() const;
       extent               size() const;
       void                 size(extent size_);
@@ -363,6 +374,8 @@ namespace cycfi::elements
       // Embedded (host_view 非経由) モードで base_view(extent) 経由で
       // 構築された場合のサイズ。_view が null の場合に size() が返す。
       extent               _embedded_size{0, 0};
+      // refresh() 要求の蓄積フラグ (host 実装の refresh() が立てる)。
+      bool                 _refresh_requested = true;
    };
 
    ////////////////////////////////////////////////////////////////////////////

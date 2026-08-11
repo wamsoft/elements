@@ -657,6 +657,7 @@ namespace cycfi::elements
 
    void base_view::refresh()
    {
+      _refresh_requested = true;   // embedded ホストの再描画判定用に常時記録
       if (!_view)
          return;   // embedded: 呼出側が描画タイミングを制御する
       RECT bounds;
@@ -666,6 +667,7 @@ namespace cycfi::elements
 
    void base_view::refresh(rect area)
    {
+      _refresh_requested = true;
       if (!_view)
          return;   // embedded
       auto scale = get_scale_for_window(_view);

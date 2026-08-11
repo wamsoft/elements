@@ -124,7 +124,8 @@ struct parsed_layout
 	//! を持つ全 label に set_text が走る (= EUI Phase 2 の動的更新)。 内部で
 	//! StringStore を shared_ptr 捕捉しているので、 この closure を保持する限り
 	//! 対応表 + subscribers は生存する。 "strings" 未定義でも非 null (no-op 相当)。
-	std::function<void(const std::string&)> set_language;
+	//! 戻り値 = 言語が実際に変わったか (ホストの再描画要否判定用)。
+	std::function<bool(const std::string&)> set_language;
 
 	//! i18n: JSON top-level "lang" の初期言語 (無ければ空)。 ホストが
 	//! overlay_session::language() で読む初期値。
@@ -134,7 +135,8 @@ struct parsed_layout
 	//! subscribe している label に set_text が走る (次 render で反映)。
 	//! 内部で VariableStore を shared_ptr 捕捉しているので、 この closure を
 	//! 保持する限り store + subscribers は生存する。 "vars" 未定義でも非 null。
-	std::function<void(const std::string&, const std::string&)> set_var;
+	//! 戻り値 = 値が実際に変わったか (同値書込は false。 再描画要否判定用)。
+	std::function<bool(const std::string&, const std::string&)> set_var;
 
 	//! 配置アンカー (JSON top-level "align")。 0=左/上、 0.5=中央、 1=右/下。
 	//! render_to_buffer がサーフェス内での描画矩形位置の決定に使う。 既定は

@@ -631,6 +631,7 @@ namespace cycfi::elements
 
    void base_view::refresh()
    {
+      _refresh_requested = true;   // embedded ホストの再描画判定用に常時記録
       auto* vs = get_view_state_for(_view);
       if (vs)
          vs->needs_refresh = true;

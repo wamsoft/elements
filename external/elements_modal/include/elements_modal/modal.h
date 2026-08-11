@@ -234,6 +234,11 @@ void refresh_mem_image(const std::string& mem_key);
 //   3. その矩形位置にテクスチャを表示 (host が SDL_Renderer / GL 等で)
 //   4. finished() で完了を検出し get_result() を取得
 //
+// 再ラスタライズの抑止 (任意): 毎フレーム update() を呼び、 false (= 変化
+// なし) のフレームは render_to_buffer() を省略して前回描画結果 (テクスチャ)
+// をそのまま提示してよい。 update() を呼ばずに render_to_buffer() だけ呼ぶ
+// 従来の形も後方互換で動く (内部で update 相当を実行する)。
+//
 // SDL 依存は座標型を `float` で受ける部分だけ。 button / mods 値は呼出側で
 // SDL 定数 (SDL_BUTTON_LEFT 等 / SDL_KMOD_*) を渡してもらう想定。
 //---------------------------------------------------------------------------
@@ -353,6 +358,26 @@ public:
 		int w = 0;
 		int h = 0;
 	};
+
+	//! @brief 毎フレームの状態更新 (変数/hover poll・focus/hover 変化検出・
+	//!        演出 tick・退場演出の完了検出・view の遅延タスク実行)。
+	//!        render_to_buffer から分離された「描画しないフレームでも止めては
+	//!        いけない」処理の集合。 再ラスタライズ抑止を行うホストは毎フレーム
+	//!        これを呼び、 戻り値が false のフレームは render_to_buffer を省略
+	//!        して前回の描画結果 (テクスチャ) をそのまま提示してよい。
+	//!        呼ばずに render_to_buffer を呼んだ場合は内部で自動実行される
+	//!        (後方互換 — 従来ホストは無変更で従来どおり動く)。
+	//! @return 見た目に影響する変化があり再描画が必要か (needs_render() と同値)。
+	bool update();
+
+	//! @brief 再描画が必要か。 入力転送 / focus・hover 変化 / 演出 tick /
+	//!        set_var・set_language の実変化 / view 内部の refresh 要求
+	//!        (キャレット点滅等) で立ち、 render_to_buffer の成功で下りる。
+	bool needs_render() const;
+
+	//! @brief 明示的な再描画要求。 セッションから観測できない外部要因
+	//!        (refresh_mem_image による mem:// 画像の差替等) の後にホストが呼ぶ。
+	void invalidate();
 
 	//! @brief ピクセルバッファに描画 + サーフェスへの貼付位置を計算。
 	//!        描画密度は buffer サイズ ÷ view logical サイズから毎回導出する。

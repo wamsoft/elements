@@ -25,6 +25,7 @@
 #include <elements/support/resource_loader.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
@@ -265,10 +266,12 @@ struct overlay_session::impl
 
 	// i18n: 言語切替 closure (StringStore を捕捉)。 set_language() から呼ぶ。
 	// "strings" 未定義でも parsed_layout から非 null で渡る (no-op)。
-	std::function<void(const std::string&)> set_language_fn;
+	// 戻り値 = 言語が実際に変わったか (ダーティ判定用)。
+	std::function<bool(const std::string&)> set_language_fn;
 
 	// 変数書込 closure (VariableStore を捕捉)。 set_var() から呼ぶ。
-	std::function<void(const std::string&, const std::string&)> set_var_fn;
+	// 戻り値 = 値が実際に変わったか (同値書込は false、 ダーティ判定用)。
+	std::function<bool(const std::string&, const std::string&)> set_var_fn;
 
 	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
 	std::string current_lang;
@@ -293,6 +296,20 @@ struct overlay_session::impl
 	// focused_id_slot の変化として一元的に拾える)。
 	std::string se_last_focused;
 	bool se_focus_seen = false;
+
+	// --- 再ラスタライズ抑止 (ダーティ管理) ---
+	// needs_render_: 次の render_to_buffer が必要か。 入力転送 / focus・hover
+	// 変化 / 演出 tick / view 内部の refresh 要求 (キャレット点滅等) /
+	// set_var・set_language の実変化で立ち、 render_to_buffer の成功で下りる。
+	// 初回は必ず描く。
+	bool needs_render_ = true;
+	// update() 済みで render_to_buffer 未消費か。 render_to_buffer 内での
+	// 二重 update 防止 (update を呼ばない従来ホストの後方互換用)。
+	bool updated_ = false;
+	// ダーティ判定用の focus/hover 前回値。 SE 用 se_last_focused とは別管理
+	// (SE 側は「初観測では鳴らさない」等の意味を持つため共用しない)。
+	std::string dirty_last_focused;
+	std::string dirty_last_hovered;
 
 	// cursor-warp ナビ: "input":{"cursor_warp":true} で有効。 直近のナビ入力
 	// 種別を追跡し、 キー/パッド由来のフォーカス変化を検出したら hot point
@@ -453,6 +470,8 @@ struct overlay_session::impl
 
 	void fire(std::string_view id, bool is_button_click, const value_t& payload)
 	{
+		// widget の値変化 / click は見た目が変わる (checkbox マーク、 押下状態等)。
+		needs_render_ = true;
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
 		// 対して呼ぶ。 これで Dialog::onAction 経路で TJS 側が反応できる。
 		std::string id_s(id);
@@ -487,8 +506,9 @@ struct overlay_session::impl
 	{
 		if (finished_ || exiting_) return;   // 既に退場処理中
 		accumulated.action = std::move(action);
+		needs_render_ = true;   // exit 演出の初期値適用ぶん (即終了なら未使用で無害)
 		if (!anim.empty() && anim.count(anim_binding::trigger::exit) > 0) {
-			// exit 束縛を再生開始。 完了は render_to_buffer 側で検出して finished_ に。
+			// exit 束縛を再生開始。 完了は update 側で検出して finished_ に。
 			anim.fire(anim_binding::trigger::exit);
 			exiting_ = true;
 			last_anim_ms = em_now_ms();
@@ -679,6 +699,7 @@ void overlay_session::focus_by_id(const std::string& id)
 		        id.c_str());
 		return;
 	}
+	_impl->needs_render_ = true;
 	_impl->view->focus(it->second);
 }
 
@@ -693,6 +714,7 @@ bool overlay_session::activate_by_id(const std::string& id)
 	if (!_impl || !_impl->view || id.empty()) return false;
 	auto it = _impl->id_map.find(id);
 	if (it == _impl->id_map.end()) return false;
+	_impl->needs_render_ = true;
 	// focus は遅延タスクなので、 poll() で即時適用してから Enter を送る。
 	_impl->view->focus(it->second);
 	_impl->view->poll();
@@ -705,8 +727,10 @@ void overlay_session::set_language(const std::string& lang)
 {
 	if (!_impl) return;
 	_impl->current_lang = lang;
-	if (_impl->set_language_fn) _impl->set_language_fn(lang);
-	// set_text 済の label は次回 render_to_buffer (view->draw) で再描画される。
+	// 実際に言語が変わったときだけ再描画 (set_text 済 label の反映)。
+	if (_impl->set_language_fn && _impl->set_language_fn(lang)) {
+		_impl->needs_render_ = true;
+	}
 }
 
 const std::string& overlay_session::language() const
@@ -719,20 +743,25 @@ const std::string& overlay_session::language() const
 void overlay_session::set_var(const std::string& name, const std::string& value)
 {
 	if (!_impl) return;
-	if (_impl->set_var_fn) _impl->set_var_fn(name, value);
-	// set_text 済の label は次回 render_to_buffer (view->draw) で再描画される。
+	// 値が実際に変わったときだけ再描画 (同値の毎フレーム書込ではダーティに
+	// しない — HUD がフレーム毎に setVar する使い方でもキャッシュが効く)。
+	if (_impl->set_var_fn && _impl->set_var_fn(name, value)) {
+		_impl->needs_render_ = true;
+	}
 }
 
 void overlay_session::play_animation(const std::string& trigger,
                                      const std::string& id)
 {
 	if (!_impl || _impl->anim.empty()) return;
+	_impl->needs_render_ = true;
 	_impl->anim.fire(trigger_from_string(trigger), id);
 }
 
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)
 {
 	if (!_impl->view) return;
+	_impl->needs_render_ = true;
 	_impl->view_w = new_view_width;
 	_impl->view_h = new_view_height;
 	_impl->view->size(ce::extent{
@@ -770,20 +799,37 @@ bool overlay_session::measure_content(int& out_w, int& out_h) const
 	return true;
 }
 
-bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
-                                       int buffer_w_px, int buffer_h_px,
-                                       int surface_w, int surface_h,
-                                       render_rect& out_rect)
+//---------------------------------------------------------------------------
+// update — render_to_buffer から分離した毎フレームの状態更新。
+// 「描画をスキップするフレームでも止めてはいけない」処理の集合:
+//   変数/hover poll、 focus・hover 変化検出 (nav SE + cursor-warp)、
+//   パーツ演出 tick、 退場演出の完了検出、 view の遅延タスク実行 (poll)。
+// あわせて再描画要否 (needs_render_) を蓄積する。 ホストが毎フレーム呼び、
+// false のフレームは render_to_buffer を省略して前回描画結果を提示してよい。
+// 呼ばれずに render_to_buffer が呼ばれた場合は、 そちらが内部で自動実行する
+// (後方互換 — 従来ホストは無変更で従来どおり動く)。
+//---------------------------------------------------------------------------
+bool overlay_session::update()
 {
-	out_rect = {};
-	if (!_impl->view || !pixel_buffer || buffer_w_px <= 0 || buffer_h_px <= 0) {
-		return false;
-	}
-	if (_impl->finished_) return false;
+	if (!_impl->view || !_impl->started || _impl->finished_) return false;
 
-	// 描画前に focus poll: 変数連動 label の text を更新する。
+	// focus poll: 変数連動 label の text を更新する (focus 変化時のみ書込。
+	// 実際に値が変わった label の見た目変化は下の focus 変化ダーティで拾う)。
 	if (_impl->focus_poll) _impl->focus_poll();
 	if (_impl->hover_poll) _impl->hover_poll();
+
+	// focus / hover の変化 → 再描画 (フォーカス枠 / hilite が変わる)。
+	// SE 用 se_last_focused とは別に初観測も含めて追跡する。
+	if (_impl->focused_id_slot &&
+	    *_impl->focused_id_slot != _impl->dirty_last_focused) {
+		_impl->dirty_last_focused = *_impl->focused_id_slot;
+		_impl->needs_render_ = true;
+	}
+	if (_impl->hovered_id_slot &&
+	    *_impl->hovered_id_slot != _impl->dirty_last_hovered) {
+		_impl->dirty_last_hovered = *_impl->hovered_id_slot;
+		_impl->needs_render_ = true;
+	}
 
 	// focus 変化検出 (nav SE + cursor-warp 共用)。 キーボード/dpad/stick/
 	// hover どの経路のフォーカス移動も focused_id_slot の変化として一元的に
@@ -827,7 +873,9 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 		const float dt = (now > _impl->last_anim_ms)
 		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
 		_impl->last_anim_ms = now;
-		_impl->anim.tick(dt);
+		if (_impl->anim.tick(dt)) {
+			_impl->needs_render_ = true;   // active 束縛が xform を書き換えた
+		}
 
 		// 退場演出の完了を検出して終了確定 (退場×遷移の協調)。 exit 束縛だけを
 		// 見るので、 enter の無限ループ等があっても正しく完了判定できる。
@@ -837,6 +885,47 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 			_impl->finished_ = true;
 		}
 	}
+
+	// 遅延タスク (focus 適用 / キャレット点滅タイマ / shortcut 発火 等) を実行
+	// してから、 view 側に蓄積された再描画要求 (refresh()) を回収する。
+	_impl->view->poll();
+	if (_impl->view->take_refresh_request()) {
+		_impl->needs_render_ = true;
+	}
+
+	_impl->updated_ = true;
+	return _impl->needs_render_;
+}
+
+bool overlay_session::needs_render() const
+{
+	return _impl->needs_render_;
+}
+
+void overlay_session::invalidate()
+{
+	_impl->needs_render_ = true;
+}
+
+bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
+                                       int buffer_w_px, int buffer_h_px,
+                                       int surface_w, int surface_h,
+                                       render_rect& out_rect)
+{
+	out_rect = {};
+	if (!_impl->view || !pixel_buffer || buffer_w_px <= 0 || buffer_h_px <= 0) {
+		return false;
+	}
+	if (_impl->finished_) return false;
+
+	// このフレームでまだ update() が呼ばれていなければ実行する (update を
+	// 呼ばない従来ホストの後方互換)。 update 内で finished_ になり得る
+	// (退場演出の完了) ので、 その場合は従来どおり描画せず false を返す。
+	if (!_impl->updated_) {
+		update();
+		if (_impl->finished_) return false;
+	}
+	_impl->updated_ = false;
 
 	const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
 	std::fill_n(pixel_buffer, pixel_count, 0u);
@@ -885,7 +974,9 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 	out_rect = r;
 	_impl->last_rect = r;
 
-	_impl->view->poll();
+	// (view->poll() は update() 側へ移動 — 描画スキップ時も毎フレーム回すため)
+
+	_impl->needs_render_ = false;   // 描画済み。 次の変化まで再描画不要
 	return true;
 }
 
@@ -894,6 +985,7 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
+	_impl->needs_render_ = true;   // 入力は押下状態等の見た目を変え得る
 	// mouse バインド (既定: 右click→cancel)。 マッチしたら action を発火して
 	// クリック自体は消費する (widget へは流さない)。 "none" は消費のみ。
 	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
@@ -918,6 +1010,7 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what button, int mods)
 {
 	if (!active()) return;
+	_impl->needs_render_ = true;
 	// mouse バインド対象ボタンは down 側で消費済みなので up も揃えて消費。
 	if (_impl->mouse_actions.count(static_cast<int>(button))) {
 		return;
@@ -938,6 +1031,9 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 void overlay_session::on_mouse_move(float sx, float sy, int mods)
 {
 	if (!active()) return;
+	// hover の hilite は id 無し widget でも変わり得るため、 移動イベント自体を
+	// ダーティ扱いにする (移動が無ければイベントも来ない = アイドルは保たれる)。
+	_impl->needs_render_ = true;
 	_impl->last_nav_source = impl::nav_source::mouse;
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
@@ -958,6 +1054,7 @@ void overlay_session::on_mouse_wheel(float dx, float dy,
                                      float surface_mouse_x, float surface_mouse_y)
 {
 	if (!active()) return;
+	_impl->needs_render_ = true;
 	auto p = _impl->to_view(surface_mouse_x, surface_mouse_y);
 	// wheel バインド (既定: up/down→scroll_up/down = 従来の view->scroll 素通し)。
 	// scroll_* は生 delta のまま流して滑らかさを保存、 それ以外の action
@@ -982,12 +1079,14 @@ void overlay_session::on_mouse_wheel(float dx, float dy,
 void overlay_session::on_mouse_leave()
 {
 	if (!active()) return;
+	_impl->needs_render_ = true;   // hover 解除で hilite が戻る
 	_impl->view->cursor(_impl->last_cursor, ce::cursor_tracking::leaving);
 }
 
 bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
+	_impl->needs_render_ = true;
 	_impl->last_nav_source = impl::nav_source::key;
 	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
 	// escape→cancel が view の key shortcut (force=true) として登録されて
@@ -1004,6 +1103,7 @@ bool overlay_session::on_key_down(ce::key_code key, int mods)
 bool overlay_session::on_key_up(ce::key_code key, int mods)
 {
 	if (!active()) return false;
+	_impl->needs_render_ = true;
 	ce::key_info ki{
 		.key = key,
 		.action = ce::key_action::release,
@@ -1015,6 +1115,7 @@ bool overlay_session::on_key_up(ce::key_code key, int mods)
 void overlay_session::on_text_input(const char* utf8_text)
 {
 	if (!active() || !utf8_text) return;
+	_impl->needs_render_ = true;
 	const char* p = utf8_text;
 	const char* end = p + std::strlen(p);
 	while (p < end) {
@@ -1029,6 +1130,7 @@ bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 {
 	if (!active()) return false;
 	if (button == ce::pad_button::unknown) return false;
+	_impl->needs_render_ = true;
 	_impl->last_nav_source = impl::nav_source::key;
 	_impl->view->pad_button_event({button, down});
 	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
@@ -1038,6 +1140,11 @@ void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
 {
 	if (!active()) return;
 	if (axis == ce::pad_axis::unknown) return;
+	// deadzone 未満の微小ノイズ (静止スティックのドリフト) はダーティにしない。
+	// deadzone 超の入力による focus 移動 / 値変化は poll 内の処理が refresh /
+	// focus 変化として別途ダーティになるが、 入力時点でも立てておく。
+	if (std::fabs(value) >= _impl->view->stick_deadzone())
+		_impl->needs_render_ = true;
 	// スティック/dpad 軸によるナビもキー系入力として扱う (deadzone 未満の
 	// 微小ノイズは無視して mouse 判定を上書きしない)。
 	if (value > 0.5f || value < -0.5f)

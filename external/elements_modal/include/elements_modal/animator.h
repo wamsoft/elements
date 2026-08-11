@@ -142,18 +142,23 @@ public:
 	}
 
 	//! @brief 経過 ms を進めて active な束縛を反映する。
-	void tick(float dt_ms)
+	//! @return active な束縛を 1 つ以上進めた (= xform_state を書き換えた) か。
+	//!         ホストの再描画要否 (ダーティ) 判定に使える。
+	bool tick(float dt_ms)
 	{
-		if (_bindings.empty()) return;
+		if (_bindings.empty()) return false;
 		bool all = true;
+		bool ticked = false;
 		for (auto& b : _bindings) {
 			if (!b.active) continue;
+			ticked = true;
 			b.prog.tick(dt_ms);
 			b.apply();
 			if (b.prog.done()) b.active = false;  // 無限ループは done() にならない
 			else               all = false;
 		}
 		_all_done = all;
+		return ticked;
 	}
 
 	//! @brief 指定トリガ群を前進再生する。 id 非空なら一致 (または束縛 id 空) のみ。
