@@ -12,16 +12,16 @@ namespace cycfi::elements
 {
    namespace
    {
-      // Pad-axis edge detection:
-      //   - Tick once on |value| > engage, then suppress further ticks
-      //     until a gap of at least `pad_quiet` ms passes without a call.
-      //   - The view filters out v=0 from the value-mode path, so we infer
-      //     "release" purely from call cadence — continuous holds keep
-      //     firing at the poll rate (~16 ms), so a 35 ms quiet window
-      //     distinguishes "still held" from "released and pressed again".
+      // Pad-axis edge detection (hysteresis):
+      //   - Tick once when |value| rises above `pad_engage` while not engaged,
+      //     then stay engaged until |value| falls below `pad_release`.
+      //   - The view delivers v=0 exactly once on release (axis_state
+      //     .value_active), so release is detected by STATE, not by call
+      //     cadence. Cadence-based (quiet-window) detection breaks when render
+      //     caching stops the poll while a direction is held — the next poll
+      //     after a gap looked like a fresh press and stepped twice per push.
       constexpr float pad_engage  = 0.55f;
       constexpr float pad_release = 0.20f;
-      constexpr auto  pad_quiet   = std::chrono::milliseconds(35);
 
       bool is_horizontal_axis(pad_axis axis)
       {
@@ -244,21 +244,16 @@ namespace cycfi::elements
 
       float mag = std::abs(info.value);
       if (mag < pad_release)
-         return false;
-
-      if (mag > pad_engage)
       {
-         auto now = std::chrono::steady_clock::now();
-         if (now - _last_pad_step >= pad_quiet)
-         {
-            _last_pad_step = now;
-            if (step(info.value < 0.0f ? -1 : +1))
-               ctx.view.refresh(ctx);
-         }
-         else
-         {
-            _last_pad_step = now;
-         }
+         _pad_engaged = false;
+         return false;
+      }
+
+      if (mag > pad_engage && !_pad_engaged)
+      {
+         _pad_engaged = true;
+         if (step(info.value < 0.0f ? -1 : +1))
+            ctx.view.refresh(ctx);
       }
       return true;
    }
@@ -473,21 +468,16 @@ namespace cycfi::elements
 
       float mag = std::abs(info.value);
       if (mag < pad_release)
-         return false;
-
-      if (mag > pad_engage)
       {
-         auto now = std::chrono::steady_clock::now();
-         if (now - _last_pad_step >= pad_quiet)
-         {
-            _last_pad_step = now;
-            if (step(info.value < 0.0f ? -1 : +1))
-               ctx.view.refresh(ctx);
-         }
-         else
-         {
-            _last_pad_step = now;
-         }
+         _pad_engaged = false;
+         return false;
+      }
+
+      if (mag > pad_engage && !_pad_engaged)
+      {
+         _pad_engaged = true;
+         if (step(info.value < 0.0f ? -1 : +1))
+            ctx.view.refresh(ctx);
       }
       return true;
    }
@@ -676,22 +666,20 @@ namespace cycfi::elements
 
       float mag = std::abs(info.value);
       if (mag < pad_release)
-         return false;
-
-      if (mag > pad_engage)
       {
-         auto now = std::chrono::steady_clock::now();
-         if (now - _last_pad_step >= pad_quiet)
+         _pad_engaged = false;
+         return false;
+      }
+
+      if (mag > pad_engage && !_pad_engaged)
+      {
+         _pad_engaged = true;
+         if (step(info.value < 0.0f ? -1 : +1))
          {
-            if (step(info.value < 0.0f ? -1 : +1))
-            {
-               _last_pad_step = now;
-               ctx.view.refresh(ctx);
-               return true;
-            }
-            return false;
+            ctx.view.refresh(ctx);
+            return true;
          }
-         _last_pad_step = now;
+         return false;   // 端 → view の focus nav へ素通し
       }
       return true;
    }

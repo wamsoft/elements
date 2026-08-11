@@ -1165,8 +1165,13 @@
          float const v = st.current;
          bool consumed_by_value = false;
 
+         // Value-mode dispatch. Zero values are delivered exactly once on the
+         // non-zero -> zero transition (st.value_active) so widgets can detect
+         // "release" by state instead of call cadence. Polls only run on frames
+         // that actually present; with render caching the cadence has gaps, so
+         // cadence-based (quiet-window) release inference misfires there.
          if ((mode == pad_axis_mode::value || mode == pad_axis_mode::both)
-             && v != 0.0f && focus_leaf)
+             && (v != 0.0f || st.value_active) && focus_leaf)
          {
             pad_axis_info info{axis, v};
             in_context_do(*focus_leaf,
@@ -1175,6 +1180,7 @@
                   consumed_by_value = focus_leaf->pad_axis(ectx, info);
                }
             );
+            st.value_active = (v != 0.0f);
          }
 
          bool run_focus_path =

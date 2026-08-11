@@ -293,6 +293,7 @@ namespace cycfi::elements
          float                                       current = 0.0f; // -1..+1 after deadzone
          int                                         dir = 0;        // -1, 0, +1 (sign of last triggered move)
          std::chrono::steady_clock::time_point       next_repeat{};
+         bool                                        value_active = false; // last value-mode dispatch was non-zero
       };
       axis_state              _axis_states[8] = {};   // indexed by pad_axis enum value
 

@@ -70,7 +70,7 @@ namespace cycfi::elements
       std::size_t             _index;
       bool                    _has_focus = false;
       float                   _font_size = 1.0f;
-      std::chrono::steady_clock::time_point _last_pad_step{};
+      bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -127,7 +127,7 @@ namespace cycfi::elements
       std::size_t             _index;
       bool                    _has_focus = false;
       float                   _font_size = 1.0f;
-      std::chrono::steady_clock::time_point _last_pad_step{};
+      bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 
    ////////////////////////////////////////////////////////////////////////////
@@ -178,7 +178,7 @@ namespace cycfi::elements
       std::size_t             _index;
       bool                    _has_focus = false;
       float                   _font_size = 1.0f;
-      std::chrono::steady_clock::time_point _last_pad_step{};
+      bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 
    ////////////////////////////////////////////////////////////////////////////

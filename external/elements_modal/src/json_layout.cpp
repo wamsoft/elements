@@ -2658,7 +2658,10 @@ namespace
 
 		bool pad_axis(ce::context const& ctx, ce::pad_axis_info info) override
 		{
-			// picker 系と同じエッジ検出 (engage 0.55 / quiet 35ms)。
+			// picker 系と同じエッジ検出 (engage 0.55 / release 0.20 のヒステリシス)。
+			// 時刻ベースの quiet 窓は poll 周期依存で、render cache により poll が
+			// 止まると押しっぱなしを再押下と誤認して二重ステップになるため廃止
+			// (view が release 時に v=0 を一度配送してくる前提)。
 			if (!ctx.enabled)
 				return false;
 			if (info.axis != ce::pad_axis::dpad_x &&
@@ -2666,19 +2669,17 @@ namespace
 			    info.axis != ce::pad_axis::right_x)
 				return false;
 			float mag = std::abs(info.value);
-			if (mag < 0.20f)
+			if (mag < 0.20f) {
+				_pad_engaged = false;
 				return false;
-			if (mag > 0.55f) {
-				auto now = std::chrono::steady_clock::now();
-				if (now - _last_pad_step >= std::chrono::milliseconds(35)) {
-					if (step_selection(info.value < 0.0f ? -1 : +1)) {
-						_last_pad_step = now;
-						ctx.view.refresh(ctx);
-						return true;
-					}
-					return false;
+			}
+			if (mag > 0.55f && !_pad_engaged) {
+				_pad_engaged = true;
+				if (step_selection(info.value < 0.0f ? -1 : +1)) {
+					ctx.view.refresh(ctx);
+					return true;
 				}
-				_last_pad_step = now;
+				return false;   // 端 → view の focus nav へ素通し
 			}
 			return true;
 		}
@@ -2731,7 +2732,7 @@ namespace
 		element_ptr _subject;
 		std::vector<element_ptr> _members;
 		int _hilited = -1;
-		std::chrono::steady_clock::time_point _last_pad_step{};
+		bool _pad_engaged = false;   // pad-axis ヒステリシス状態
 	};
 }
 
