@@ -1398,28 +1398,33 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		}
 	} else {
 
-	// label builder API は font_color / relative_font_size を呼ぶごとに
-	// ラッパ型が変わるチェーン。 直接代入で繋げないので分岐する。
-	// locale は文字列空なら付けない (default_locale 含む)。
-	// 三項演算子 ?: は両 branch の shared_ptr 型が違うとマッチ失敗するので
-	// if/else で element_ptr 代入する。
-	auto base = ce::label(text);
-	if (has_color && has_size) {
-		auto e = base.font_color(col).font_size(sz);
-		if (locale.empty()) out = ce::share(std::move(e));
-		else                out = ce::share(e.locale(std::move(locale)));
-	} else if (has_color) {
-		auto e = base.font_color(col);
-		if (locale.empty()) out = ce::share(std::move(e));
-		else                out = ce::share(e.locale(std::move(locale)));
-	} else if (has_size) {
-		auto e = base.font_size(sz);
-		if (locale.empty()) out = ce::share(std::move(e));
-		else                out = ce::share(e.locale(std::move(locale)));
-	} else {
-		if (locale.empty()) out = ce::share(std::move(base));
-		else                out = ce::share(base.locale(std::move(locale)));
+	// "text_align" (left/center/right): text_anchor 無しの素 label でも横アライン
+	// を反映する (uitool の表示 = 左寄せ既定 と実機を一致させる)。 キー無しは従来
+	// どおり theme 既定 (center|middle) — 手書き JSON の互換維持。
+	int halign = -1;
+	{
+		std::string ta = string_or(o, "text_align");
+		if      (ta == "left")   halign = ce::canvas::left;
+		else if (ta == "center") halign = ce::canvas::center;
+		else if (ta == "right")  halign = ce::canvas::right;
 	}
+	// label builder API は font_color / relative_font_size を呼ぶごとに
+	// ラッパ型が変わるチェーン。 直接代入で繋げないので、 仕上げ (text_align /
+	// locale → share) はジェネリックラムダで一元化する。
+	// locale は文字列空なら付けない (default_locale 含む)。
+	auto finish = [&](auto e) {
+		auto done = [&](auto e2) {
+			if (locale.empty()) out = ce::share(std::move(e2));
+			else                out = ce::share(e2.locale(std::move(locale)));
+		};
+		if (halign >= 0) done(e.text_align(halign));
+		else             done(std::move(e));
+	};
+	auto base = ce::label(text);
+	if      (has_color && has_size) finish(base.font_color(col).font_size(sz));
+	else if (has_color)             finish(base.font_color(col));
+	else if (has_size)              finish(base.font_size(sz));
+	else                            finish(std::move(base));
 	}   // text_anchor else
 
 	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
