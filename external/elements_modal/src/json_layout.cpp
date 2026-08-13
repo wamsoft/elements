@@ -406,19 +406,42 @@ public:
 		cur = value;
 		auto it = _subs.find(name);
 		if (it != _subs.end()) {
-			for (auto& cb : it->second) cb(cur);
+			for (auto& s : it->second) {
+				s.cb(cur);
+				// 部分再描画用: 見た目が変わった要素をホストへ通知する
+				// (ホストは view::refresh(element) でその要素の bounds だけを
+				// ダーティにできる)。 owner 未登録の subscriber は通知されず、
+				// ホスト側は「範囲不明 = 全面」にフォールバックする。
+				if (_on_changed) {
+					if (auto e = s.owner.lock()) _on_changed(*e);
+				}
+			}
 		}
 		return true;
 	}
+	// owner = この変数で見た目が変わる要素 (省略可)。 部分再描画のダーティ
+	// 範囲特定に使うだけなので、 渡さなくても動作は変わらない (全面になる)。
 	void subscribe(const std::string& name,
-	               std::function<void(const std::string&)> cb)
+	               std::function<void(const std::string&)> cb,
+	               element_ptr owner = {})
 	{
-		_subs[name].push_back(std::move(cb));
+		_subs[name].push_back(sub{ std::move(cb), owner });
+	}
+	// 変数変化で見た目が変わった要素の通知先 (ホストが仕掛ける)。
+	void set_change_notifier(std::function<void(ce::element&)> f)
+	{
+		_on_changed = std::move(f);
 	}
 
 private:
+	struct sub
+	{
+		std::function<void(const std::string&)> cb;
+		std::weak_ptr<ce::element> owner;
+	};
 	std::map<std::string, std::string> _values;
-	std::map<std::string, std::vector<std::function<void(const std::string&)>>> _subs;
+	std::map<std::string, std::vector<sub>> _subs;
+	std::function<void(ce::element&)> _on_changed;
 };
 
 //---------------------------------------------------------------------------
@@ -765,7 +788,7 @@ private:
 				if (static_cast<std::size_t>(idx) != sp->index())
 					sp->set_index(static_cast<std::size_t>(idx));
 			}
-		});
+		}, p);
 	}
 
 	// "selected_var"/"selected_value": choice (atlas_choice / radio_button) を
@@ -788,7 +811,7 @@ private:
 		std::weak_ptr<ce::basic_choice> w = bc;
 		_vars->subscribe(sel_var, [w, sel_val](const std::string& v) {
 			if (auto sp = w.lock()) sp->select(v == sel_val);
-		});
+		}, bc);
 	}
 
 	// selected_var 一式を JSON から読む。 selected_value 省略時は "1"
@@ -824,7 +847,7 @@ private:
 		std::weak_ptr<ce::cycle_picker> w = p;
 		_vars->subscribe(var, [w, apply](const std::string& v) {
 			if (auto sp = w.lock()) apply(*sp, v);
-		});
+		}, p);
 	}
 
 	// "enabled_var": button (atlas_button / button / invert_button / ring_button)
@@ -845,7 +868,7 @@ private:
 		std::weak_ptr<ce::basic_button> w = bp;
 		_vars->subscribe(var, [w, apply](const std::string& v) {
 			if (auto sp = w.lock()) apply(*sp, v);
-		});
+		}, bp);
 	}
 
 	// type ごとのビルダ
@@ -1443,7 +1466,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			} else {
 				_vars->subscribe(text_var, [w](const std::string& v) {
 					if (auto p = w.lock()) p->set_text(v);
-				});
+				}, out);
 			}
 		} else {
 			em_logf("elements_modal: label with text_id=\"%s\" text_var=\"%s\" — "
@@ -1463,7 +1486,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 					if (idx >= static_cast<int>(list.size())) idx = static_cast<int>(list.size()) - 1;
 					p->set_text(list[idx]);
 				}
-			});
+			}, out);
 		}
 	}
 	// "id" があれば id→element に登録し、 ホストから label を参照可能にする
@@ -1755,7 +1778,7 @@ element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 		std::weak_ptr<ce::static_text_box> w = sp;
 		_vars->subscribe(text_var, [w](const std::string& v) {
 			if (auto p = w.lock()) p->set_text(v);
-		});
+		}, sp);
 	}
 	element_ptr out = sp;
 	register_id(o, out);
@@ -2951,7 +2974,7 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 						i = static_cast<std::size_t>(n);
 					} catch (...) { return; }
 					if (auto p = w.lock()) p->sub_rect(rects[i]);
-				});
+				}, img);
 		}
 		register_id(o, img);
 		return img;
@@ -3430,7 +3453,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 			std::weak_ptr<ce::basic_button> w = bp;
 			_vars->subscribe(value_var, [w, var_truthy](const std::string& v) {
 				if (auto sp = w.lock()) sp->value(var_truthy(v));
-			});
+			}, bp);
 		}
 	}
 	note_vars_on_focus(o, id);
@@ -3729,7 +3752,7 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 					try { p->set_value(std::stod(v)); }
 					catch (...) { /* 値不正は無視 */ }
 				}
-			});
+			}, sp);
 		} else {
 			em_logf("elements_modal: atlas_progress value_var=\"%s\" — "
 			        "dynamic_cast 失敗 (share された型が違う?)",
@@ -4644,6 +4667,12 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	                                         const std::string& value) {
 		return vars->set(name, value);
 	};
+
+	// 部分再描画用の通知フック設置口 (詳細は json_layout.h)。
+	result.set_var_change_notifier =
+		[vars = builder.vars()](std::function<void(ce::element&)> f) {
+			vars->set_change_notifier(std::move(f));
+		};
 
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();

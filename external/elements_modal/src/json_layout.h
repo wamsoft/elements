@@ -138,6 +138,16 @@ struct parsed_layout
 	//! 戻り値 = 値が実際に変わったか (同値書込は false。 再描画要否判定用)。
 	std::function<bool(const std::string&, const std::string&)> set_var;
 
+	//! 部分再描画用: 変数変化で**見た目が変わった要素**の通知先を仕掛ける。
+	//! ホストが `view::refresh(element)` を呼べば、 その要素の bounds だけを
+	//! ダーティにできる (全面再描画を避けられる)。 通知は set_var だけでなく
+	//! vars_on_focus の書込など全ての変数書込経路で発火する。
+	//! 要素を特定できない subscriber (位置が変わる at_var、 複数要素が変わる
+	//! もの) は通知されないので、 ホストは「1 つも通知が来なければ全面」と
+	//! フォールバックすること。
+	std::function<void(std::function<void(cycfi::elements::element&)>)>
+		set_var_change_notifier;
+
 	//! 配置アンカー (JSON top-level "align")。 0=左/上、 0.5=中央、 1=右/下。
 	//! render_to_buffer がサーフェス内での描画矩形位置の決定に使う。 既定は
 	//! 中央 (0.5, 0.5)。 "align": "top_left"/"top"/"left"/"center"/... で設定。

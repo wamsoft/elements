@@ -333,6 +333,9 @@ struct overlay_session::impl
 		dirty_full_ = false;
 		dirty_px_l_ = dirty_px_t_ = dirty_px_r_ = dirty_px_b_ = 0;
 	}
+	// 変数変化の通知 (set_var_change_notifier) が来た回数。 1 件も来なければ
+	// 変化した要素を特定できていない = 全面再描画へフォールバックする。
+	int var_change_hits = 0;
 	// update() 済みで render_to_buffer 未消費か。 render_to_buffer 内での
 	// 二重 update 防止 (update を呼ばない従来ホストの後方互換用)。
 	bool updated_ = false;
@@ -626,6 +629,19 @@ bool overlay_session::start(const std::string& json_utf8,
 		            static_cast<float>(view_height) });
 	_impl->view->content(ce::hold_any(_impl->layout_root));
 
+	// 部分再描画: 変数変化で見た目が変わった要素を、 その要素の bounds だけの
+	// ダーティとして view へ登録する (全面再描画を避ける)。 view::refresh は
+	// 遅延タスクなので、 同フレームの update() 内 poll() で矩形が確定する。
+	// 通知が 1 件も来なかった変数書込は範囲不明 → 呼出側が全面へフォールバック。
+	if (layout.set_var_change_notifier) {
+		layout.set_var_change_notifier(
+			[impl = _impl.get()](ce::element& e) {
+				if (!impl->view) return;
+				impl->var_change_hits++;
+				impl->view->refresh(e);
+			});
+	}
+
 	// 入力バインド3層 (後勝ち): ①組込デフォルト → ②プロジェクト共通
 	// input_defaults.jsonc → ③画面別 "input"."bindings"。 view settings も
 	// 同順 (②を先に適用し、 ③は下の apply_input が上書き)。
@@ -775,8 +791,11 @@ void overlay_session::set_var(const std::string& name, const std::string& value)
 	if (!_impl) return;
 	// 値が実際に変わったときだけ再描画 (同値の毎フレーム書込ではダーティに
 	// しない — HUD がフレーム毎に setVar する使い方でもキャッシュが効く)。
+	// 変化した要素が特定できた場合 (通知が来た場合) は view へ矩形として
+	// 積まれるので、 ここで全面ダーティにはしない (部分再描画)。
+	_impl->var_change_hits = 0;
 	if (_impl->set_var_fn && _impl->set_var_fn(name, value)) {
-		_impl->needs_render_ = true;
+		if (_impl->var_change_hits == 0) _impl->needs_render_ = true;
 	}
 }
 
