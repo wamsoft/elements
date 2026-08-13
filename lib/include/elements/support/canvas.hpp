@@ -64,6 +64,12 @@ namespace cycfi { namespace elements
       // add/update/draw/sync/remove cycle: one ThorVG cycle per frame is far
       // cheaper than one per text run.
       void              add_pending(tvg::Paint* paint);
+
+      // Counter bumped on every flush. A backend that keeps paints alive
+      // across frames (a text cache) uses it to tell "already handed to the
+      // canvas in this batch" from "free to reuse": the same paint must not
+      // be added twice before a flush.
+      std::uint64_t     flush_generation() const { return _flush_gen; }
       tvg::Shape*       make_clip_shape() const;
       struct canvas_state;
       canvas_state const& get_state() const;
@@ -356,6 +362,7 @@ namespace cycfi { namespace elements
 
       // Track whether shapes have been added since last flush
       bool                          _has_pending = false;
+      std::uint64_t                 _flush_gen = 0;
 
       // Text backend (static, shared across all canvas instances)
       static std::shared_ptr<elements::text_backend> _text_backend;

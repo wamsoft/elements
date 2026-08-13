@@ -163,6 +163,7 @@ namespace cycfi { namespace elements
          _tvg_canvas->sync();
          _tvg_canvas->remove();
          _has_pending = false;
+         ++_flush_gen;   // 以後、 キャッシュ済 paint を再び add してよい
       }
    }
 
