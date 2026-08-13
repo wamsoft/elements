@@ -30,6 +30,8 @@ namespace cycfi { namespace elements
          return path.substr(start, end - start);
       }
 
+      inline const char* nl() { static const char s[2] = { char(10), 0 }; return s; }
+
       void dbg(const char* why)
       {
          static std::map<std::string, int> seen;
@@ -252,8 +254,8 @@ namespace cycfi { namespace elements
             static int n = 0;
             if (n++ < 3)
                fprintf(stderr, "[textcache] place x=%.1f y=%.1f w=%d h=%d op=%d ---%s",
-                       ox + ent->ox, oy + ent->oy, ent->w, ent->h, int(clamp8(st.global_alpha)), "
-");
+                       ox + ent->ox, oy + ent->oy, ent->w, ent->h,
+                       int(clamp8(st.global_alpha)), nl());
          }
          cnv.add_pending(ent->pic);
          return true;
