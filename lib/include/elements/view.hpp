@@ -191,8 +191,13 @@ namespace cycfi::elements
       // `refresh(element&)` does, but captures the rect instead of queuing it,
       // and does so synchronously (no deferred task). An offscreen host uses
       // this to turn "this element changed" into a dirty rectangle.
+      // `natural` receives the element's current natural size (limits().min);
+      // it can exceed the bounds when the content grew without a re-layout
+      // (a label whose text got longer), which is exactly the case where a
+      // bounds-sized dirty rectangle would leave stale pixels behind.
       // Returns false if the element is not found / the view has not laid out.
-      bool                    element_bounds(element& e, rect& out);
+      bool                    element_bounds(element& e, rect& out,
+                                             extent& natural);
 
       // Partial redraw: restrict the bounds reported by `view_bounds(view)`
       // (device coordinates) for the duration of one draw pass. Composite /
@@ -279,6 +284,7 @@ namespace cycfi::elements
       // element_bounds() 実行中フラグ + 捕捉した矩形 (refresh を横取りする)。
       bool                    _capturing_bounds = false;
       rect                    _captured_bounds = {};
+      extent                  _captured_natural = {0, 0};
       view_limits             _current_limits = {{0, 0}, { full_extent, full_extent}};
       mouse_button            _current_button;
       bool                    _is_focus = false;

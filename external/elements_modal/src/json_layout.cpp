@@ -407,11 +407,15 @@ public:
 		auto it = _subs.find(name);
 		if (it != _subs.end()) {
 			for (auto& s : it->second) {
+				// 部分再描画用: 見た目が変わる要素をホストへ通知する。
+				// **変更前と変更後の 2 回**呼ぶ — text が縮む場合、 変更後の
+				// 見た目だけでは伸びていた頃の描画を覆えず消し残るため。
+				// owner 未登録の subscriber は通知されず、 ホスト側は
+				// 「範囲不明 = 全面」にフォールバックする。
+				if (_on_changed) {
+					if (auto e = s.owner.lock()) _on_changed(*e);
+				}
 				s.cb(cur);
-				// 部分再描画用: 見た目が変わった要素をホストへ通知する
-				// (ホストは view::refresh(element) でその要素の bounds だけを
-				// ダーティにできる)。 owner 未登録の subscriber は通知されず、
-				// ホスト側は「範囲不明 = 全面」にフォールバックする。
 				if (_on_changed) {
 					if (auto e = s.owner.lock()) _on_changed(*e);
 				}

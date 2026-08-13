@@ -340,22 +340,27 @@ struct overlay_session::impl
 	// 「この要素の見た目が変わった」をダーティ矩形にする。
 	// ⚠ 要素は自分の bounds を**はみ出して描く**ことがある (レイアウトを
 	//    再計算しないまま label の text が伸びた場合など)。 bounds ちょうどを
-	//    ダーティにすると、 はみ出した部分の前フレームが消え残る。 1 行
-	//    テキストのはみ出しは横方向なので、 **横は view 全幅の帯**にして
-	//    確実に覆う。 縦は AA と僅かな上下ズレを吸収する程度の余裕でよい
-	//    (帯を高くすると面積が増えて部分描画の意味が薄れる)。 縦に大きく
-	//    育つ要素 (text_box 等) は要素側が自分で refresh(rect) を出す。
+	//    ダーティにすると、 はみ出した部分の前フレームが消え残る。 そこで
+	//    要素の自然サイズ (limits().min) が bounds を超えていれば、 その差分を
+	//    左右/上下対称に足して覆う (どちら寄せで描かれるか分からないため)。
+	//    変更前の見た目 (伸びていた頃) も覆う必要があるので、 呼出側は
+	//    「変更前」と「変更後」の 2 回呼ぶ (合併されて両方を含む矩形になる)。
 	// 座標は view の user 座標なので、 直近 render の密度で buffer px へ直す。
 	bool mark_element_dirty(ce::element& e)
 	{
 		if (!view) return false;
 		ce::rect b{};
-		if (!view->element_bounds(e, b)) return false;
+		ce::extent nat{0, 0};
+		if (!view->element_bounds(e, b, nat)) return false;
 		const float d = (view_w > 0 && last_buf_w_ > 0)
 			? static_cast<float>(last_buf_w_) / view_w : 1.0f;
-		const float m = std::max(2.0f, (b.bottom - b.top) * 0.2f);
-		mark_dirty_rect_px(0.0f, (b.top - m) * d,
-		                   static_cast<float>(view_w) * d, (b.bottom + m) * d);
+		const float w = b.right - b.left;
+		const float h = b.bottom - b.top;
+		const float ex = nat.x > w ? (nat.x - w) : 0.0f;   // 横のはみ出し
+		const float ey = nat.y > h ? (nat.y - h) : 0.0f;   // 縦のはみ出し
+		const float m = 2.0f;   // AA / 端数の吸収
+		mark_dirty_rect_px((b.left  - ex - m) * d, (b.top    - ey - m) * d,
+		                   (b.right + ex + m) * d, (b.bottom + ey + m) * d);
 		return true;
 	}
 	// update() 済みで render_to_buffer 未消費か。 render_to_buffer 内での

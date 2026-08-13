@@ -219,22 +219,27 @@
          auto tl = ctx.canvas.user_to_device(ctx_ptr->bounds.top_left());
          auto br = ctx.canvas.user_to_device(ctx_ptr->bounds.bottom_right());
          rect r{tl.x, tl.y, br.x, br.y};
-         // element_bounds() 実行中は refresh せず矩形を捕まえるだけ
+         // element_bounds() 実行中は refresh せず矩形を捕まえるだけ。
+         // 併せて要素の自然サイズも拾う (bounds を超えていれば、 その分だけ
+         // ダーティ矩形を広げないと描画のはみ出しが消え残る)。
          if (_capturing_bounds)
          {
             _captured_bounds = r;
+            if (ctx_ptr->element)
+               _captured_natural = ctx_ptr->element->limits(ctx).min;
             return;
          }
          refresh(r);
       }
    }
 
-   bool view::element_bounds(element& e, rect& out)
+   bool view::element_bounds(element& e, rect& out, extent& natural)
    {
       if (_current_bounds.is_empty())
          return false;
       _capturing_bounds = true;
       _captured_bounds = {};
+      _captured_natural = {0, 0};
       with_context_do(
          [&e](auto const& ctx, auto& _main_element)
          {
@@ -246,6 +251,7 @@
       if (_captured_bounds.is_empty())
          return false;
       out = _captured_bounds;
+      natural = _captured_natural;
       return true;
    }
 
