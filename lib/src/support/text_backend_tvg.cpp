@@ -245,8 +245,16 @@ namespace cycfi { namespace elements
          tvg::Matrix m = {1, 0, ox + ent->ox, 0, 1, oy + ent->oy, 0, 0, 1};
          ent->pic->transform(m);
          ent->pic->opacity(clamp8(st.global_alpha));
-         if (auto* clip_shape = cnv.make_clip_shape())
-            ent->pic->clip(clip_shape);
+         if (!getenv("ELEMENTS_TEXTCACHE_NOCLIP"))
+            if (auto* clip_shape = cnv.make_clip_shape())
+               ent->pic->clip(clip_shape);
+         {
+            static int n = 0;
+            if (n++ < 3)
+               fprintf(stderr, "[textcache] place x=%.1f y=%.1f w=%d h=%d op=%d ---%s",
+                       ox + ent->ox, oy + ent->oy, ent->w, ent->h, int(clamp8(st.global_alpha)), "
+");
+         }
          cnv.add_pending(ent->pic);
          return true;
       }
