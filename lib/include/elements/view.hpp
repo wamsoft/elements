@@ -186,6 +186,14 @@ namespace cycfi::elements
       void                    refresh(element& element, int outward = 0);
       void                    refresh(context const& ctx, int outward = 0);
 
+      // Partial redraw: look up an element's current bounds (user coordinates)
+      // without triggering a refresh. Walks the tree the same way
+      // `refresh(element&)` does, but captures the rect instead of queuing it,
+      // and does so synchronously (no deferred task). An offscreen host uses
+      // this to turn "this element changed" into a dirty rectangle.
+      // Returns false if the element is not found / the view has not laid out.
+      bool                    element_bounds(element& e, rect& out);
+
       // Partial redraw: restrict the bounds reported by `view_bounds(view)`
       // (device coordinates) for the duration of one draw pass. Composite /
       // layer elements cull children that do not intersect it, so an
@@ -268,6 +276,9 @@ namespace cycfi::elements
       rect                    _current_bounds;
       // 部分再描画中の描画対象領域 (device 座標)。 空 = view 全体 (既定)。
       rect                    _draw_bounds = {};
+      // element_bounds() 実行中フラグ + 捕捉した矩形 (refresh を横取りする)。
+      bool                    _capturing_bounds = false;
+      rect                    _captured_bounds = {};
       view_limits             _current_limits = {{0, 0}, { full_extent, full_extent}};
       mouse_button            _current_button;
       bool                    _is_focus = false;

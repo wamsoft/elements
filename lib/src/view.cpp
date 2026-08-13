@@ -218,8 +218,35 @@
       {
          auto tl = ctx.canvas.user_to_device(ctx_ptr->bounds.top_left());
          auto br = ctx.canvas.user_to_device(ctx_ptr->bounds.bottom_right());
-         refresh({tl.x, tl.y, br.x, br.y});
+         rect r{tl.x, tl.y, br.x, br.y};
+         // element_bounds() 実行中は refresh せず矩形を捕まえるだけ
+         if (_capturing_bounds)
+         {
+            _captured_bounds = r;
+            return;
+         }
+         refresh(r);
       }
+   }
+
+   bool view::element_bounds(element& e, rect& out)
+   {
+      if (_current_bounds.is_empty())
+         return false;
+      _capturing_bounds = true;
+      _captured_bounds = {};
+      with_context_do(
+         [&e](auto const& ctx, auto& _main_element)
+         {
+            _main_element.refresh(ctx, e, 0);
+         },
+         *this, _current_bounds
+      );
+      _capturing_bounds = false;
+      if (_captured_bounds.is_empty())
+         return false;
+      out = _captured_bounds;
+      return true;
    }
 
    void view::click(mouse_button btn)
