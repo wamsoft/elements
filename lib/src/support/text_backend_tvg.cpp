@@ -238,7 +238,12 @@ namespace cycfi { namespace elements
          const float ox = st.matrix.e11 * (p.x + dx) + st.matrix.e12 * (p.y + dy) + st.matrix.e13;
          const float oy = st.matrix.e21 * (p.x + dx) + st.matrix.e22 * (p.y + dy) + st.matrix.e23;
 
-         tvg::Matrix m = {1, 0, ox + ent->ox, 0, 1, oy + ent->oy, 0, 0, 1};
+         // 整数画素へ吸着させる。 端数のまま貼ると ThorVG が画像を再サンプル
+         // して字がわずかに甘くなるため。 ずれは最大 0.5px で、 UI テキストでは
+         // 見分けが付かない (多くの UI ツールキットも同じ扱い)。
+         const float px = std::floor(ox + ent->ox + 0.5f);
+         const float py = std::floor(oy + ent->oy + 0.5f);
+         tvg::Matrix m = {1, 0, px, 0, 1, py, 0, 0, 1};
          pic->transform(m);
          if (st.global_alpha < 1.0f)
             pic->opacity(clamp8(st.global_alpha));
