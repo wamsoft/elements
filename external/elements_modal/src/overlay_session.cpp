@@ -932,6 +932,14 @@ bool overlay_session::measure_content(int& out_w, int& out_h) const
 	return true;
 }
 
+void overlay_session::placement(float& out_anchor_x, float& out_anchor_y,
+                                int& out_margin) const
+{
+	out_anchor_x = _impl->anchor_x;
+	out_anchor_y = _impl->anchor_y;
+	out_margin   = _impl->margin;
+}
+
 //---------------------------------------------------------------------------
 // update — render_to_buffer から分離した毎フレームの状態更新。
 // 「描画をスキップするフレームでも止めてはいけない」処理の集合:

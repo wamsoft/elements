@@ -450,6 +450,17 @@ public:
 	//! @return true: 取得成功 (view 構築済み) / false: 未開始
 	bool measure_content(int& out_w, int& out_h) const;
 
+	//! @brief JSON top-level "align" / "margin" で指定された配置アンカーを返す。
+	//!        アンカーは 0 = 左/上、 0.5 = 中央 (既定)、 1 = 右/下。 margin は
+	//!        非中央アンカー時のサーフェス端からの余白 px。
+	//!
+	//!        画面が surface に収まる場合は render_to_buffer が内部で適用する。
+	//!        **画面が surface より大きくホスト側が縮小して提示する場合は、
+	//!        ホストがこの値を見て配置する** (字幕窓のように「下端に寄せたい」
+	//!        ケース。 ホストが中央固定にしていると align が効かなくなる)。
+	void placement(float& out_anchor_x, float& out_anchor_y,
+	               int& out_margin) const;
+
 	// --- SDL イベント転送 (surface logical 座標で渡す) ---
 
 	//! button = cycfi::elements::mouse_button::what (left/middle/right)、

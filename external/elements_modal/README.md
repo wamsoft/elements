@@ -80,6 +80,8 @@ int main()
 |---|---|---|
 | `size` | `[w, h]` | 推奨論理サイズ (run_modal は上限としてのみ使用、 fit-to-content で実サイズが決まる) |
 | `background` | `[r, g, b, a]` | content 描画前の塗りつぶし色 (省略時は透明 / 縁取りなし) |
+| `align` | `"bottom"` / `"top_right"` 等 | **サーフェス内の配置アンカー** (既定 = 中央)。 文字列に `top`/`bottom` が含まれれば縦、 `left`/`right` が含まれれば横をその端へ寄せる (含まれない軸は中央のまま)。 `"center"` は中央 |
+| `margin` | number | `align` が非中央のときのサーフェス端からの余白 px (既定 0) |
 | `locale` | `"ja-JP"` 等 | label の `"locale"` 未指定時に使う既定ロケール (CJK 同形漢字の出し分け用) |
 | `pad_theme` | `"xbox"` / `"ps"` / `"switch"` / `"keyboard"` / `"none"` | content build 前に global pad theme を切り替える (任意)。 未指定なら呼出側がセットした既存値を維持。 `pad_icon` の name 解決に効く |
 | `content` | element | ルート要素 |
@@ -91,6 +93,12 @@ int main()
 | `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
 | `font_scale` | number | 明示 `size` を持たない button / toggle / radio / check_box / label の既定フォント倍率 (既定 1.0 = 従来一致) |
 | `style` | object | 未指定値の既定をまとめて与えるテーマ入口 (下記「style ブロック」)。 いずれも省略で従来一致 |
+
+> `align` / `margin` は、 画面がサーフェスに**収まる**場合は
+> `render_to_buffer` が内部で適用する。 画面がサーフェスより**大きく**
+> ホストが縮小して提示する場合は、 ホストが `overlay_session::placement()` を
+> 見て同じ式で配置する責任を持つ (吉里吉里Z は対応済み)。 ホストが中央固定に
+> していると、 縮小提示のときだけ `align` が効かない、 という症状になる。
 
 #### `style` ブロック
 
