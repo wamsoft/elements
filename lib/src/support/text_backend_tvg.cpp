@@ -74,6 +74,11 @@ namespace cycfi { namespace elements
          float      descent = 0;
          float      width = 0;        // advance sum (align center/right)
          bool       width_valid = false;
+         // 前回描画時の可変状態。 同じ値なら再設定しない (設定は paint を
+         // dirty にして ThorVG の再更新を招くため)。
+         tvg::Matrix last_matrix{1, 0, 0, 0, 1, 0, 0, 0, 1};
+         std::uint32_t last_rgba = 0xffffffffu;
+         bool       state_valid = false;
       };
 
       struct text_slot
@@ -245,14 +250,36 @@ namespace cycfi { namespace elements
             default: dy = -ascent; break;
          }
 
+         // 色・変換は「前回と同じなら設定しない」。 setter を呼ぶと paint が
+         // dirty 扱いになり ThorVG の再更新 (再テッセレーション) を招くため、
+         // 静止しているテキストではそれを避ける。
+         std::uint32_t rgba = 0xffffffffu;
          if (auto* c = std::get_if<color>(&cnv.get_state().fill_style_data))
          {
-            text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-            text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
+            rgba = (std::uint32_t(clamp8(c->red)) << 24)
+                 | (std::uint32_t(clamp8(c->green)) << 16)
+                 | (std::uint32_t(clamp8(c->blue)) << 8)
+                 | std::uint32_t(clamp8(c->alpha * cnv.get_state().global_alpha));
+            if (!ent.state_valid || ent.last_rgba != rgba)
+            {
+               text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
+               text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
+            }
          }
 
          tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
-         text->transform(canvas::multiply(cnv.get_state().matrix, offset));
+         tvg::Matrix m = canvas::multiply(cnv.get_state().matrix, offset);
+         auto same_matrix = [](tvg::Matrix const& a, tvg::Matrix const& b) {
+            return a.e11 == b.e11 && a.e12 == b.e12 && a.e13 == b.e13
+                && a.e21 == b.e21 && a.e22 == b.e22 && a.e23 == b.e23
+                && a.e31 == b.e31 && a.e32 == b.e32 && a.e33 == b.e33;
+         };
+         if (!ent.state_valid || !same_matrix(ent.last_matrix, m))
+            text->transform(m);
+
+         ent.last_rgba = rgba;
+         ent.last_matrix = m;
+         ent.state_valid = true;
 
          if (auto* clip_shape = cnv.make_clip_shape())
             text->clip(clip_shape);
