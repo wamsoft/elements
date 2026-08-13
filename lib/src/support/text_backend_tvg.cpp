@@ -304,9 +304,8 @@ namespace cycfi { namespace elements
                if (out.pixels[i] != 0) ++nz;
             static int n = 0;
             if (n++ < 3)
-               fprintf(stderr, "[textcache] raster w=%d h=%d nonzero=%zu asc=%.1f desc=%.1f wid=%.1f sx=%.2f ---
-",
-                       w, h, nz, out.ascent, out.descent, out.width, sx);
+               fprintf(stderr, "[textcache] raster w=%d h=%d nz=%zu asc=%.1f desc=%.1f wid=%.1f sx=%.2f ---%s",
+                       w, h, nz, out.ascent, out.descent, out.width, sx, "\n");
          }
          rc->remove();
          delete rc;
