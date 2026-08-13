@@ -219,14 +219,16 @@ namespace cycfi { namespace elements
          if (!ent->pic)
             return false;
 
-         // 同じ run を 1 バッチ内で 2 回貼ることはできない (同じ Paint を
-         // 二重 add できない) ので、 2 回目以降は従来経路へ逃がす。
-         if (ent->gen != gen) { ent->gen = gen; ent->used = 0; }
-         if (ent->used > 0)
-            { dbg("dup-in-batch"); return false; }
-         ++ent->used;
+         // キャッシュした Picture は**テンプレート**として保持し、 描画には
+         // その複製を渡す (canvas に add した paint は remove で所有権ごと
+         // 手放されるため、 同じインスタンスを毎フレーム貼り回せない)。
+         // elements の pixmap 描画も同じ作りになっている。
+         auto* paint = ent->pic->duplicate();
+         if (!paint)
+            return false;
+         auto* pic = static_cast<tvg::Picture*>(paint);
 
-         // 配置: ペン原点を device 空間へ移し、 ink オフセットを足す。
+         // 配置: ペン原点を device 空間へ移し、 ラスタ時の余白ぶん戻す。
          float dx = 0, dy = 0;
          switch (st.align & 0x3)
          {
@@ -245,19 +247,12 @@ namespace cycfi { namespace elements
          const float oy = st.matrix.e21 * (p.x + dx) + st.matrix.e22 * (p.y + dy) + st.matrix.e23;
 
          tvg::Matrix m = {1, 0, ox + ent->ox, 0, 1, oy + ent->oy, 0, 0, 1};
-         ent->pic->transform(m);
-         ent->pic->opacity(clamp8(st.global_alpha));
-         if (!getenv("ELEMENTS_TEXTCACHE_NOCLIP"))
-            if (auto* clip_shape = cnv.make_clip_shape())
-               ent->pic->clip(clip_shape);
-         {
-            static int n = 0;
-            if (n++ < 3)
-               fprintf(stderr, "[textcache] place x=%.1f y=%.1f w=%d h=%d op=%d ---%s",
-                       ox + ent->ox, oy + ent->oy, ent->w, ent->h,
-                       int(clamp8(st.global_alpha)), nl());
-         }
-         cnv.add_pending(ent->pic);
+         pic->transform(m);
+         if (st.global_alpha < 1.0f)
+            pic->opacity(clamp8(st.global_alpha));
+         if (auto* clip_shape = cnv.make_clip_shape())
+            pic->clip(clip_shape);
+         cnv.add_pending(pic);
          return true;
       }
 
