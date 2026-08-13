@@ -349,68 +349,6 @@ struct overlay_session::impl
 		return mark_element_dirty(*it->second);
 	}
 
-	// パーツ演出 (animate) 中の要素が「今の変換で」占める矩形を集める。
-	// 変換 (移動/拡縮/回転) は要素の bounds の外へ絵をはみ出させるので、
-	// bounds の 4 隅を変換した bbox をとる。 tick の前後で 2 回集めて合併
-	// すれば、 動いた軌跡の始点と終点の両方が覆える (1 フレーム分の移動量は
-	// その間に収まる)。 id を持たない束縛は要素を特定できない → false。
-	bool collect_anim_rects(std::vector<std::array<float, 4>>& out)
-	{
-		bool all_resolved = true;
-		for (const auto& b : anim.bindings()) {
-			if (!b.active) continue;
-			if (b.id.empty()) { all_resolved = false; continue; }
-			auto it = id_map.find(b.id);
-			if (it == id_map.end() || !it->second) { all_resolved = false; continue; }
-			ce::rect r{};
-			ce::extent nat{0, 0};
-			if (!view || !view->element_bounds(*it->second, r, nat)) {
-				all_resolved = false;
-				continue;
-			}
-			// 自然サイズのはみ出しも含めた「素の描画範囲」
-			const float w = r.right - r.left, h = r.bottom - r.top;
-			const float ex = nat.x > w ? (nat.x - w) : 0.0f;
-			const float ey = nat.y > h ? (nat.y - h) : 0.0f;
-			float l = r.left - ex, t = r.top - ey;
-			float rr = r.right + ex, bb = r.bottom + ey;
-			// 変換を適用した bbox (ピボットは矩形に対する割合)
-			if (b.st && !b.st->identity()) {
-				const auto& s = *b.st;
-				const float px = l + (rr - l) * s.ox;
-				const float py = t + (bb - t) * s.oy;
-				const float cs = std::cos(s.rot), sn = std::sin(s.rot);
-				const float xs[4] = { l, rr, rr, l };
-				const float ys[4] = { t, t, bb, bb };
-				float nl = 0, nt = 0, nr = 0, nb = 0;
-				for (int i = 0; i < 4; ++i) {
-					// pivot 基準に scale → rotate → translate
-					const float dx = (xs[i] - px) * s.sx;
-					const float dy = (ys[i] - py) * s.sy;
-					const float x = px + dx * cs - dy * sn + s.tx;
-					const float y = py + dx * sn + dy * cs + s.ty;
-					if (i == 0) { nl = nr = x; nt = nb = y; }
-					else {
-						nl = std::min(nl, x); nr = std::max(nr, x);
-						nt = std::min(nt, y); nb = std::max(nb, y);
-					}
-				}
-				l = nl; t = nt; rr = nr; bb = nb;
-			}
-			out.push_back({ l, t, rr, bb });
-		}
-		return all_resolved;
-	}
-	void mark_rects_px(const std::vector<std::array<float, 4>>& rects)
-	{
-		const float d = (view_w > 0 && last_buf_w_ > 0)
-			? static_cast<float>(last_buf_w_) / view_w : 1.0f;
-		const float m = 2.0f;
-		for (const auto& r : rects) {
-			mark_dirty_rect_px((r[0] - m) * d, (r[1] - m) * d,
-			                   (r[2] + m) * d, (r[3] + m) * d);
-		}
-	}
 
 	// 「この要素の見た目が変わった」をダーティ矩形にする。
 	// ⚠ 要素は自分の bounds を**はみ出して描く**ことがある (レイアウトを
@@ -1042,21 +980,15 @@ bool overlay_session::update()
 		const float dt = (now > _impl->last_anim_ms)
 		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
 		_impl->last_anim_ms = now;
-		// 変換前の占有矩形を控えてから tick する。 動いた場合は「前」と「後」の
-		// 両方をダーティにしないと、 元居た場所の絵が消え残る。 対象要素を
-		// 特定できない束縛 (id 無し) が混ざっていたら全面へフォールバック。
-		std::vector<std::array<float, 4>> pre;
-		const bool pre_ok = _impl->collect_anim_rects(pre);
 		if (_impl->anim.tick(dt)) {
 			_impl->needs_render_ = true;   // active 束縛が xform を書き換えた
-			std::vector<std::array<float, 4>> post;
-			const bool post_ok = _impl->collect_anim_rects(post);
-			if (pre_ok && post_ok) {
-				_impl->mark_rects_px(pre);
-				_impl->mark_rects_px(post);
-			} else {
-				_impl->dirty_full_ = true;
-			}
+			// ⚠ 演出は全面ダーティのまま。 変換前後の占有矩形を毎フレーム
+			//    求める実装を試したが、 要素 bounds の取得コスト
+			//    (実測 +1.9ms/frame) がラスタの節約 (-0.8ms) を上回り、
+			//    さらに変換後の実描画範囲を取り切れず残像が出た。 矩形化には
+			//    proxy 変換適用後の実描画範囲を elements 側から取れる仕組みが
+			//    要る (将来課題)。
+			_impl->dirty_full_ = true;
 		}
 
 		// 退場演出の完了を検出して終了確定 (退場×遷移の協調)。 exit 束縛だけを
