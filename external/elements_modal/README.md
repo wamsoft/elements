@@ -226,6 +226,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。
 - `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 pixmap は build 時に一度読むので、 実行時差し替えは画像を再登録して画面を開き直す。 セーブサムネイル等の動的画像に使う (ホスト側は自前で PNG 等にエンコードして注入する)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
+  - `"enabled_var": "varname"` — ボタンの有効/無効を変数 store と連動 (`button` / `invert_button` / `ring_button` も同様)。 値 `"0"` で無効、 それ以外 (既定) で有効。 無効中はクリック/キー決定が効かず、 描画は `disabled` frame があればそれ、 無ければ半透明フォールバック。 ホストの `set_var` 一発で切り替わるので、 進行状況で開放されるメニュー項目 (未クリアなら「おまけ」を灰色にする等) に使う。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。 `"value_var": "name"` (任意) で変数 store と連動: 変数に既存値があれば初期状態を上書き (`"0"`/`"false"`/空 = off)、 クリックで `"0"`/`"1"` を書き戻し、 変数変更は状態へ反映のみ (イベント非発火)。
 - `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 `"selected_var"` / `"selected_value"` (任意) で変数 store と双方向連動 (下記「変数連動ファミリ一覧」参照)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
@@ -355,6 +356,23 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 | `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / `Dialog.onAction`) を発火するだけ |
 | `vars_on_focus` | `{name: string, ...}` | この要素が focus を得たときに変数 store に書き込む値の dict。 同じ変数を `text_var` で見ている label に自動反映 (focus 連動ヘルプテキスト等) |
 
+### フォーカスリング表示 (アプリ全体設定)
+
+フォーカス中の要素には lib が汎用の枠 (theme の `focus_ring_color` /
+`focus_ring_width`) を描く。 状態別の絵を自前で持つ画像 UI (PSD 由来の
+`atlas_button` / `atlas_toggle` 等) では枠が素材に重なって邪魔になるので、
+**アプリ全体で切れる**:
+
+```cpp
+elements_modal::set_focus_ring_enabled(false);   // 既定 true
+bool on = elements_modal::focus_ring_enabled();
+```
+
+画面単位ではなくグローバルテーマ (`cycfi::elements::theme::focus_ring_enabled`)
+のフラグ。 button / slider / dial / thumbwheel の枠がまとめて消える。
+**フォーカス自体は生きている**ので、 キー/パッドのナビゲーションと
+`hilite` frame の切替は従来どおり動く。
+
 ### 変数 store (`vars` / `text_var` / `vars_on_focus`)
 
 軽量な「変数設定 + 参照 + 更新通知」機構。 lib に侵襲しない方式で、 runtime が focus 変化を毎フレーム poll し、 focused 要素の `vars_on_focus` を変数 store に書き込み、 同名の `text_var` を持つ label に自動で `set_text` する。
@@ -400,6 +418,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
 | `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
+| `enabled_var` | button 系 (`button` / `atlas_button` / `invert_button` / `ring_button`) | 読み (要素そのものの有効/無効) | `"0"` = 無効 / それ以外 = 有効 |
 | `selected_var` (+`selected_value`) | atlas_choice / radio_button | **双方向** (var == selected_value で選択 / クリックで var へ selected_value を書き戻し) | 任意 string (`selected_value` 既定 `"1"`) |
 | `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |

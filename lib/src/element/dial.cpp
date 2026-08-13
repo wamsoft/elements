@@ -150,7 +150,7 @@ namespace cycfi::elements
    void basic_dial::draw(context const& ctx)
    {
       proxy_base::draw(ctx);
-      if (_has_focus && ctx.enabled)
+      if (_has_focus && ctx.enabled && get_theme().focus_ring_enabled)
       {
          auto&       cnv = ctx.canvas;
          auto        state = cnv.new_state();

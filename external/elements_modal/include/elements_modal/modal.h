@@ -218,6 +218,19 @@ void shutdown();
 //! @param mem_key "mem://" スキームを除いたストアキー (例 "slot_thumb_5")。
 void refresh_mem_image(const std::string& mem_key);
 
+//! @brief フォーカスリング (フォーカス中の要素に lib が描く枠) の表示を
+//!        アプリ全体で切り替える。 既定 true。
+//!
+//!        状態別の絵を自前で持つ画像 UI (PSD 由来の atlas_button / atlas_toggle
+//!        など) では、 汎用の枠が素材の上に重なって邪魔になる。 画面単位ではなく
+//!        タイトル全体の見た目方針なのでグローバルテーマのフラグとして持つ。
+//!        button / slider / dial / thumbwheel の枠がまとめて消える
+//!        (フォーカス自体は生きているのでキー/パッド操作は従来どおり)。
+void set_focus_ring_enabled(bool on);
+
+//! @brief 現在のフォーカスリング表示設定。
+bool focus_ring_enabled();
+
 //---------------------------------------------------------------------------
 // overlay_session — 既存 SDL_Window/SDL_Renderer 等のサーフェス上に
 // モーダルダイアログを動かす低レベル API。

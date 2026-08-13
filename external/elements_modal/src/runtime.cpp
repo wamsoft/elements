@@ -11,6 +11,7 @@
 
 #include "em_platform.h"
 
+#include <elements/support/theme.hpp>
 #include <thorvg.h>
 
 #include <algorithm>
@@ -51,6 +52,27 @@ void shutdown()
 		tvg::Initializer::term();
 		s_tvg_initialized = false;
 	}
+}
+
+//---------------------------------------------------------------------------
+// フォーカスリング表示のアプリ全体スイッチ。
+//
+// 素材で hilite / 押し下げを持つ画像 UI (PSD 由来の atlas_button 等) では、
+// lib が汎用に描く青枠が絵の上に重なって邪魔になる。 画面ごとではなく
+// アプリ全体の見た目方針なので、 グローバルテーマのフラグとして持たせる。
+//---------------------------------------------------------------------------
+
+void set_focus_ring_enabled(bool on)
+{
+	auto thm = cycfi::elements::get_theme();
+	if (thm.focus_ring_enabled == on) return;
+	thm.focus_ring_enabled = on;
+	cycfi::elements::set_theme(thm);
+}
+
+bool focus_ring_enabled()
+{
+	return cycfi::elements::get_theme().focus_ring_enabled;
 }
 
 } // namespace elements_modal

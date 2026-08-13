@@ -144,7 +144,8 @@ namespace cycfi::elements
 
       // Then overlay a focus ring on top so it is visible regardless of
       // what the styler painted underneath.
-      if (_state.focus && ctx.enabled && is_enabled())
+      if (_state.focus && ctx.enabled && is_enabled()
+          && get_theme().focus_ring_enabled)
       {
          auto&       cnv = ctx.canvas;
          auto        state = cnv.new_state();

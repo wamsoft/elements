@@ -93,6 +93,10 @@ namespace cycfi::elements
 
       // Keyboard focus ring drawn by stylers when their owning control
       // (button / slider / dial / thumbwheel / ...) has the focus.
+      // `focus_ring_enabled` switches the ring off application-wide: an
+      // image-based UI that ships its own hilite artwork per state does not
+      // want a generic ring painted on top of it.
+      bool                 focus_ring_enabled;
       color                focus_ring_color;
       float                focus_ring_width;
    };

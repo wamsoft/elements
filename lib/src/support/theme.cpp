@@ -89,6 +89,7 @@ namespace cycfi::elements
     , child_window_title_size    {1.0}
     , child_window_opacity       {0.95}
 
+    , focus_ring_enabled         {true}
     , focus_ring_color           {rgba(0, 190, 255, 220)}
     , focus_ring_width           {1.5f}
    {
