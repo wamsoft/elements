@@ -7,6 +7,7 @@
 #define ELEMENTS_MAY_4_2016
 
 #include <elements/element/align.hpp>
+#include <elements/element/block_text.hpp>
 #include <elements/element/arrow_button.hpp>
 #include <elements/element/button.hpp>
 #include <elements/element/child_window.hpp>

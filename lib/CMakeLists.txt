@@ -15,6 +15,7 @@ set(ELEMENTS_SOURCES
    src/element/anchored_text.cpp
    src/element/arrow_button.cpp
    src/element/atlas.cpp
+   src/element/block_text.cpp
    src/element/button.cpp
    src/element/child_window.cpp
    src/element/composite.cpp
@@ -55,6 +56,7 @@ set(ELEMENTS_SOURCES
    src/element/thumbwheel.cpp
    src/element/tile.cpp
    src/element/tooltip.cpp
+   src/support/block_text.cpp
    src/support/canvas.cpp
    src/support/text_backend_tvg.cpp
    src/support/draw_utils.cpp
@@ -81,6 +83,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/align.hpp
    include/elements/element/arrow_button.hpp
    include/elements/element/atlas.hpp
+   include/elements/element/block_text.hpp
    include/elements/element/button.hpp
    include/elements/element/collapsable.hpp
    include/elements/element/composite.hpp
@@ -135,6 +138,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/tile.hpp
    include/elements/element/tracker.hpp
    include/elements/support.hpp
+   include/elements/support/block_text.hpp
    include/elements/support/canvas.hpp
    include/elements/support/circle.hpp
    include/elements/support/color.hpp

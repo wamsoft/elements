@@ -68,6 +68,12 @@ Text rendering goes through the `text_backend` interface (`text_backend.hpp`). T
 
 Text shaping and font metrics go through the `glyph_layout_backend` and `font_backend` interfaces (`glyph_utils.hpp`). The only implementation uses HarfBuzz `hb_shape()` + `FT_Face` metrics directly. `glyphs.cpp` and `font.cpp` access fonts only through these interfaces.
 
+### Block Text Interface (rectangle flow)
+
+`master_glyphs::break_lines` is a width-greedy word wrap with no script awareness. A host that owns a full text engine usually has a better one *and* needs the two to agree — the same caption drawn by the host and by an Elements widget should break at the same places. So block layout goes through an injectable `block_text_backend` (`support/block_text.hpp`): the host calls `set_block_text_backend()`, and without one a built-in fallback uses Elements' own wrapping. The backend answers "where do the lines break, where does a `count` reveal cut, how tall is the block"; the glyph rendering stays on the normal `tvg::Text` path.
+
+`block_text_box` (`element/block_text.hpp`, JSON `text_area` in elements_modal) is the widget on top of it: alignment, extra line spacing, base direction, and a cluster `count` limit for a typewriter reveal that never reflows (wrapping is resolved for the whole text before `count` applies). 吉里吉里Z injects a glyphware-backed implementation, so `text_area` and `Layer.drawShapedTextArea` wrap identically, 禁則 included.
+
 ### ThorVG-Specific Quirks
 
 - **Font name key**: ThorVG registers loaded fonts by filename stem (e.g., `"OpenSans-Regular"`), not by the font's internal family name. `canvas::font()` converts via `stem_from_path()`.

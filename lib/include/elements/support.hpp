@@ -8,6 +8,7 @@
 
 #include <infra/support.hpp>
 #include <infra/assert.hpp>
+#include <elements/support/block_text.hpp>
 #include <elements/support/canvas.hpp>
 #include <elements/support/circle.hpp>
 #include <elements/support/color.hpp>

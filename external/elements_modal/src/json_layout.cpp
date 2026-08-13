@@ -10,6 +10,7 @@
 #include "em_platform.h"
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
+#include <elements/element/block_text.hpp>       // text_area (ホスト折返し + 文字送り)
 #include <elements/element/image.hpp>            // ce::image (mem:// サムネ再ロード)
 #include <elements_modal/modal.h>                // refresh_mem_image 宣言
 
@@ -891,6 +892,7 @@ private:
 	element_ptr build_spacer      (const picojson::object& o);
 	element_ptr build_scroller    (const picojson::object& o);
 	element_ptr build_text_box    (const picojson::object& o);
+	element_ptr build_text_area   (const picojson::object& o);
 	element_ptr build_checkbox    (const picojson::object& o);
 	element_ptr build_toggle_button(const picojson::object& o);
 	element_ptr build_slide_switch(const picojson::object& o);
@@ -1045,6 +1047,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "spacer")        return build_spacer(o);
 	if (type == "scroller")      return build_scroller(o);
 	if (type == "text_box")      return build_text_box(o);
+	if (type == "text_area")     return build_text_area(o);
 	if (type == "checkbox")      return build_checkbox(o);
 	if (type == "check_box")     return build_checkbox(o);
 	if (type == "toggle_button") return build_toggle_button(o);
@@ -1822,6 +1825,102 @@ element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 		}, sp);
 	}
 	element_ptr out = sp;
+	register_id(o, out);
+	return out;
+}
+
+//---------------------------------------------------------------------------
+// text_area — 矩形に流し込む静的テキスト (ce::block_text_box)。
+//   { "type": "text_area", "text": "...", "size": 36, "color": [r,g,b,a],
+//     "font": "Noto Sans JP", "align": "left|center|right",
+//     "line_spacing": 12, "base": "auto|ltr|rtl",
+//     "count_var": "sub_count", "count": -1,
+//     "text_id": "...", "text_var": "..." }
+//
+//   text_box との違い:
+//     text_box  … cycfi 内蔵の幅貪欲 wrap。 従来互換。 高さは内容に追従。
+//     text_area … ホストが差し込んだ block text バックエンド (krkrz なら
+//                 glyphware) で折り返す。 行頭行末禁則が効き、 本体
+//                 Layer.drawShapedTextArea と改行位置が一致する。 加えて
+//                 整列・行間・文字送り (count) を持つ。 字幕/セリフ窓向け。
+//
+//   "count_var" が本命の使い方: ホストが setVar("sub_count", "12") するだけで
+//   文字送りが進む。 折返しは全文で確定するので送ってもリフローしない。
+//   -1 (または負値) で全部表示。 クラスタ単位 (合字・結合列・絵文字 ZWJ
+//   シーケンスで 1) なので、 本体の shapedTextCount と同じ数え方。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
+{
+	// 初期テキスト解決は label と同規約 (text_id > text_var > 静的 text)。
+	std::string text_id  = string_or(o, "text_id");
+	std::string text_var = string_or(o, "text_var");
+	std::string text;
+	if (!text_id.empty()) {
+		text = _strings->has(text_id) ? _strings->resolve(text_id)
+		                              : string_or(o, "text", text_id);
+	} else if (!text_var.empty()) {
+		if (auto* init = _vars->get(text_var)) text = *init;
+		else                                    text = string_or(o, "text");
+	} else {
+		text = string_or(o, "text");
+	}
+
+	// フォント: "font" があれば family 解決、 無ければ theme の text_box_font。
+	// "font" は comma 区切り families。 未指定なら theme の text_box_font
+	// (= 登録済フォントを Latin → CJK → Emoji の順に並べたもの)。
+	// family は descr が string_view で参照するので、 font を作るまで生かす。
+	std::string family = string_or(o, "font");
+	auto descr = family.empty() ? ce::get_theme().text_box_font
+	                            : ce::font_descr{family};
+	float px = resolve_font_px(o, "size", "size_scale");
+	if (!has_font_field(o, "size", "size_scale")) {
+		px = descr._size;
+		if (_font_scale != 1.0f) px *= _font_scale;
+	}
+
+	auto col = ce::get_theme().text_box_font_color;
+	if (auto* arr = get_array(o, "color")) col = parse_color(*arr);
+
+	auto sp = std::make_shared<ce::block_text_box>(
+		std::move(text), ce::font{descr.size(px)}, px, col);
+
+	std::string al = string_or(o, "align");
+	if      (al == "center") sp->set_align(ce::block_text_request::align_center);
+	else if (al == "right")  sp->set_align(ce::block_text_request::align_right);
+
+	std::string base = string_or(o, "base");
+	if      (base == "ltr") sp->set_base_direction(ce::block_text_request::dir_ltr);
+	else if (base == "rtl") sp->set_base_direction(ce::block_text_request::dir_rtl);
+
+	sp->set_line_spacing(static_cast<float>(number_or(o, "line_spacing", 0.0)));
+	sp->set_count(static_cast<int>(number_or(o, "count", -1.0)));
+
+	element_ptr out = sp;
+
+	// 動的テキスト (label と同じ subscriber 規約)。
+	if (!text_id.empty()) {
+		std::weak_ptr<ce::block_text_box> w = sp;
+		_strings->subscribe(text_id, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		});
+	} else if (!text_var.empty()) {
+		std::weak_ptr<ce::block_text_box> w = sp;
+		_vars->subscribe(text_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		}, out);
+	}
+
+	// 文字送り: 変数 store の整数値をそのまま count に流す。
+	std::string count_var = string_or(o, "count_var");
+	if (!count_var.empty()) {
+		if (auto* init = _vars->get(count_var))
+			sp->set_count(std::atoi(init->c_str()));
+		std::weak_ptr<ce::block_text_box> w = sp;
+		_vars->subscribe(count_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_count(std::atoi(v.c_str()));
+		}, out);
+	}
+
 	register_id(o, out);
 	return out;
 }
