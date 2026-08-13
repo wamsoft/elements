@@ -298,6 +298,16 @@ namespace cycfi { namespace elements
          rc->update();
          rc->draw(false);
          rc->sync();
+         {
+            std::size_t nz = 0;
+            for (std::size_t i = 0; i < std::size_t(w) * h; ++i)
+               if (out.pixels[i] != 0) ++nz;
+            static int n = 0;
+            if (n++ < 3)
+               fprintf(stderr, "[textcache] raster w=%d h=%d nonzero=%zu asc=%.1f desc=%.1f wid=%.1f sx=%.2f ---
+",
+                       w, h, nz, out.ascent, out.descent, out.width, sx);
+         }
          rc->remove();
          delete rc;
          text->unref();   // ここまでで役目終わり (ビットマップに焼けた)
