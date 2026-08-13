@@ -1060,14 +1060,21 @@ bool overlay_session::render_to_buffer_impl(std::uint32_t* pixel_buffer,
 		                static_cast<std::uint32_t>(buffer_h_px),
 		                render_scale };
 		if (partial) {
-			// ラスタ範囲そのものを矩形へ狭める (ThorVG Canvas::viewport)。
-			// canvas::clip() と違いシェイプ毎の clip 図形生成が要らないので
-			// 部分再描画にはこちらが適する。 クリア矩形と同一領域なので
-			// 「クリア → 範囲内だけ再描画」が矩形内で完結し、 半透明背景でも
-			// 二重合成にならない。
+			// (1) ラスタ範囲そのものを矩形へ狭める (ThorVG Canvas::viewport)。
+			//     canvas::clip() と違いシェイプ毎の clip 図形生成が要らない。
+			//     クリア矩形と同一領域なので「クリア → 範囲内だけ再描画」が
+			//     矩形内で完結し、 半透明背景でも二重合成にならない。
 			cnv.viewport(cl, ct, cr - cl, cb - ct);
+			// (2) view の描画対象領域も矩形にする。 composite / layer の子
+			//     カリング (view_bounds との交差判定) がこれを見るので、
+			//     矩形外の要素は shape 生成ごとスキップされる — ラスタだけ
+			//     狭めるより効く (コストの大半は shape 生成側)。
+			_impl->view->draw_bounds(
+				ce::rect{ static_cast<float>(cl), static_cast<float>(ct),
+				          static_cast<float>(cr), static_cast<float>(cb) });
 		}
 		_impl->view->draw(cnv);
+		if (partial) _impl->view->draw_bounds(ce::rect{});   // 次フレームへ持ち越さない
 	}
 
 	out_updated_px.x = cl;

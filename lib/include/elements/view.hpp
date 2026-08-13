@@ -186,6 +186,16 @@ namespace cycfi::elements
       void                    refresh(element& element, int outward = 0);
       void                    refresh(context const& ctx, int outward = 0);
 
+      // Partial redraw: restrict the bounds reported by `view_bounds(view)`
+      // (device coordinates) for the duration of one draw pass. Composite /
+      // layer elements cull children that do not intersect it, so an
+      // offscreen host redrawing only a dirty rectangle skips building the
+      // shapes for everything outside that rectangle — the bulk of the cost.
+      // An empty rect (the default) means "the whole view", i.e. no culling.
+      // The host sets this right before draw() and clears it after.
+      rect                    draw_bounds() const { return _draw_bounds; }
+      void                    draw_bounds(rect r) { _draw_bounds = r; }
+
       struct undo_redo_task
       {
          std::function<void()> undo;
@@ -256,6 +266,8 @@ namespace cycfi::elements
       void                    set_limits();
 
       rect                    _current_bounds;
+      // 部分再描画中の描画対象領域 (device 座標)。 空 = view 全体 (既定)。
+      rect                    _draw_bounds = {};
       view_limits             _current_limits = {{0, 0}, { full_extent, full_extent}};
       mouse_button            _current_button;
       bool                    _is_focus = false;
@@ -346,6 +358,11 @@ namespace cycfi::elements
    // declared in context.hpp
    CYCFI_FORCE_INLINE rect view_bounds(view const& v)
    {
+      // 部分再描画中は描画対象矩形を返す (composite / layer の子カリングが
+      // これを見るので、 矩形外の要素は shape 生成ごとスキップされる)。
+      auto db = v.draw_bounds();
+      if (!db.is_empty())
+         return db;
       auto size = v.size();
       return rect{0, 0, size.x, size.y};
    }
