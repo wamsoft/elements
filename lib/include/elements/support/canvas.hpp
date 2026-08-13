@@ -65,11 +65,14 @@ namespace cycfi { namespace elements
       // cheaper than one per text run.
       void              add_pending(tvg::Paint* paint);
 
-      // Counter bumped on every flush. A backend that keeps paints alive
-      // across frames (a rasterized text-run cache) uses it to tell "already
-      // handed to the canvas in this batch" from "free to re-use": the same
-      // paint must not be added twice before a flush.
-      std::uint64_t     flush_generation() const { return _flush_gen; }
+      // Counter bumped on every flush, of any canvas. A backend that keeps
+      // paints alive across frames (a rasterized text-run cache) uses it to
+      // tell "already handed to a canvas in this batch" from "free to re-use":
+      // the same paint must not be added twice before a flush.
+      // It is process-wide on purpose — a fresh canvas is built for every
+      // frame, so a per-canvas counter would restart at zero each time and
+      // never signal that the previous batch had been drawn.
+      static std::uint64_t flush_generation() { return _flush_gen; }
 
       tvg::Shape*       make_clip_shape() const;
       struct canvas_state;
@@ -363,7 +366,7 @@ namespace cycfi { namespace elements
 
       // Track whether shapes have been added since last flush
       bool                          _has_pending = false;
-      std::uint64_t                 _flush_gen = 0;
+      static std::uint64_t          _flush_gen;
 
       // Text backend (static, shared across all canvas instances)
       static std::shared_ptr<elements::text_backend> _text_backend;

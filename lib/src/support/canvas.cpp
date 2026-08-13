@@ -12,6 +12,9 @@ namespace cycfi { namespace elements
    // Default text backend (ThorVG). Can be replaced via set_text_backend().
    std::shared_ptr<elements::text_backend> canvas::_text_backend;
 
+   // Process-wide flush counter (see canvas::flush_generation).
+   std::uint64_t canvas::_flush_gen = 0;
+
    void canvas::set_text_backend(std::shared_ptr<elements::text_backend> b)
    {
       _text_backend = std::move(b);
