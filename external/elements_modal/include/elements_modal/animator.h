@@ -117,6 +117,10 @@ public:
 
 	void add(anim_binding b) { _bindings.push_back(std::move(b)); }
 
+	//! @brief 束縛の読み取りアクセス。 ホストの部分再描画が、 現在 active な
+	//!        束縛の対象 id と変換状態からダーティ矩形を求めるのに使う。
+	const std::vector<anim_binding>& bindings() const { return _bindings; }
+
 	bool empty() const { return _bindings.empty(); }
 	std::size_t size() const { return _bindings.size(); }
 
