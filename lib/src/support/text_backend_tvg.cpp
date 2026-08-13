@@ -7,10 +7,7 @@
 #include <elements/support/canvas.hpp>
 #include <thorvg.h>
 #include <algorithm>
-#include <cstdint>
-#include <map>
 #include <string>
-#include <vector>
 
 namespace cycfi { namespace elements
 {
@@ -30,140 +27,6 @@ namespace cycfi { namespace elements
       auto clamp8 = [](float v) -> uint8_t {
          return uint8_t(std::min(std::max(v * 255.0f, 0.0f), 255.0f));
       };
-
-      //----------------------------------------------------------------------
-      // Shaped-text cache
-      //
-      // Building a tvg::Text (font + size + string -> shaping -> glyph
-      // outlines) dominates the per-frame cost of an Elements panel: 20 plain
-      // labels measured ~15 ms/frame against ~0.2 ms for 20 boxes. The shaped
-      // result depends only on the string and the font parameters, so keep the
-      // Text object alive across frames and re-use it, setting just the
-      // per-draw state (color, opacity, transform, clip) each time.
-      //
-      // Lifetime: Canvas::add() takes ownership, so the cache calls
-      // Paint::ref() once to hold its own reference; the canvas' remove()
-      // then only drops the canvas' one.
-      //
-      // The same Text must not be added twice within one batch, so each key
-      // keeps a small pool and remembers the flush generation it was last used
-      // in; a string repeated within one frame takes the next pool entry.
-      //----------------------------------------------------------------------
-      struct text_key
-      {
-         std::string text;
-         std::string font;
-         std::string locale;
-         float       size = 0;
-         float       spacing = 1.0f;
-
-         bool operator<(text_key const& r) const
-         {
-            if (size != r.size) return size < r.size;
-            if (spacing != r.spacing) return spacing < r.spacing;
-            if (int c = text.compare(r.text)) return c < 0;
-            if (int c = font.compare(r.font)) return c < 0;
-            return locale.compare(r.locale) < 0;
-         }
-      };
-
-      struct text_entry
-      {
-         tvg::Text* text = nullptr;   // ref'd by the cache
-         float      ascent = 0;
-         float      descent = 0;
-         float      width = 0;        // advance sum (align center/right)
-         bool       width_valid = false;
-         // 前回描画時の可変状態。 同じ値なら再設定しない (設定は paint を
-         // dirty にして ThorVG の再更新を招くため)。
-         tvg::Matrix last_matrix{1, 0, 0, 0, 1, 0, 0, 0, 1};
-         std::uint32_t last_rgba = 0xffffffffu;
-         bool       state_valid = false;
-      };
-
-      struct text_slot
-      {
-         std::vector<text_entry> pool;             // 同フレーム内の重複使用ぶん
-         std::uint64_t           gen = 0;          // pool を使い始めた flush 世代
-         std::size_t             used = 0;         // その世代で使った本数
-         std::uint64_t           last_used_gen = 0;// LRU 用
-      };
-
-      // 上限 (1 slot = 文字列 1 本ぶん)。 越えたら当該フレームで使っていない
-      // slot を落とす。
-      constexpr std::size_t text_cache_limit = 512;
-
-      class text_cache
-      {
-      public:
-         ~text_cache() { clear(); }
-
-         void clear()
-         {
-            for (auto& kv : _slots)
-               for (auto& e : kv.second.pool)
-                  if (e.text) e.text->unref();
-            _slots.clear();
-         }
-
-         //! 現在の世代でまだ使っていない entry を返す。 無ければ空の entry を
-         //! 足して made=true で返す (呼出側が整形結果を書き込む)。
-         text_entry& acquire(text_key const& key, std::uint64_t gen, bool& made)
-         {
-            auto& slot = _slots[key];
-            if (slot.gen != gen) { slot.gen = gen; slot.used = 0; }
-            slot.last_used_gen = gen;
-            if (slot.used < slot.pool.size())
-            {
-               made = false;
-               return slot.pool[slot.used++];
-            }
-            made = true;
-            slot.pool.push_back(text_entry{});
-            ++slot.used;
-            if (_slots.size() > text_cache_limit)
-               evict(gen);
-            return _slots[key].pool.back();
-         }
-
-      private:
-         void evict(std::uint64_t gen)
-         {
-            for (auto it = _slots.begin();
-                 it != _slots.end() && _slots.size() > text_cache_limit; )
-            {
-               if (it->second.last_used_gen != gen)
-               {
-                  for (auto& e : it->second.pool)
-                     if (e.text) e.text->unref();
-                  it = _slots.erase(it);
-               }
-               else ++it;
-            }
-         }
-
-         std::map<text_key, text_slot> _slots;
-      };
-
-      text_cache& shaped_text_cache()
-      {
-         static text_cache cache;
-         return cache;
-      }
-
-      //! 現在の canvas 状態 + 文字列から、 整形結果を一意に決めるキーを作る。
-      //! (色/変換/クリップは描画時に載せ替えるのでキーに含めない)
-      text_key make_key(canvas const& cnv, std::string const& utf8)
-      {
-         text_key k;
-         k.text = utf8;
-         k.font = cnv.get_state().font_file.empty()
-            ? cnv.get_state().font_family : cnv.get_state().font_file;
-         k.locale = cnv.get_state().text_locale;
-         k.size = cnv.get_state().font_size;
-         k.spacing = cnv.get_state().letter_spacing;
-         return k;
-      }
    }
 
    class tvg_text_backend : public text_backend
@@ -174,42 +37,27 @@ namespace cycfi { namespace elements
       void fill_text(canvas& cnv, std::string_view utf8_, point p) override
       {
          std::string utf8(utf8_);
+
+         auto* text = tvg::Text::gen();
+         auto font_name = cnv.get_state().font_file.empty()
+            ? cnv.get_state().font_family : stem_from_path(cnv.get_state().font_file);
+         if (!cnv.get_state().font_file.empty())
+            tvg::Text::load(cnv.get_state().font_file.c_str());
+
+         text->font(font_name.c_str());
+         text->size(cnv.get_state().font_size * tvg_font_scale);
+         // letter spacing (tracking): scale factor on each glyph advance.
          float letter_scale = cnv.get_state().letter_spacing;
+         if (letter_scale != 1.0f)
+            text->spacing(letter_scale, 1.0f);
+         if (!cnv.get_state().text_locale.empty())
+            text->locale(cnv.get_state().text_locale.c_str());
+         text->text(utf8.c_str());
 
-         // 整形済み Text をキャッシュから取る (無ければ作って整形する)。
-         // 整形とメトリクス算出は初回だけで済むので、 2 回目以降は色/変換/
-         // クリップを載せ替えて描くだけになる。
-         bool made = false;
-         text_entry& ent = shaped_text_cache().acquire(
-            make_key(cnv, utf8), cnv.flush_generation(), made);
-         if (made)
-         {
-            auto font_name = cnv.get_state().font_file.empty()
-               ? cnv.get_state().font_family : stem_from_path(cnv.get_state().font_file);
-            if (!cnv.get_state().font_file.empty())
-               tvg::Text::load(cnv.get_state().font_file.c_str());
-
-            auto* t = tvg::Text::gen();
-            t->font(font_name.c_str());
-            t->size(cnv.get_state().font_size * tvg_font_scale);
-            // letter spacing (tracking): scale factor on each glyph advance.
-            if (letter_scale != 1.0f)
-               t->spacing(letter_scale, 1.0f);
-            if (!cnv.get_state().text_locale.empty())
-               t->locale(cnv.get_state().text_locale.c_str());
-            t->text(utf8.c_str());
-            t->ref();   // キャッシュぶんの参照 (canvas の remove では消えない)
-
-            tvg::TextMetrics tm;
-            t->metrics(tm);
-            ent.text = t;
-            ent.ascent = tm.ascent;
-            ent.descent = -tm.descent;
-         }
-         auto* text = ent.text;
-         if (!text) return;
-         float ascent = ent.ascent;
-         float descent = ent.descent;
+         tvg::TextMetrics tm;
+         text->metrics(tm);
+         float ascent = tm.ascent;
+         float descent = -tm.descent;
 
          float dx = 0, dy = 0;
          switch (cnv.get_state().align & 0x3)
@@ -217,27 +65,21 @@ namespace cycfi { namespace elements
             case canvas::text_alignment::right:
             case canvas::text_alignment::center:
             {
-               if (!ent.width_valid)
+               float width = 0;
+               for (const char* c = utf8.c_str(); *c; )
                {
-                  // 字送りの総和 = 版面幅。 1 文字ずつ metrics を引くので
-                  // 高くつく → キャッシュして 2 回目以降は使い回す。
-                  float width = 0;
-                  for (const char* c = utf8.c_str(); *c; )
-                  {
-                     tvg::GlyphMetrics gm;
-                     int len = (*c & 0x80) == 0 ? 1 : (*c & 0xE0) == 0xC0 ? 2
-                             : (*c & 0xF0) == 0xE0 ? 3 : 4;
-                     std::string ch(c, len);
-                     if (text->metrics(ch.c_str(), gm) == tvg::Result::Success)
-                        width += gm.advance;
-                     c += len;
-                  }
-                  // spacing scales advances, so the laid-out width scales too.
-                  ent.width = width * letter_scale;
-                  ent.width_valid = true;
+                  tvg::GlyphMetrics gm;
+                  int len = (*c & 0x80) == 0 ? 1 : (*c & 0xE0) == 0xC0 ? 2
+                          : (*c & 0xF0) == 0xE0 ? 3 : 4;
+                  std::string ch(c, len);
+                  if (text->metrics(ch.c_str(), gm) == tvg::Result::Success)
+                     width += gm.advance;
+                  c += len;
                }
+               // spacing scales advances, so the laid-out width scales too.
+               width *= letter_scale;
                dx = (cnv.get_state().align & 0x3) == canvas::text_alignment::right
-                  ? -ent.width : -ent.width / 2;
+                  ? -width : -width / 2;
                break;
             }
             default: break;
@@ -250,36 +92,14 @@ namespace cycfi { namespace elements
             default: dy = -ascent; break;
          }
 
-         // 色・変換は「前回と同じなら設定しない」。 setter を呼ぶと paint が
-         // dirty 扱いになり ThorVG の再更新 (再テッセレーション) を招くため、
-         // 静止しているテキストではそれを避ける。
-         std::uint32_t rgba = 0xffffffffu;
          if (auto* c = std::get_if<color>(&cnv.get_state().fill_style_data))
          {
-            rgba = (std::uint32_t(clamp8(c->red)) << 24)
-                 | (std::uint32_t(clamp8(c->green)) << 16)
-                 | (std::uint32_t(clamp8(c->blue)) << 8)
-                 | std::uint32_t(clamp8(c->alpha * cnv.get_state().global_alpha));
-            if (!ent.state_valid || ent.last_rgba != rgba)
-            {
-               text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
-               text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
-            }
+            text->fill(clamp8(c->red), clamp8(c->green), clamp8(c->blue));
+            text->opacity(clamp8(c->alpha * cnv.get_state().global_alpha));
          }
 
          tvg::Matrix offset = {1, 0, p.x + dx, 0, 1, p.y + dy, 0, 0, 1};
-         tvg::Matrix m = canvas::multiply(cnv.get_state().matrix, offset);
-         auto same_matrix = [](tvg::Matrix const& a, tvg::Matrix const& b) {
-            return a.e11 == b.e11 && a.e12 == b.e12 && a.e13 == b.e13
-                && a.e21 == b.e21 && a.e22 == b.e22 && a.e23 == b.e23
-                && a.e31 == b.e31 && a.e32 == b.e32 && a.e33 == b.e33;
-         };
-         if (!ent.state_valid || !same_matrix(ent.last_matrix, m))
-            text->transform(m);
-
-         ent.last_rgba = rgba;
-         ent.last_matrix = m;
-         ent.state_valid = true;
+         text->transform(canvas::multiply(cnv.get_state().matrix, offset));
 
          if (auto* clip_shape = cnv.make_clip_shape())
             text->clip(clip_shape);
