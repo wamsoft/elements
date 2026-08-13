@@ -632,14 +632,22 @@ namespace cycfi::elements
    void base_view::refresh()
    {
       _refresh_requested = true;   // embedded ホストの再描画判定用に常時記録
+      _refresh_full = true;        // 引数なし = 全面要求 (蓄積矩形より優先)
       auto* vs = get_view_state_for(_view);
       if (vs)
          vs->needs_refresh = true;
    }
 
-   void base_view::refresh(rect /* area */)
+   void base_view::refresh(rect area)
    {
-      refresh();
+      _refresh_requested = true;
+      // 部分再描画ホスト用の矩形蓄積: 全面要求が既に立っていなければ合併。
+      // (SDL host のウィンドウ再描画は全面なので needs_refresh は同じ扱い)
+      if (!_refresh_full)
+         _refresh_area = _refresh_area.is_empty() ? area : max(_refresh_area, area);
+      auto* vs = get_view_state_for(_view);
+      if (vs)
+         vs->needs_refresh = true;
    }
 
    point base_view::cursor_pos() const

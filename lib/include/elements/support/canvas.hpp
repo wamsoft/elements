@@ -44,6 +44,14 @@ namespace cycfi { namespace elements
       // Access to underlying ThorVG canvas (for advanced use)
       tvg::Canvas&      tvg_canvas() const;
 
+      // Restrict rasterization to the given device-pixel rectangle for the
+      // whole canvas (ThorVG Canvas::viewport). Unlike clip(), this costs
+      // nothing per shape — it narrows the raster region itself, so it is the
+      // right tool for partial redraw (an offscreen host that keeps the
+      // previous frame in its buffer and re-renders only a dirty rectangle).
+      // Must be called before anything is drawn on this canvas.
+      void              viewport(int x, int y, int w, int h);
+
       // Finalize rendering (must call at end of frame)
       void              flush();
 

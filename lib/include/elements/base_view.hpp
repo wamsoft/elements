@@ -358,8 +358,28 @@ namespace cycfi::elements
       // 判定に使う。 初期値 true (最初のフレームは必ず描く)。
       bool                 take_refresh_request()
                            {
+                              bool full; rect area;
+                              return take_refresh_request(full, area);
+                           }
+
+      // 矩形付き版: 要求の有無を返し、 full (全面要求か) と蓄積矩形を out で
+      // 返して蓄積をクリアする。 rect 付き refresh(area) だけが来ていた場合は
+      // full=false で area がその合併矩形 (device 座標 = 直近 draw の canvas
+      // 変換適用後。 view.cpp / 各 element が user_to_device してから渡す)。
+      // 引数なし refresh() が一度でも来ていれば full=true (area は不定)。
+      // 部分再描画を行うオフスクリーンホスト用。
+      bool                 take_refresh_request(bool& full, rect& area)
+                           {
                               bool r = _refresh_requested;
+                              full = _refresh_full;
+                              area = _refresh_area;
+                              // 要求ありなのに矩形が空 (full も立っていない) 場合は
+                              // 全面扱いにする (矩形を蓄積しない host 実装への防御)
+                              if (r && !full && area.is_empty())
+                                 full = true;
                               _refresh_requested = false;
+                              _refresh_full = false;
+                              _refresh_area = rect{};
                               return r;
                            }
 
@@ -376,6 +396,11 @@ namespace cycfi::elements
       extent               _embedded_size{0, 0};
       // refresh() 要求の蓄積フラグ (host 実装の refresh() が立てる)。
       bool                 _refresh_requested = true;
+      // 蓄積要求の種別: true = 全面 (引数なし refresh())。 初期は全面。
+      bool                 _refresh_full = true;
+      // rect 付き refresh(area) の合併矩形 (device 座標)。
+      // _refresh_full = false の間のみ有効。
+      rect                 _refresh_area = {};
    };
 
    ////////////////////////////////////////////////////////////////////////////

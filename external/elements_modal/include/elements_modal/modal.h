@@ -399,6 +399,22 @@ public:
 	                      int surface_w, int surface_h,
 	                      render_rect& out_rect);
 
+	//! @brief render_to_buffer の部分再描画版。 蓄積ダーティが矩形で特定
+	//!        できる場合 (キャレット点滅等の view refresh(rect) 契機のみ)、
+	//!        buffer のその矩形だけをクリアし、 クリップを掛けて再描画する。
+	//!        out_updated_px には実際に書き換えた buffer 内ピクセル矩形が
+	//!        返る (全面時は buffer 全体)。 ホストはこの矩形だけをテクスチャへ
+	//!        部分アップロードしてよい。
+	//!        前提: pixel_buffer に**前回描画の内容がそのまま残っている**こと
+	//!        (ホストが layer 単位の staging を保持している場合のみ使う)。
+	//!        buffer サイズが前回と異なる場合・全面ダーティ時は自動的に
+	//!        全面クリア + 全面描画にフォールバックする。
+	bool render_to_buffer_partial(std::uint32_t* pixel_buffer,
+	                              int buffer_w_px, int buffer_h_px,
+	                              int surface_w, int surface_h,
+	                              render_rect& out_rect,
+	                              render_rect& out_updated_px);
+
 	//! @brief 直近の render_to_buffer で計算された描画矩形 (surface logical)。
 	//!        on_mouse_* に渡す座標は surface logical 座標で渡せば、 内部で
 	//!        この矩形位置を引いて view local 座標に変換する。
@@ -464,6 +480,14 @@ public:
 private:
 	struct impl;
 	std::unique_ptr<impl> _impl;
+
+	// render_to_buffer / render_to_buffer_partial の共通実装
+	bool render_to_buffer_impl(std::uint32_t* pixel_buffer,
+	                           int buffer_w_px, int buffer_h_px,
+	                           int surface_w, int surface_h,
+	                           render_rect& out_rect,
+	                           bool allow_partial,
+	                           render_rect& out_updated_px);
 };
 
 } // namespace elements_modal

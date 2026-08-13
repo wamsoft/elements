@@ -658,6 +658,7 @@ namespace cycfi::elements
    void base_view::refresh()
    {
       _refresh_requested = true;   // embedded ホストの再描画判定用に常時記録
+      _refresh_full = true;        // 引数なし = 全面要求 (蓄積矩形より優先)
       if (!_view)
          return;   // embedded: 呼出側が描画タイミングを制御する
       RECT bounds;
@@ -668,6 +669,9 @@ namespace cycfi::elements
    void base_view::refresh(rect area)
    {
       _refresh_requested = true;
+      // 部分再描画ホスト用の矩形蓄積: 全面要求が既に立っていなければ合併
+      if (!_refresh_full)
+         _refresh_area = _refresh_area.is_empty() ? area : max(_refresh_area, area);
       if (!_view)
          return;   // embedded
       auto scale = get_scale_for_window(_view);

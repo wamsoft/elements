@@ -303,6 +303,36 @@ struct overlay_session::impl
 	// set_var・set_language の実変化で立ち、 render_to_buffer の成功で下りる。
 	// 初回は必ず描く。
 	bool needs_render_ = true;
+	// --- 部分再描画用のダーティ領域 (render_to_buffer_partial) ---
+	// dirty_full_: 全面再描画が必要 (初回 / 入力・focus・演出・set_var 等、
+	// 位置を特定できない契機)。 false の間は dirty_px_* が合併ダーティ矩形
+	// (直近 draw の密度における buffer ピクセル座標。 view の refresh(rect)
+	// は draw 時の canvas 変換適用後 = device px で届く)。
+	// needs_render_ を立てる契機のうち rect を特定できるのは view の
+	// refresh(rect) 経由のみで、 それ以外は update() 冒頭の昇格処理で
+	// 全面扱いになる (契機側のコードは無変更で正しさを保つ)。
+	bool dirty_full_ = true;
+	float dirty_px_l_ = 0, dirty_px_t_ = 0, dirty_px_r_ = 0, dirty_px_b_ = 0;
+	// 直近 render の buffer サイズ。 密度が変わったら蓄積 px 矩形は無効。
+	int last_buf_w_ = 0, last_buf_h_ = 0;
+	void mark_dirty_rect_px(float l, float t, float r, float b)
+	{
+		needs_render_ = true;
+		if (dirty_full_) return;
+		if (dirty_px_r_ <= dirty_px_l_ || dirty_px_b_ <= dirty_px_t_) {
+			dirty_px_l_ = l; dirty_px_t_ = t; dirty_px_r_ = r; dirty_px_b_ = b;
+		} else {
+			if (l < dirty_px_l_) dirty_px_l_ = l;
+			if (t < dirty_px_t_) dirty_px_t_ = t;
+			if (r > dirty_px_r_) dirty_px_r_ = r;
+			if (b > dirty_px_b_) dirty_px_b_ = b;
+		}
+	}
+	void clear_dirty()
+	{
+		dirty_full_ = false;
+		dirty_px_l_ = dirty_px_t_ = dirty_px_r_ = dirty_px_b_ = 0;
+	}
 	// update() 済みで render_to_buffer 未消費か。 render_to_buffer 内での
 	// 二重 update 防止 (update を呼ばない従来ホストの後方互換用)。
 	bool updated_ = false;
@@ -813,6 +843,12 @@ bool overlay_session::update()
 {
 	if (!_impl->view || !_impl->started || _impl->finished_) return false;
 
+	// update() の外 (入力転送 / set_var / play_animation 等) で立った
+	// needs_render_ は位置を特定できないため全面ダーティへ昇格する。
+	// rect を特定できるのは下の take_refresh_request (view の refresh(rect))
+	// 経由だけ — 契機側のコードを変えずに部分再描画の正しさを保つ。
+	if (_impl->needs_render_) _impl->dirty_full_ = true;
+
 	// focus poll: 変数連動 label の text を更新する (focus 変化時のみ書込。
 	// 実際に値が変わった label の見た目変化は下の focus 変化ダーティで拾う)。
 	if (_impl->focus_poll) _impl->focus_poll();
@@ -824,11 +860,13 @@ bool overlay_session::update()
 	    *_impl->focused_id_slot != _impl->dirty_last_focused) {
 		_impl->dirty_last_focused = *_impl->focused_id_slot;
 		_impl->needs_render_ = true;
+		_impl->dirty_full_ = true;   // フォーカス枠の新旧位置は特定しない (全面)
 	}
 	if (_impl->hovered_id_slot &&
 	    *_impl->hovered_id_slot != _impl->dirty_last_hovered) {
 		_impl->dirty_last_hovered = *_impl->hovered_id_slot;
 		_impl->needs_render_ = true;
+		_impl->dirty_full_ = true;   // hover hilite の新旧位置は特定しない (全面)
 	}
 
 	// focus 変化検出 (nav SE + cursor-warp 共用)。 キーボード/dpad/stick/
@@ -875,6 +913,7 @@ bool overlay_session::update()
 		_impl->last_anim_ms = now;
 		if (_impl->anim.tick(dt)) {
 			_impl->needs_render_ = true;   // active 束縛が xform を書き換えた
+			_impl->dirty_full_ = true;     // 変換前後の合併矩形は取らない (全面)
 		}
 
 		// 退場演出の完了を検出して終了確定 (退場×遷移の協調)。 exit 束縛だけを
@@ -888,9 +927,21 @@ bool overlay_session::update()
 
 	// 遅延タスク (focus 適用 / キャレット点滅タイマ / shortcut 発火 等) を実行
 	// してから、 view 側に蓄積された再描画要求 (refresh()) を回収する。
+	// rect 付き要求 (キャレット点滅等) は device px のままダーティ矩形へ合併し、
+	// 全面要求 (引数なし refresh) は全面ダーティにする。
 	_impl->view->poll();
-	if (_impl->view->take_refresh_request()) {
-		_impl->needs_render_ = true;
+	{
+		bool full = false;
+		ce::rect area{};
+		if (_impl->view->take_refresh_request(full, area)) {
+			if (full) {
+				_impl->needs_render_ = true;
+				_impl->dirty_full_ = true;
+			} else {
+				_impl->mark_dirty_rect_px(area.left, area.top,
+				                          area.right, area.bottom);
+			}
+		}
 	}
 
 	_impl->updated_ = true;
@@ -912,7 +963,32 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
                                        int surface_w, int surface_h,
                                        render_rect& out_rect)
 {
+	render_rect updated{};
+	return render_to_buffer_impl(pixel_buffer, buffer_w_px, buffer_h_px,
+	                             surface_w, surface_h, out_rect,
+	                             /*allow_partial=*/false, updated);
+}
+
+bool overlay_session::render_to_buffer_partial(std::uint32_t* pixel_buffer,
+                                               int buffer_w_px, int buffer_h_px,
+                                               int surface_w, int surface_h,
+                                               render_rect& out_rect,
+                                               render_rect& out_updated_px)
+{
+	return render_to_buffer_impl(pixel_buffer, buffer_w_px, buffer_h_px,
+	                             surface_w, surface_h, out_rect,
+	                             /*allow_partial=*/true, out_updated_px);
+}
+
+bool overlay_session::render_to_buffer_impl(std::uint32_t* pixel_buffer,
+                                            int buffer_w_px, int buffer_h_px,
+                                            int surface_w, int surface_h,
+                                            render_rect& out_rect,
+                                            bool allow_partial,
+                                            render_rect& out_updated_px)
+{
 	out_rect = {};
+	out_updated_px = {};
 	if (!_impl->view || !pixel_buffer || buffer_w_px <= 0 || buffer_h_px <= 0) {
 		return false;
 	}
@@ -927,8 +1003,48 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 	}
 	_impl->updated_ = false;
 
-	const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
-	std::fill_n(pixel_buffer, pixel_count, 0u);
+	// 部分再描画の成立条件: ホストが許可 (staging に前回描画が残っている) +
+	// 全面ダーティでない + 有効な蓄積矩形 + buffer サイズが前回と同じ
+	// (= 蓄積 px 矩形を記録した時と密度が一致)。
+	bool partial = allow_partial && !_impl->dirty_full_
+	            && _impl->dirty_px_r_ > _impl->dirty_px_l_
+	            && _impl->dirty_px_b_ > _impl->dirty_px_t_
+	            && _impl->last_buf_w_ == buffer_w_px
+	            && _impl->last_buf_h_ == buffer_h_px;
+
+	int cl = 0, ct = 0, cr = buffer_w_px, cb = buffer_h_px;
+	if (partial) {
+		// 外側へ 1px 膨らませて整数境界へ (丸め落ち対策)、 buffer にクランプ
+		cl = static_cast<int>(std::floor(_impl->dirty_px_l_)) - 1;
+		ct = static_cast<int>(std::floor(_impl->dirty_px_t_)) - 1;
+		cr = static_cast<int>(std::ceil(_impl->dirty_px_r_)) + 1;
+		cb = static_cast<int>(std::ceil(_impl->dirty_px_b_)) + 1;
+		if (cl < 0) cl = 0;
+		if (ct < 0) ct = 0;
+		if (cr > buffer_w_px) cr = buffer_w_px;
+		if (cb > buffer_h_px) cb = buffer_h_px;
+		if (cl >= cr || ct >= cb) {
+			partial = false;   // 画面外へ流れた矩形 → 全面へフォールバック
+		} else if (static_cast<long long>(cr - cl) * (cb - ct) * 4
+		           >= static_cast<long long>(buffer_w_px) * buffer_h_px * 3) {
+			// 3/4 以上が対象ならクリップのオーバーヘッドの方が高くつく
+			partial = false;
+		}
+	}
+	if (!partial) {
+		cl = 0; ct = 0; cr = buffer_w_px; cb = buffer_h_px;
+	}
+
+	if (partial) {
+		// ダーティ矩形内のみゼロクリア (他は前回描画のまま = クリップ外は不変)
+		for (int y = ct; y < cb; ++y) {
+			std::fill_n(pixel_buffer + static_cast<size_t>(y) * buffer_w_px + cl,
+			            cr - cl, 0u);
+		}
+	} else {
+		const size_t pixel_count = static_cast<size_t>(buffer_w_px) * buffer_h_px;
+		std::fill_n(pixel_buffer, pixel_count, 0u);
+	}
 
 	{
 		// 描画密度は「呼出側が確保した buffer サイズ ÷ view logical サイズ」から
@@ -943,8 +1059,21 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 		                static_cast<std::uint32_t>(buffer_w_px),
 		                static_cast<std::uint32_t>(buffer_h_px),
 		                render_scale };
+		if (partial) {
+			// ラスタ範囲そのものを矩形へ狭める (ThorVG Canvas::viewport)。
+			// canvas::clip() と違いシェイプ毎の clip 図形生成が要らないので
+			// 部分再描画にはこちらが適する。 クリア矩形と同一領域なので
+			// 「クリア → 範囲内だけ再描画」が矩形内で完結し、 半透明背景でも
+			// 二重合成にならない。
+			cnv.viewport(cl, ct, cr - cl, cb - ct);
+		}
 		_impl->view->draw(cnv);
 	}
+
+	out_updated_px.x = cl;
+	out_updated_px.y = ct;
+	out_updated_px.w = cr - cl;
+	out_updated_px.h = cb - ct;
 
 	// 実レンダ結果サイズで中央配置 (Elements は content の自然サイズで描く)
 	auto vlim = _impl->view->limits();
@@ -976,7 +1105,10 @@ bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
 
 	// (view->poll() は update() 側へ移動 — 描画スキップ時も毎フレーム回すため)
 
+	_impl->last_buf_w_ = buffer_w_px;   // 蓄積 px 矩形の密度一致判定用
+	_impl->last_buf_h_ = buffer_h_px;
 	_impl->needs_render_ = false;   // 描画済み。 次の変化まで再描画不要
+	_impl->clear_dirty();
 	return true;
 }
 

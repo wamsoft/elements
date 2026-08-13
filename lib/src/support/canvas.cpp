@@ -127,6 +127,18 @@ namespace cycfi { namespace elements
    }
 
    ///////////////////////////////////////////////////////////////////////////
+   // Viewport (partial redraw)
+   ///////////////////////////////////////////////////////////////////////////
+   void canvas::viewport(int x, int y, int w, int h)
+   {
+      // ThorVG allows changing the viewport only at the start of a rendering
+      // sequence (before the first Canvas::add), which is where an offscreen
+      // host calls this — right after constructing the canvas for the frame.
+      if (_tvg_canvas)
+         _tvg_canvas->viewport(x, y, w, h);
+   }
+
+   ///////////////////////////////////////////////////////////////////////////
    // Flush
    ///////////////////////////////////////////////////////////////////////////
    void canvas::flush()
