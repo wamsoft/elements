@@ -521,6 +521,51 @@ private:
 };
 
 //---------------------------------------------------------------------------
+// 指定番号表示テキスト ("text_list" / "text_list_id" + "index_var") — label と
+// text_area で共用。 index_var の値 (10 進 index 文字列) でリストの 1 本を選ぶ。
+//
+// "text_list_id" は i18n 版で、 各要素が textID。 index で引いてから現在言語で
+// 解決するので、 言語切替でも表示中の 1 本がその場で差し替わる (picker の
+// "options_id" と同じ考え方)。 "text_list" 併記時は「i18n 非対応ランタイム /
+// 未知 id」用の静的 fallback として同 index が使われる。
+//---------------------------------------------------------------------------
+struct TextListSpec
+{
+	std::vector<std::string> statics;   // "text_list"
+	std::vector<std::string> ids;       // "text_list_id" (優先)
+
+	bool empty() const { return statics.empty() && ids.empty(); }
+
+	// index → 現在言語の表示文字列。 StringStore を引数で受けるのは、 この
+	// resolver を StringStore 自身が持つ closure にも入れるため (shared_ptr で
+	// capture すると自己参照サイクルになる)。 範囲外 index は clamp。
+	std::string at(StringStore* ss, int idx) const
+	{
+		const std::vector<std::string>& primary = ids.empty() ? statics : ids;
+		if (primary.empty()) return {};
+		if (idx < 0) idx = 0;
+		if (idx >= static_cast<int>(primary.size())) idx = static_cast<int>(primary.size()) - 1;
+		if (ids.empty()) return statics[idx];
+		const std::string& tid = ids[idx];
+		if (ss && ss->has(tid)) return ss->resolve(tid);
+		if (idx < static_cast<int>(statics.size())) return statics[idx];
+		return tid;
+	}
+};
+
+TextListSpec read_text_list(const picojson::object& o)
+{
+	TextListSpec spec;
+	if (auto* la = get_array(o, "text_list")) {
+		for (auto& v : *la) if (v.is<std::string>()) spec.statics.push_back(v.get<std::string>());
+	}
+	if (auto* la = get_array(o, "text_list_id")) {
+		for (auto& v : *la) if (v.is<std::string>()) spec.ids.push_back(v.get<std::string>());
+	}
+	return spec;
+}
+
+//---------------------------------------------------------------------------
 // LayoutBuilder — element ツリーを再帰生成
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
@@ -923,6 +968,11 @@ private:
 	// styler (= proxy の subject、 text_writer 派生) を StringStore に subscribe
 	// して言語切替で set_text する。 初期値も resolve して同期する。
 	void subscribe_button_text_id(const picojson::object& o, const element_ptr& shared);
+	// "index_var" + text_list(_id) を text_writer な widget へ結線する
+	// (label / text_area 共用)。 index 変化と言語切替の両方で set_text する。
+	// index_var 未指定 / リスト空 / text_writer 非派生なら no-op。
+	void bind_text_list(const std::string& index_var, const TextListSpec& list,
+	                    int initial_index, const element_ptr& out);
 	element_ptr build_slider      (const picojson::object& o);
 	element_ptr build_slider_with_range(const picojson::object& o);
 	element_ptr build_labeled_row (const picojson::object& o);
@@ -1320,6 +1370,38 @@ std::function<void()> LayoutBuilder::take_hover_poll()
 //---------------------------------------------------------------------------
 // 各 element 種別
 //---------------------------------------------------------------------------
+void LayoutBuilder::bind_text_list(const std::string& index_var,
+                                   const TextListSpec& list, int initial_index,
+                                   const element_ptr& out)
+{
+	if (index_var.empty() || list.empty()) return;
+	auto sp = std::dynamic_pointer_cast<ce::text_writer>(out);
+	if (!sp) return;
+	std::weak_ptr<ce::text_writer> w = sp;
+	// 現在 index。 index_var 側と言語切替側の両方から参照する。
+	auto idx_slot = std::make_shared<int>(initial_index);
+	// VariableStore に入る closure なので StringStore は shared_ptr 捕捉で
+	// よい (VariableStore → StringStore の一方向参照、 サイクルなし)。
+	// owner (out) は部分再描画のダーティ矩形用。
+	_vars->subscribe(index_var,
+		[w, idx_slot, ss = _strings, list](const std::string& v) {
+			if (auto p = w.lock()) {
+				*idx_slot = std::atoi(v.c_str());
+				p->set_text(list.at(ss.get(), *idx_slot));
+			}
+		}, out);
+	// i18n: 言語が変わったら現在 index を新言語で引き直す。 closure は
+	// StringStore 自身が持つので raw ポインタ捕捉 (options_id と同じ)。
+	if (!list.ids.empty()) {
+		StringStore* ssp = _strings.get();
+		_strings->subscribe_language(
+			[w, idx_slot, ssp, list](const std::string&) {
+				if (auto p = w.lock())
+					p->set_text(list.at(ssp, *idx_slot));
+			});
+	}
+}
+
 element_ptr LayoutBuilder::build_label(const picojson::object& o)
 {
 	// "text_id": "id" (i18n) と "text_var": "varname" の動的 text 解決。
@@ -1341,41 +1423,14 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	// "text_list": [...] + "index_var": "name" — テキストリストの指定番号を表示する
 	// 高度なラベル。 index_var の値 (整数文字列) を添字にリストから引く。 button の
 	// "vars_on_focus":{name:"N"} で focus 連動、 或いはホストの setVar で切替。
-	// text_id/text_var と併用時は index_var 優先。
-	//
-	// "text_list_id": [...] は text_list の i18n 版で、 各要素が textID。
-	// index で引いてから StringStore で現在言語に解決するので、 言語切替でも
-	// 表示中の 1 本がその場で差し替わる (picker の "options_id" と同じ考え方)。
-	// text_list より優先。 両方書いた場合 text_list は「i18n 非対応ランタイム /
-	// 未知 id」用の静的フォールバックとして同 index が使われる。
+	// text_id/text_var と併用時は index_var 優先。 i18n 版 "text_list_id" 込みの
+	// 仕様は TextListSpec 側のコメント参照。
 	std::string index_var = string_or(o, "index_var");
-	std::vector<std::string> text_list, text_list_id;
-	if (auto* la = get_array(o, "text_list")) {
-		for (auto& v : *la) if (v.is<std::string>()) text_list.push_back(v.get<std::string>());
-	}
-	if (auto* la = get_array(o, "text_list_id")) {
-		for (auto& v : *la) if (v.is<std::string>()) text_list_id.push_back(v.get<std::string>());
-	}
-	// index → 現在言語の表示文字列。 StringStore を引数で受けるのは、 この
-	// resolver を StringStore 自身が持つ closure にも入れるため (shared_ptr で
-	// capture すると自己参照サイクルになる)。
-	auto resolve_list_at = [ids = text_list_id, statics = text_list]
-	                       (StringStore* ss, int idx) -> std::string {
-		const std::vector<std::string>& primary = ids.empty() ? statics : ids;
-		if (primary.empty()) return {};
-		if (idx < 0) idx = 0;
-		if (idx >= static_cast<int>(primary.size())) idx = static_cast<int>(primary.size()) - 1;
-		if (ids.empty()) return statics[idx];
-		const std::string& tid = ids[idx];
-		if (ss && ss->has(tid)) return ss->resolve(tid);
-		if (idx < static_cast<int>(statics.size())) return statics[idx];
-		return tid;
-	};
-	const bool has_list = !text_list.empty() || !text_list_id.empty();
+	const TextListSpec text_list = read_text_list(o);
 	int list_idx = 0;
-	if (!index_var.empty() && has_list) {
+	if (!index_var.empty() && !text_list.empty()) {
 		if (auto* init = _vars->get(index_var)) list_idx = std::atoi(init->c_str());
-		text = resolve_list_at(_strings.get(), list_idx);
+		text = text_list.at(_strings.get(), list_idx);
 	}
 	std::string locale = string_or(o, "locale", _default_locale);
 
@@ -1506,33 +1561,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	}
 	// index_var + text_list(_id): index 変化でリストから引いて set_text
 	// (指定番号表示ラベル)。 text_list_id なら言語切替でも同じ index を引き直す。
-	if (!index_var.empty() && has_list) {
-		if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(out)) {
-			std::weak_ptr<ce::text_writer> w = sp;
-			// 現在 index。 index_var 側と言語切替側の両方から参照する。
-			auto idx_slot = std::make_shared<int>(list_idx);
-			// VariableStore に入る closure なので StringStore は shared_ptr 捕捉で
-			// よい (VariableStore → StringStore の一方向参照、 サイクルなし)。
-			// owner (out) は部分再描画のダーティ矩形用。
-			_vars->subscribe(index_var,
-				[w, idx_slot, ss = _strings, resolve_list_at](const std::string& v) {
-					if (auto p = w.lock()) {
-						*idx_slot = std::atoi(v.c_str());
-						p->set_text(resolve_list_at(ss.get(), *idx_slot));
-					}
-				}, out);
-			// i18n: 言語が変わったら現在 index を新言語で引き直す。 closure は
-			// StringStore 自身が持つので raw ポインタ捕捉 (options_id と同じ)。
-			if (!text_list_id.empty()) {
-				StringStore* ssp = _strings.get();
-				_strings->subscribe_language(
-					[w, idx_slot, ssp, resolve_list_at](const std::string&) {
-						if (auto p = w.lock())
-							p->set_text(resolve_list_at(ssp, *idx_slot));
-					});
-			}
-		}
-	}
+	bind_text_list(index_var, text_list, list_idx, out);
 	// "id" があれば id→element に登録し、 ホストから label を参照可能にする
 	// (label は focus 対象ではないので note_initial_focus は不要)。
 	register_id(o, out);
@@ -1851,7 +1880,8 @@ element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 {
-	// 初期テキスト解決は label と同規約 (text_id > text_var > 静的 text)。
+	// 初期テキスト解決は label と同規約 (text_id > text_var > 静的 text、
+	// "text_list(_id)" + "index_var" があればそちらが優先)。
 	std::string text_id  = string_or(o, "text_id");
 	std::string text_var = string_or(o, "text_var");
 	std::string text;
@@ -1863,6 +1893,13 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 		else                                    text = string_or(o, "text");
 	} else {
 		text = string_or(o, "text");
+	}
+	std::string index_var = string_or(o, "index_var");
+	const TextListSpec text_list = read_text_list(o);
+	int list_idx = 0;
+	if (!index_var.empty() && !text_list.empty()) {
+		if (auto* init = _vars->get(index_var)) list_idx = std::atoi(init->c_str());
+		text = text_list.at(_strings.get(), list_idx);
 	}
 
 	// フォント: "font" があれば family 解決、 無ければ theme の text_box_font。
@@ -1909,6 +1946,10 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 			if (auto p = w.lock()) p->set_text(v);
 		}, out);
 	}
+
+	// index_var + text_list(_id): index 変化でリストから引いて set_text
+	// (指定番号表示。 text_list_id なら言語切替でも同じ index を引き直す)。
+	bind_text_list(index_var, text_list, list_idx, out);
 
 	// 文字送り: 変数 store の整数値をそのまま count に流す。
 	std::string count_var = string_or(o, "count_var");

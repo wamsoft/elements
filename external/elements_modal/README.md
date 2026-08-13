@@ -138,7 +138,7 @@ int main()
   - `"text_list_id": [id0, id1, ...]` — i18n。 `text_list` の各エントリを StringStore の textID で与える版 (`text_list` より優先)。 index で引いてから現在言語で解決するので、 **言語切替でも表示中の 1 本がその場で差し替わる** (picker の `options_id` と同じ考え方)。 `text_list` を併記した場合は「i18n 非対応ランタイム / 未知 id」用の静的 fallback として同 index が使われる。
 - `text_box` — 複数行・自動折返しの静的テキスト (cycfi `static_text_box`)。 `"text"` + `"size"` (px 絶対) / `"size_scale"` + `"color"` + `"mono"` (真で等幅フォント) + `"text_var"` (label と同じ変数 store 購読。 setVar で本文を丸ごと差替え)。 幅は親 (`hsize` 等) が決め、 高さは折返し結果に追従。 長文は親に `scroller` を置く (ライセンス表示等の長文ビューア向け、 行 label を大量に並べるより軽い)。
 - `text_area` — 矩形に流し込む静的テキスト (lib の `block_text_box`)。 折返しを**ホストが差し込んだ block text バックエンド**に任せるのが `text_box` との違いで、 ホスト側のテキストエンジンと**改行位置が一致する** (吉里吉里Z なら `Layer.drawShapedTextArea` と同一。 行頭行末禁則が効く)。 バックエンド未注入なら lib 内蔵の幅貪欲 wrap にフォールバックする。 字幕 / セリフ窓向け。
-  - `"text"` / `"text_id"` / `"text_var"` — label と同規約 (優先順位 text_id > text_var > 静的 text)。
+  - `"text"` / `"text_id"` / `"text_var"` / `"text_list"` + `"text_list_id"` + `"index_var"` — label と同規約 (優先順位 index_var > text_id > text_var > 静的 text)。 指定番号表示も i18n の言語切替追従も label と同じ挙動。
   - `"size"` (px 絶対) / `"size_scale"` + `"color": [r,g,b,a]` + `"font"` (comma 区切り families、 省略時は theme の text_box_font)。
   - `"align"`: `"left"` (既定) / `"center"` / `"right"`、 `"line_spacing"`: 行間追加 px (負値可)、 `"base"`: `"auto"` (既定) / `"ltr"` / `"rtl"`。
   - `"count_var": "varname"` — **文字送り**。 変数 store の整数値だけ先頭からクラスタ単位で表示する (-1 = 全部)。 ホストが `setVar("sub_count", "12")` するだけで進む。 **折返しは全文で確定してから count を適用する**ので送ってもリフローしない。 静的指定は `"count"`。
@@ -421,7 +421,7 @@ bool on = elements_modal::focus_ring_enabled();
 | `text_var` | label / text_box / text_area | 読み | 表示文字列 |
 | `count_var` | text_area | 読み | 表示クラスタ数 (10 進、 `"-1"` = 全部) |
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
-| `text_list` / `text_list_id` + `index_var` | label | 読み | 10 進 index (`"2"`) |
+| `text_list` / `text_list_id` + `index_var` | label / text_area | 読み | 10 進 index (`"2"`) |
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
 | `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
@@ -466,7 +466,7 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 
 - label / text_area / button 系の `"text_id": "menu.save"` — 現在言語の訳文を表示。 `"text"` は i18n 非対応ランタイム / 未知 id 向けの静的 fallback。
 - picker 系の `"options_id": ["opt.speed.slow", ...]` — options を textID で与える (`options` より優先)。 言語切替時は**選択 index を維持**したまま表示文字列だけ `set_options` で差し替わる。
-- label の `"text_list_id": ["help.save", ...]` (+ `index_var`) — 指定番号表示ラベルの textID 版 (`text_list` より優先)。 言語切替時は**表示中の index を維持**したまま引き直す。 メニューの説明文のように「focus 連動 + 多言語」な 1 本のラベルはこれで賄える。
+- label / text_area の `"text_list_id": ["help.save", ...]` (+ `index_var`) — 指定番号表示の textID 版 (`text_list` より優先)。 言語切替時は**表示中の index を維持**したまま引き直す。 メニューの説明文のように「focus 連動 + 多言語」な 1 本のラベルはこれで賄える。
 - 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
 - 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
 
