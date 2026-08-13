@@ -338,6 +338,41 @@ struct overlay_session::impl
 	// 変化した要素を特定できていない = 全面再描画へフォールバックする。
 	int var_change_hits = 0;
 
+	// 演出中の要素が「今の変換で」占める矩形を集める (user 座標)。
+	// proxy が描画時に控えた subject 矩形から算術で求めるだけなので、
+	// 要素ツリーの走査は起きない。 同じ xform_state を共有する束縛
+	// (move+scale の同時掛け等) は 1 つにまとめる。
+	// @return 全ての active 束縛で矩形を出せたか (false なら呼出側は全面へ)
+	bool collect_anim_rects(std::vector<ce::rect>& out)
+	{
+		bool all_resolved = true;
+		const xform_state* seen[16];
+		int nseen = 0;
+		for (const auto& b : anim.bindings()) {
+			if (!b.active || !b.st) continue;
+			bool dup = false;
+			for (int i = 0; i < nseen; ++i)
+				if (seen[i] == b.st.get()) { dup = true; break; }
+			if (dup) continue;
+			if (nseen < 16) seen[nseen++] = b.st.get();
+			ce::rect r{};
+			if (!transformed_bounds(*b.st, r)) { all_resolved = false; continue; }
+			out.push_back(r);
+		}
+		return all_resolved;
+	}
+	// user 座標の矩形群を、 直近 render の密度で buffer px に直して積む。
+	void mark_rects_px(const std::vector<ce::rect>& rects)
+	{
+		const float d = (view_w > 0 && last_buf_w_ > 0)
+			? static_cast<float>(last_buf_w_) / view_w : 1.0f;
+		const float m = 2.0f;   // AA / 端数の吸収
+		for (const auto& r : rects) {
+			mark_dirty_rect_px((r.left - m) * d, (r.top - m) * d,
+			                   (r.right + m) * d, (r.bottom + m) * d);
+		}
+	}
+
 	// id 指定でその要素の矩形をダーティにする。 空 id は「対象なし」として
 	// 成功扱い (focus が外れて何処にも無い状態は塗り直す対象が無い)。
 	// 未知の id は false → 呼出側が全面へフォールバックする。
@@ -980,15 +1015,24 @@ bool overlay_session::update()
 		const float dt = (now > _impl->last_anim_ms)
 		               ? static_cast<float>(now - _impl->last_anim_ms) : 0.0f;
 		_impl->last_anim_ms = now;
+		// 演出の部分再描画: active な束縛の変換状態から「今の見た目の矩形」を
+		// tick の前後で求め、 両方をダーティにする (動いた元の場所も塗り直す
+		// 必要があるため)。 矩形は proxy が描画時に控えた subject 矩形
+		// (xform_state::b*) と変換量だけで算出できるので、 要素ツリーの走査は
+		// 不要 = 毎フレーム回しても安い。 まだ一度も描かれていない束縛が
+		// あれば矩形を出せないので全面へフォールバックする。
+		std::vector<ce::rect> pre;
+		const bool pre_ok = _impl->collect_anim_rects(pre);
 		if (_impl->anim.tick(dt)) {
 			_impl->needs_render_ = true;   // active 束縛が xform を書き換えた
-			// ⚠ 演出は全面ダーティのまま。 変換前後の占有矩形を毎フレーム
-			//    求める実装を試したが、 要素 bounds の取得コスト
-			//    (実測 +1.9ms/frame) がラスタの節約 (-0.8ms) を上回り、
-			//    さらに変換後の実描画範囲を取り切れず残像が出た。 矩形化には
-			//    proxy 変換適用後の実描画範囲を elements 側から取れる仕組みが
-			//    要る (将来課題)。
-			_impl->dirty_full_ = true;
+			std::vector<ce::rect> post;
+			const bool post_ok = _impl->collect_anim_rects(post);
+			if (pre_ok && post_ok) {
+				_impl->mark_rects_px(pre);
+				_impl->mark_rects_px(post);
+			} else {
+				_impl->dirty_full_ = true;
+			}
 		}
 
 		// 退場演出の完了を検出して終了確定 (退場×遷移の協調)。 exit 束縛だけを

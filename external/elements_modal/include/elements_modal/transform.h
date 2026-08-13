@@ -27,6 +27,7 @@
 #include <elements/support/context.hpp>
 #include <infra/support.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <type_traits>
@@ -56,9 +57,56 @@ struct xform_state
 		return tx == 0.0f && ty == 0.0f &&
 		       sx == 1.0f && sy == 1.0f && rot == 0.0f;
 	}
+
+	//! @name 部分再描画支援: 直近の描画で subject が占めた矩形 (未変換、
+	//!       user 座標)。 proxy が prepare_subject のたびに記録する。
+	//!
+	//! ホスト (オフスクリーン描画側) はこれと変換量から「変換後に実際に
+	//! 描かれる矩形」を算出できるので、 演出中でも全面ではなくその矩形だけを
+	//! 再描画できる。 要素ツリーを走査せずに済むのが要点 (走査は毎フレーム
+	//! 行うには高価すぎる)。
+	//! @{
+	float bl = 0.0f, bt = 0.0f, br = 0.0f, bb = 0.0f;
+	bool  bounds_valid = false;   //!< まだ一度も描かれていなければ false
+	//! @}
 };
 
 namespace ce = cycfi::elements;
+
+//! @brief xform_state に記録された subject 矩形へ変換を適用した外接矩形。
+//!        適用順は xform_base::prepare_subject と同一に保つこと
+//!        (平行移動 → ピボット基準で回転 → 拡縮)。
+//! @return 記録がまだ無ければ false (ホストは全面再描画へフォールバック)。
+inline bool transformed_bounds(const xform_state& st, ce::rect& out)
+{
+	if (!st.bounds_valid) return false;
+	if (st.identity()) {
+		out = ce::rect{ st.bl, st.bt, st.br, st.bb };
+		return true;
+	}
+	const float px = st.bl + st.ox * (st.br - st.bl);
+	const float py = st.bt + st.oy * (st.bb - st.bt);
+	const float cs = std::cos(st.rot), sn = std::sin(st.rot);
+	const float xs[4] = { st.bl, st.br, st.br, st.bl };
+	const float ys[4] = { st.bt, st.bt, st.bb, st.bb };
+	float l = 0, t = 0, r = 0, b = 0;
+	for (int i = 0; i < 4; ++i) {
+		// canvas は translate(px,py)→rotate→scale→translate(-px,-py) の順に
+		// 積むので、 点から見た適用順は「ピボット基準で拡縮 → 回転」。
+		// 最後に平行移動 (tx,ty) が乗る。
+		const float dx = (xs[i] - px) * st.sx;
+		const float dy = (ys[i] - py) * st.sy;
+		const float x = px + dx * cs - dy * sn + st.tx;
+		const float y = py + dx * sn + dy * cs + st.ty;
+		if (i == 0) { l = r = x; t = b = y; }
+		else {
+			l = std::min(l, x); r = std::max(r, x);
+			t = std::min(t, y); b = std::max(b, y);
+		}
+	}
+	out = ce::rect{ l, t, r, b };
+	return true;
+}
 
 //! @brief xform_state を canvas 変換として適用する proxy ベース。
 class xform_base : public ce::proxy_base
@@ -78,6 +126,11 @@ public:
 	{
 		auto& st = *_state;
 		auto& cnv = ctx.canvas;
+		// 部分再描画支援: subject の未変換矩形を控える (コストは代入のみ)。
+		// ホストはこれと変換量から実際に描かれる矩形を算出できる。
+		st.bl = ctx.bounds.left;   st.bt = ctx.bounds.top;
+		st.br = ctx.bounds.right;  st.bb = ctx.bounds.bottom;
+		st.bounds_valid = true;
 		cnv.save();
 		if (!st.identity()) {
 			// ピボットを描画矩形から算出 (device 座標)。
