@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <cstdlib>
 #include <memory>
 #include <string>
 
@@ -368,6 +369,7 @@ namespace cycfi { namespace elements
       //! 従来経路: アウトラインから毎フレーム描く。
       void fill_text_outline(canvas& cnv, std::string_view utf8_, point p)
       {
+         if (getenv("ELEMENTS_NO_OUTLINE_TEXT")) return;   // 一時診断
          std::string utf8(utf8_);
 
          auto* text = tvg::Text::gen();
