@@ -142,7 +142,8 @@ int main()
   - `"size"` (px 絶対) / `"size_scale"` + `"color": [r,g,b,a]` + `"font"` (comma 区切り families、 省略時は theme の text_box_font)。
   - `"align"`: `"left"` (既定) / `"center"` / `"right"`、 `"line_spacing"`: 行間追加 px (負値可)、 `"base"`: `"auto"` (既定) / `"ltr"` / `"rtl"`。
   - `"count_var": "varname"` — **文字送り**。 変数 store の整数値だけ先頭からクラスタ単位で表示する (-1 = 全部)。 ホストが `setVar("sub_count", "12")` するだけで進む。 **折返しは全文で確定してから count を適用する**ので送ってもリフローしない。 静的指定は `"count"`。
-  - 幅は親 (`hsize` / `floating` / `canvas` の `at` 等) が決める。 fit-to-content の親に置くと最小幅 200px を要求する点は `text_box` と同じ。
+  - 幅は親 (`hsize` / `floating` / `canvas` の `at` 等) が決める。 fit-to-content の親に置くと最小幅 200px を要求する点は `text_box` と同じ。 `floating` の絶対座標で置くなら top-level `"size"` を明示しないとダイアログが内容サイズまで縮んで**何も見えなくなる**点に注意。
+  - 仕組みとホスト側バックエンドの実装契約は [`docs/block-text.md`](../../docs/block-text.md) を参照。
 - `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
