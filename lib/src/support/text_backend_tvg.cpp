@@ -261,45 +261,28 @@ namespace cycfi { namespace elements
          out.descent = -tm.descent;
          out.width = run_width(text, utf8, st.letter_spacing);
 
-         // ink の AABB を得るために、 描画スケールだけ掛けて一度 update する
-         // (bounds は canvas に update されていないと取れない)。
-         tvg::Matrix scale_only = {sx, 0, 0, 0, sy, 0, 0, 0, 1};
-         text->transform(scale_only);
-         text->ref();   // probe / 本描画の remove で消えないように
-
-         float bx = 0, by = 0, bw = 0, bh = 0;
-         {
-            std::uint32_t probe_px = 0;
-            auto* probe = tvg::SwCanvas::gen(tvg::EngineOption::None);
-            probe->target(&probe_px, 1, 1, 1, tvg::ColorSpace::ARGB8888);
-            probe->add(text);
-            probe->update();
-            bool ok = text->bounds(&bx, &by, &bw, &bh) == tvg::Result::Success;
-            probe->remove();
-            delete probe;
-            if (!ok || bw <= 0 || bh <= 0)
-            {
-               text->unref();
-               return false;
-            }
-         }
-
-         // 1px の余白を付けて実ビットマップへ描く。
-         const int pad = 1;
-         const int w = int(std::ceil(bw)) + pad * 2;
-         const int h = int(std::ceil(bh)) + pad * 2;
+         // ビットマップのサイズはメトリクスから決める。 グリフは advance や
+         // ascent/descent をはみ出して描かれる (アクセント、 記号、 張り出し
+         // のあるフォント等) ので、 全周にフォントサイズの半分ぶん余白をとる。
+         // (bounds() で ink を測る手もあるが、 canvas に update されるまで
+         //  取得できないうえ、 そのための probe canvas は割に合わない)
+         const int pad = std::max(2, int(std::ceil(st.font_size * std::max(sx, sy) * 0.5f)));
+         const int w = int(std::ceil(out.width * sx)) + pad * 2;
+         const int h = int(std::ceil((out.ascent + out.descent) * sy)) + pad * 2;
          if (w <= 0 || h <= 0 || std::size_t(w) * h > run_cache_max_pixels)
          {
-            text->unref();
+            tvg::Paint::rel(text);
             return false;   // 大きすぎる run は従来経路で
          }
          out.pixels.reset(new std::uint32_t[std::size_t(w) * h]);
          std::fill_n(out.pixels.get(), std::size_t(w) * h, 0u);
 
-         tvg::Matrix placed = scale_only;
-         placed.e13 = -bx + pad;
-         placed.e23 = -by + pad;
+         // ベースライン開始点を (pad, pad + ascent*sy) に置く。
+         const float tx = float(pad);
+         const float ty = float(pad) + out.ascent * sy;
+         tvg::Matrix placed = {sx, 0, tx, 0, sy, ty, 0, 0, 1};
          text->transform(placed);
+         text->ref();   // 描画後の remove で消えないように
 
          auto* rc = tvg::SwCanvas::gen(tvg::EngineOption::None);
          rc->target(out.pixels.get(), w, w, h, tvg::ColorSpace::ARGB8888);
@@ -322,8 +305,9 @@ namespace cycfi { namespace elements
          out.pic = pic;
          out.w = w;
          out.h = h;
-         out.ox = bx - pad;
-         out.oy = by - pad;
+         // ビットマップ左上 - ペン原点 (device px)
+         out.ox = -tx;
+         out.oy = -ty;
          return true;
       }
 
