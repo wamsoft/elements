@@ -285,9 +285,11 @@ namespace cycfi { namespace elements
          out.pixels.reset(new std::uint32_t[std::size_t(w) * h]);
          std::fill_n(out.pixels.get(), std::size_t(w) * h, 0u);
 
-         // ベースライン開始点を (pad, pad + ascent*sy) に置く。
+         // tvg::Text の原点は行の**上端**なので (ベースラインではない —
+         // 呼出側が align 用に -ascent を足しているのはそのため)、 行の左上を
+         // 余白ぶんだけ内側に置く。
          const float tx = float(pad);
-         const float ty = float(pad) + out.ascent * sy;
+         const float ty = float(pad);
          tvg::Matrix placed = {sx, 0, tx, 0, sy, ty, 0, 0, 1};
          text->transform(placed);
          text->ref();   // 描画後の remove で消えないように
