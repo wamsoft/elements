@@ -1337,19 +1337,42 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	}
 	// "text_list": [...] + "index_var": "name" — テキストリストの指定番号を表示する
 	// 高度なラベル。 index_var の値 (整数文字列) を添字にリストから引く。 button の
-	// "vars_on_focus":{name:"N"} で focus 連動、 或いはホストの setVar で切替。 i18n は
-	// リスト自体を言語別に差し替える (別途)。 text_id/text_var と併用時は index_var 優先。
+	// "vars_on_focus":{name:"N"} で focus 連動、 或いはホストの setVar で切替。
+	// text_id/text_var と併用時は index_var 優先。
+	//
+	// "text_list_id": [...] は text_list の i18n 版で、 各要素が textID。
+	// index で引いてから StringStore で現在言語に解決するので、 言語切替でも
+	// 表示中の 1 本がその場で差し替わる (picker の "options_id" と同じ考え方)。
+	// text_list より優先。 両方書いた場合 text_list は「i18n 非対応ランタイム /
+	// 未知 id」用の静的フォールバックとして同 index が使われる。
 	std::string index_var = string_or(o, "index_var");
-	std::vector<std::string> text_list;
+	std::vector<std::string> text_list, text_list_id;
 	if (auto* la = get_array(o, "text_list")) {
 		for (auto& v : *la) if (v.is<std::string>()) text_list.push_back(v.get<std::string>());
 	}
-	if (!index_var.empty() && !text_list.empty()) {
-		int idx = 0;
-		if (auto* init = _vars->get(index_var)) idx = std::atoi(init->c_str());
+	if (auto* la = get_array(o, "text_list_id")) {
+		for (auto& v : *la) if (v.is<std::string>()) text_list_id.push_back(v.get<std::string>());
+	}
+	// index → 現在言語の表示文字列。 StringStore を引数で受けるのは、 この
+	// resolver を StringStore 自身が持つ closure にも入れるため (shared_ptr で
+	// capture すると自己参照サイクルになる)。
+	auto resolve_list_at = [ids = text_list_id, statics = text_list]
+	                       (StringStore* ss, int idx) -> std::string {
+		const std::vector<std::string>& primary = ids.empty() ? statics : ids;
+		if (primary.empty()) return {};
 		if (idx < 0) idx = 0;
-		if (idx >= static_cast<int>(text_list.size())) idx = static_cast<int>(text_list.size()) - 1;
-		text = text_list[idx];
+		if (idx >= static_cast<int>(primary.size())) idx = static_cast<int>(primary.size()) - 1;
+		if (ids.empty()) return statics[idx];
+		const std::string& tid = ids[idx];
+		if (ss && ss->has(tid)) return ss->resolve(tid);
+		if (idx < static_cast<int>(statics.size())) return statics[idx];
+		return tid;
+	};
+	const bool has_list = !text_list.empty() || !text_list_id.empty();
+	int list_idx = 0;
+	if (!index_var.empty() && has_list) {
+		if (auto* init = _vars->get(index_var)) list_idx = std::atoi(init->c_str());
+		text = resolve_list_at(_strings.get(), list_idx);
 	}
 	std::string locale = string_or(o, "locale", _default_locale);
 
@@ -1478,19 +1501,33 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			        text_id.c_str(), text_var.c_str());
 		}
 	}
-	// index_var + text_list: index 変化でリストから引いて set_text (指定番号表示ラベル)。
-	if (!index_var.empty() && !text_list.empty()) {
+	// index_var + text_list(_id): index 変化でリストから引いて set_text
+	// (指定番号表示ラベル)。 text_list_id なら言語切替でも同じ index を引き直す。
+	if (!index_var.empty() && has_list) {
 		if (auto sp = std::dynamic_pointer_cast<ce::text_writer>(out)) {
 			std::weak_ptr<ce::text_writer> w = sp;
-			auto list = text_list;
-			_vars->subscribe(index_var, [w, list](const std::string& v) {
-				if (auto p = w.lock()) {
-					int idx = std::atoi(v.c_str());
-					if (idx < 0) idx = 0;
-					if (idx >= static_cast<int>(list.size())) idx = static_cast<int>(list.size()) - 1;
-					p->set_text(list[idx]);
-				}
-			}, out);
+			// 現在 index。 index_var 側と言語切替側の両方から参照する。
+			auto idx_slot = std::make_shared<int>(list_idx);
+			// VariableStore に入る closure なので StringStore は shared_ptr 捕捉で
+			// よい (VariableStore → StringStore の一方向参照、 サイクルなし)。
+			// owner (out) は部分再描画のダーティ矩形用。
+			_vars->subscribe(index_var,
+				[w, idx_slot, ss = _strings, resolve_list_at](const std::string& v) {
+					if (auto p = w.lock()) {
+						*idx_slot = std::atoi(v.c_str());
+						p->set_text(resolve_list_at(ss.get(), *idx_slot));
+					}
+				}, out);
+			// i18n: 言語が変わったら現在 index を新言語で引き直す。 closure は
+			// StringStore 自身が持つので raw ポインタ捕捉 (options_id と同じ)。
+			if (!text_list_id.empty()) {
+				StringStore* ssp = _strings.get();
+				_strings->subscribe_language(
+					[w, idx_slot, ssp, resolve_list_at](const std::string&) {
+						if (auto p = w.lock())
+							p->set_text(resolve_list_at(ssp, *idx_slot));
+					});
+			}
 		}
 	}
 	// "id" があれば id→element に登録し、 ホストから label を参照可能にする

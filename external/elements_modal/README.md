@@ -134,7 +134,8 @@ int main()
 #### 入力 / state widget
 - `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。 追加バリエーション:
   - `"text_id": "id"` — i18n。 StringStore の textID で現在言語の訳文を表示、 言語切替に追従 (後述「i18n」節。 優先順位 text_id > text_var > 静的 text)。
-  - `"text_list": [s0, s1, ...]` + `"index_var": "varname"` — **指定番号表示ラベル**。 変数 store の値 (10 進 index 文字列) で text_list の 1 エントリを選んで表示し、 変数変更に追従する。 picker の `index_var` と同名にすると選択連動 (機種別 SPEC 表示等)。 範囲外 index は無視 (現状維持)。
+  - `"text_list": [s0, s1, ...]` + `"index_var": "varname"` — **指定番号表示ラベル**。 変数 store の値 (10 進 index 文字列) で text_list の 1 エントリを選んで表示し、 変数変更に追従する。 picker の `index_var` と同名にすると選択連動 (機種別 SPEC 表示等)。 範囲外 index は clamp。
+  - `"text_list_id": [id0, id1, ...]` — i18n。 `text_list` の各エントリを StringStore の textID で与える版 (`text_list` より優先)。 index で引いてから現在言語で解決するので、 **言語切替でも表示中の 1 本がその場で差し替わる** (picker の `options_id` と同じ考え方)。 `text_list` を併記した場合は「i18n 非対応ランタイム / 未知 id」用の静的 fallback として同 index が使われる。
 - `text_box` — 複数行・自動折返しの静的テキスト (cycfi `static_text_box`)。 `"text"` + `"size"` (px 絶対) / `"size_scale"` + `"color"` + `"mono"` (真で等幅フォント) + `"text_var"` (label と同じ変数 store 購読。 setVar で本文を丸ごと差替え)。 幅は親 (`hsize` 等) が決め、 高さは折返し結果に追従。 長文は親に `scroller` を置く (ライセンス表示等の長文ビューア向け、 行 label を大量に並べるより軽い)。
 - `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
@@ -395,7 +396,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 |---|---|---|---|
 | `text_var` | label | 読み | 表示文字列 |
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
-| `text_list` + `index_var` | label | 読み | 10 進 index (`"2"`) |
+| `text_list` / `text_list_id` + `index_var` | label | 読み | 10 進 index (`"2"`) |
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
 | `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
@@ -421,7 +422,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 
 - **picker → text_list / rect_list の選択連動**: picker に `index_var` を付け、 表示側 (label の text_list / atlas_image の rect_list) に同名の `index_var` を付けるだけで、 選択変更が表示に即時反映される (build 時に picker が初期 index を書き込むので初期表示も揃う)。 機種選択 → スクリーンショット / SPEC 表示のような連動 UI が JSON だけで組める。
 
-### i18n (`strings` / `lang` / `text_id` / `options_id`)
+### i18n (`strings` / `lang` / `text_id` / `text_list_id` / `options_id`)
 
 textID → 言語別文字列の対応表 (StringStore) による実行時多言語化。 言語切替は再 build なしで全 widget に反映される:
 
@@ -439,6 +440,7 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 
 - label / button 系の `"text_id": "menu.save"` — 現在言語の訳文を表示。 `"text"` は i18n 非対応ランタイム / 未知 id 向けの静的 fallback。
 - picker 系の `"options_id": ["opt.speed.slow", ...]` — options を textID で与える (`options` より優先)。 言語切替時は**選択 index を維持**したまま表示文字列だけ `set_options` で差し替わる。
+- label の `"text_list_id": ["help.save", ...]` (+ `index_var`) — 指定番号表示ラベルの textID 版 (`text_list` より優先)。 言語切替時は**表示中の index を維持**したまま引き直す。 メニューの説明文のように「focus 連動 + 多言語」な 1 本のラベルはこれで賄える。
 - 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
 - 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
 
