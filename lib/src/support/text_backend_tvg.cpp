@@ -36,7 +36,6 @@ namespace cycfi { namespace elements
 
       void fill_text(canvas& cnv, std::string_view utf8_, point p) override
       {
-         cnv.flush_shapes();
          std::string utf8(utf8_);
 
          auto* text = tvg::Text::gen();
@@ -105,16 +104,15 @@ namespace cycfi { namespace elements
          if (auto* clip_shape = cnv.make_clip_shape())
             text->clip(clip_shape);
 
-         cnv.tvg_canvas().add(text);
-         cnv.tvg_canvas().update();
-         cnv.tvg_canvas().draw(false);
-         cnv.tvg_canvas().sync();
-         cnv.tvg_canvas().remove();
+         // 同じバッチへ積むだけにして、 描画は次の flush にまとめる。
+         // テキスト 1 本ごとに update/draw/sync/remove を回すと、 ラベルが
+         // 並ぶ画面で ThorVG のサイクルがその本数だけ走って非常に高くつく
+         // (実測: ラベル 20 個で 15ms)。 描画順は add 順で保たれる。
+         cnv.add_pending(text);
       }
 
       void stroke_text(canvas& cnv, std::string_view utf8_, point p) override
       {
-         cnv.flush_shapes();
          std::string utf8(utf8_);
 
          auto* text = tvg::Text::gen();
@@ -147,11 +145,11 @@ namespace cycfi { namespace elements
          if (auto* clip_shape = cnv.make_clip_shape())
             text->clip(clip_shape);
 
-         cnv.tvg_canvas().add(text);
-         cnv.tvg_canvas().update();
-         cnv.tvg_canvas().draw(false);
-         cnv.tvg_canvas().sync();
-         cnv.tvg_canvas().remove();
+         // 同じバッチへ積むだけにして、 描画は次の flush にまとめる。
+         // テキスト 1 本ごとに update/draw/sync/remove を回すと、 ラベルが
+         // 並ぶ画面で ThorVG のサイクルがその本数だけ走って非常に高くつく
+         // (実測: ラベル 20 個で 15ms)。 描画順は add 順で保たれる。
+         cnv.add_pending(text);
       }
 
       text_metrics measure_text(canvas& cnv, char const* utf8) override

@@ -57,6 +57,13 @@ namespace cycfi { namespace elements
 
       // Access for text backends
       void              flush_shapes();
+
+      // Add a paint to the current batch and mark it pending, so it is drawn
+      // by the next flush together with the shapes around it (draw order =
+      // add order). A text backend should use this instead of running its own
+      // add/update/draw/sync/remove cycle: one ThorVG cycle per frame is far
+      // cheaper than one per text run.
+      void              add_pending(tvg::Paint* paint);
       tvg::Shape*       make_clip_shape() const;
       struct canvas_state;
       canvas_state const& get_state() const;

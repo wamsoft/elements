@@ -146,6 +146,14 @@ namespace cycfi { namespace elements
       flush_shapes();
    }
 
+   void canvas::add_pending(tvg::Paint* paint)
+   {
+      if (!paint || !_tvg_canvas)
+         return;
+      _tvg_canvas->add(paint);
+      _has_pending = true;
+   }
+
    void canvas::flush_shapes()
    {
       if (_has_pending && _tvg_canvas)
