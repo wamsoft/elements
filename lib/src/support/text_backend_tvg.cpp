@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -105,6 +106,14 @@ namespace cycfi { namespace elements
             _pixels = 0;
          }
 
+         //! この文字列を前にも見たか記録する。 2 回目以降なら true
+         //! (= キャッシュに載せる価値がある)。
+         bool note_seen(run_key const& k)
+         {
+            if (_seen.size() > 4096) _seen.clear();   // 使い捨て文字列の掃除
+            return !_seen.insert(k).second;
+         }
+
          run_entry* find(run_key const& k, std::uint64_t gen)
          {
             auto it = _runs.find(k);
@@ -139,6 +148,7 @@ namespace cycfi { namespace elements
          }
 
          std::map<run_key, run_entry> _runs;   // node-based: 参照が安定
+         std::set<run_key> _seen;              // 1 度目に見た文字列
          std::size_t _pixels = 0;
       };
 
@@ -204,6 +214,11 @@ namespace cycfi { namespace elements
          run_entry* ent = text_run_cache().find(key, gen);
          if (!ent)
          {
+            // 初めて見る文字列はキャッシュに載せず従来経路で描く。 毎フレーム
+            // 変わるテキスト (HUD のカウンタ等) はどうせ必ずミスするので、
+            // 載せるとオフスクリーン描画のぶん却って遅くなる。 2 回目に現れた =
+            // 使い回される見込みがある、 と判断してからラスタライズする。
+            if (!text_run_cache().note_seen(key)) return false;
             run_entry made;
             if (!rasterize_run(cnv, utf8, sx, sy, *fill_c, made)) return false;
             ent = &text_run_cache().insert(key, std::move(made), gen);
