@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -27,6 +28,12 @@ namespace cycfi { namespace elements
          auto dot = path.rfind('.');
          auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
          return path.substr(start, end - start);
+      }
+
+      void dbg(const char* why)
+      {
+         static std::map<std::string, int> seen;
+         if (seen[why]++ < 3) fprintf(stderr, "[textcache] bail: %s ---\n", why);
       }
 
       auto clamp8 = [](float v) -> uint8_t {
@@ -172,14 +179,14 @@ namespace cycfi { namespace elements
          // 変換行列が「スケール + 平行移動」でなければ従来経路
          // (回転した文字はアウトラインから描いた方が綺麗)。
          if (st.matrix.e12 != 0.0f || st.matrix.e21 != 0.0f)
-            return false;
+            { dbg("skew"); return false; }
          const float sx = st.matrix.e11, sy = st.matrix.e22;
          if (sx <= 0.0f || sy <= 0.0f)
-            return false;
+            { dbg("scale<=0"); return false; }
 
          auto const* fill_c = std::get_if<color>(&st.fill_style_data);
          if (!fill_c)
-            return false;   // グラデーション塗り等は従来経路
+            { dbg("nocolor"); return false; }
 
          std::string utf8(utf8_);
          if (utf8.empty())
@@ -204,7 +211,7 @@ namespace cycfi { namespace elements
          {
             run_entry made;
             if (!rasterize_run(cnv, utf8, sx, sy, *fill_c, made))
-               return false;
+               { dbg("raster-fail"); return false; }
             ent = &text_run_cache().insert(key, std::move(made), gen);
          }
          if (!ent->pic)
@@ -214,7 +221,7 @@ namespace cycfi { namespace elements
          // 二重 add できない) ので、 2 回目以降は従来経路へ逃がす。
          if (ent->gen != gen) { ent->gen = gen; ent->used = 0; }
          if (ent->used > 0)
-            return false;
+            { dbg("dup-in-batch"); return false; }
          ++ent->used;
 
          // 配置: ペン原点を device 空間へ移し、 ink オフセットを足す。
@@ -272,7 +279,8 @@ namespace cycfi { namespace elements
          if (w <= 0 || h <= 0 || std::size_t(w) * h > run_cache_max_pixels)
          {
             tvg::Paint::rel(text);
-            return false;   // 大きすぎる run は従来経路で
+            dbg("too-big");
+            return false;
          }
          out.pixels.reset(new std::uint32_t[std::size_t(w) * h]);
          std::fill_n(out.pixels.get(), std::size_t(w) * h, 0u);
@@ -299,6 +307,7 @@ namespace cycfi { namespace elements
                        tvg::ColorSpace::ARGB8888, false) != tvg::Result::Success)
          {
             tvg::Paint::rel(pic);
+            dbg("pic-load-fail");
             return false;
          }
          pic->ref();
