@@ -318,7 +318,7 @@ struct overlay_session::impl
 	void mark_dirty_rect_px(float l, float t, float r, float b)
 	{
 		needs_render_ = true;
-		if (dirty_full_) return;
+		if (dirty_full_) return;   // 既に全面なら矩形は無意味
 		if (dirty_px_r_ <= dirty_px_l_ || dirty_px_b_ <= dirty_px_t_) {
 			dirty_px_l_ = l; dirty_px_t_ = t; dirty_px_r_ = r; dirty_px_b_ = b;
 		} else {
@@ -527,6 +527,7 @@ struct overlay_session::impl
 	{
 		// widget の値変化 / click は見た目が変わる (checkbox マーク、 押下状態等)。
 		needs_render_ = true;
+		dirty_full_ = true;   // 範囲不明 (全面)
 		// 外部 callback はあらゆるイベント (state 変化 + 全 button click) に
 		// 対して呼ぶ。 これで Dialog::onAction 経路で TJS 側が反応できる。
 		std::string id_s(id);
@@ -562,6 +563,7 @@ struct overlay_session::impl
 		if (finished_ || exiting_) return;   // 既に退場処理中
 		accumulated.action = std::move(action);
 		needs_render_ = true;   // exit 演出の初期値適用ぶん (即終了なら未使用で無害)
+		dirty_full_ = true;   // 範囲不明 (全面)
 		if (!anim.empty() && anim.count(anim_binding::trigger::exit) > 0) {
 			// exit 束縛を再生開始。 完了は update 側で検出して finished_ に。
 			anim.fire(anim_binding::trigger::exit);
@@ -766,6 +768,7 @@ void overlay_session::focus_by_id(const std::string& id)
 		return;
 	}
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->view->focus(it->second);
 }
 
@@ -781,6 +784,7 @@ bool overlay_session::activate_by_id(const std::string& id)
 	auto it = _impl->id_map.find(id);
 	if (it == _impl->id_map.end()) return false;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// focus は遅延タスクなので、 poll() で即時適用してから Enter を送る。
 	_impl->view->focus(it->second);
 	_impl->view->poll();
@@ -796,6 +800,7 @@ void overlay_session::set_language(const std::string& lang)
 	// 実際に言語が変わったときだけ再描画 (set_text 済 label の反映)。
 	if (_impl->set_language_fn && _impl->set_language_fn(lang)) {
 		_impl->needs_render_ = true;
+		_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	}
 }
 
@@ -815,7 +820,11 @@ void overlay_session::set_var(const std::string& name, const std::string& value)
 	// 積まれるので、 ここで全面ダーティにはしない (部分再描画)。
 	_impl->var_change_hits = 0;
 	if (_impl->set_var_fn && _impl->set_var_fn(name, value)) {
-		if (_impl->var_change_hits == 0) _impl->needs_render_ = true;
+		if (_impl->var_change_hits == 0) {
+			// どの要素が変わったか特定できなかった → 全面
+			_impl->needs_render_ = true;
+			_impl->dirty_full_ = true;
+		}
 	}
 }
 
@@ -824,6 +833,7 @@ void overlay_session::play_animation(const std::string& trigger,
 {
 	if (!_impl || _impl->anim.empty()) return;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->anim.fire(trigger_from_string(trigger), id);
 }
 
@@ -831,6 +841,7 @@ void overlay_session::notify_view_resize(int new_view_width, int new_view_height
 {
 	if (!_impl->view) return;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->view_w = new_view_width;
 	_impl->view_h = new_view_height;
 	_impl->view->size(ce::extent{
@@ -881,12 +892,6 @@ bool overlay_session::measure_content(int& out_w, int& out_h) const
 bool overlay_session::update()
 {
 	if (!_impl->view || !_impl->started || _impl->finished_) return false;
-
-	// update() の外 (入力転送 / set_var / play_animation 等) で立った
-	// needs_render_ は位置を特定できないため全面ダーティへ昇格する。
-	// rect を特定できるのは下の take_refresh_request (view の refresh(rect))
-	// 経由だけ — 契機側のコードを変えずに部分再描画の正しさを保つ。
-	if (_impl->needs_render_) _impl->dirty_full_ = true;
 
 	// focus poll: 変数連動 label の text を更新する (focus 変化時のみ書込。
 	// 実際に値が変わった label の見た目変化は下の focus 変化ダーティで拾う)。
@@ -995,6 +1000,7 @@ bool overlay_session::needs_render() const
 void overlay_session::invalidate()
 {
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 }
 
 bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
@@ -1164,6 +1170,7 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 {
 	if (!active()) return;
 	_impl->needs_render_ = true;   // 入力は押下状態等の見た目を変え得る
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// mouse バインド (既定: 右click→cancel)。 マッチしたら action を発火して
 	// クリック自体は消費する (widget へは流さない)。 "none" は消費のみ。
 	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
@@ -1189,6 +1196,7 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 {
 	if (!active()) return;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// mouse バインド対象ボタンは down 側で消費済みなので up も揃えて消費。
 	if (_impl->mouse_actions.count(static_cast<int>(button))) {
 		return;
@@ -1212,6 +1220,7 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	// hover の hilite は id 無し widget でも変わり得るため、 移動イベント自体を
 	// ダーティ扱いにする (移動が無ければイベントも来ない = アイドルは保たれる)。
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->last_nav_source = impl::nav_source::mouse;
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
@@ -1233,6 +1242,7 @@ void overlay_session::on_mouse_wheel(float dx, float dy,
 {
 	if (!active()) return;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	auto p = _impl->to_view(surface_mouse_x, surface_mouse_y);
 	// wheel バインド (既定: up/down→scroll_up/down = 従来の view->scroll 素通し)。
 	// scroll_* は生 delta のまま流して滑らかさを保存、 それ以外の action
@@ -1258,6 +1268,7 @@ void overlay_session::on_mouse_leave()
 {
 	if (!active()) return;
 	_impl->needs_render_ = true;   // hover 解除で hilite が戻る
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->view->cursor(_impl->last_cursor, ce::cursor_tracking::leaving);
 }
 
@@ -1265,6 +1276,7 @@ bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->last_nav_source = impl::nav_source::key;
 	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
 	// escape→cancel が view の key shortcut (force=true) として登録されて
@@ -1282,6 +1294,7 @@ bool overlay_session::on_key_up(ce::key_code key, int mods)
 {
 	if (!active()) return false;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	ce::key_info ki{
 		.key = key,
 		.action = ce::key_action::release,
@@ -1294,6 +1307,7 @@ void overlay_session::on_text_input(const char* utf8_text)
 {
 	if (!active() || !utf8_text) return;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	const char* p = utf8_text;
 	const char* end = p + std::strlen(p);
 	while (p < end) {
@@ -1309,6 +1323,7 @@ bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 	if (!active()) return false;
 	if (button == ce::pad_button::unknown) return false;
 	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->last_nav_source = impl::nav_source::key;
 	_impl->view->pad_button_event({button, down});
 	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
@@ -1323,6 +1338,7 @@ void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
 	// focus 変化として別途ダーティになるが、 入力時点でも立てておく。
 	if (std::fabs(value) >= _impl->view->stick_deadzone())
 		_impl->needs_render_ = true;
+		_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// スティック/dpad 軸によるナビもキー系入力として扱う (deadzone 未満の
 	// 微小ノイズは無視して mouse 判定を上書きしない)。
 	if (value > 0.5f || value < -0.5f)
