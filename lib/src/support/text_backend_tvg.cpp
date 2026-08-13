@@ -10,7 +10,6 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
-#include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -28,14 +27,6 @@ namespace cycfi { namespace elements
          auto dot = path.rfind('.');
          auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
          return path.substr(start, end - start);
-      }
-
-      inline const char* nl() { static const char s[2] = { char(10), 0 }; return s; }
-
-      void dbg(const char* why)
-      {
-         static std::map<std::string, int> seen;
-         if (seen[why]++ < 3) fprintf(stderr, "[textcache] bail: %s ---\n", why);
       }
 
       auto clamp8 = [](float v) -> uint8_t {
@@ -176,19 +167,21 @@ namespace cycfi { namespace elements
       //! 塗りが単色でない、 ラスタライズ失敗) なら false を返して従来経路へ。
       bool fill_text_cached(canvas& cnv, std::string_view utf8_, point p)
       {
+         // 逃げ道: 環境変数で従来経路に固定できる (見た目の突き合わせ用)。
+         static const bool disabled = getenv("ELEMENTS_TEXTCACHE_OFF") != nullptr;
+         if (disabled) return false;
+
          auto const& st = cnv.get_state();
 
          // 変換行列が「スケール + 平行移動」でなければ従来経路
          // (回転した文字はアウトラインから描いた方が綺麗)。
-         if (st.matrix.e12 != 0.0f || st.matrix.e21 != 0.0f)
-            { dbg("skew"); return false; }
+         if (st.matrix.e12 != 0.0f || st.matrix.e21 != 0.0f) return false;
          const float sx = st.matrix.e11, sy = st.matrix.e22;
          if (sx <= 0.0f || sy <= 0.0f)
-            { dbg("scale<=0"); return false; }
+            return false;
 
          auto const* fill_c = std::get_if<color>(&st.fill_style_data);
-         if (!fill_c)
-            { dbg("nocolor"); return false; }
+         if (!fill_c) return false;
 
          std::string utf8(utf8_);
          if (utf8.empty())
@@ -212,8 +205,7 @@ namespace cycfi { namespace elements
          if (!ent)
          {
             run_entry made;
-            if (!rasterize_run(cnv, utf8, sx, sy, *fill_c, made))
-               { dbg("raster-fail"); return false; }
+            if (!rasterize_run(cnv, utf8, sx, sy, *fill_c, made)) return false;
             ent = &text_run_cache().insert(key, std::move(made), gen);
          }
          if (!ent->pic)
@@ -284,7 +276,6 @@ namespace cycfi { namespace elements
          if (w <= 0 || h <= 0 || std::size_t(w) * h > run_cache_max_pixels)
          {
             tvg::Paint::rel(text);
-            dbg("too-big");
             return false;
          }
          out.pixels.reset(new std::uint32_t[std::size_t(w) * h]);
@@ -305,15 +296,6 @@ namespace cycfi { namespace elements
          rc->update();
          rc->draw(false);
          rc->sync();
-         {
-            std::size_t nz = 0;
-            for (std::size_t i = 0; i < std::size_t(w) * h; ++i)
-               if (out.pixels[i] != 0) ++nz;
-            static int n = 0;
-            if (n++ < 3)
-               fprintf(stderr, "[textcache] raster w=%d h=%d nz=%zu asc=%.1f desc=%.1f wid=%.1f sx=%.2f ---%s",
-                       w, h, nz, out.ascent, out.descent, out.width, sx, "\n");
-         }
          rc->remove();
          delete rc;
          text->unref();   // ここまでで役目終わり (ビットマップに焼けた)
@@ -323,7 +305,6 @@ namespace cycfi { namespace elements
                        tvg::ColorSpace::ARGB8888, true) != tvg::Result::Success)
          {
             tvg::Paint::rel(pic);
-            dbg("pic-load-fail");
             return false;
          }
          pic->ref();
@@ -378,7 +359,6 @@ namespace cycfi { namespace elements
       //! 従来経路: アウトラインから毎フレーム描く。
       void fill_text_outline(canvas& cnv, std::string_view utf8_, point p)
       {
-         if (getenv("ELEMENTS_NO_OUTLINE_TEXT")) return;   // 一時診断
          std::string utf8(utf8_);
 
          auto* text = tvg::Text::gen();
