@@ -325,7 +325,7 @@ namespace cycfi { namespace elements
 
          auto* pic = tvg::Picture::gen();
          if (pic->load(out.pixels.get(), std::uint32_t(w), std::uint32_t(h),
-                       tvg::ColorSpace::ARGB8888, false) != tvg::Result::Success)
+                       tvg::ColorSpace::ARGB8888, true) != tvg::Result::Success)
          {
             tvg::Paint::rel(pic);
             dbg("pic-load-fail");
