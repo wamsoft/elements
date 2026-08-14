@@ -438,7 +438,9 @@ bool on = elements_modal::focus_ring_enabled();
 | `selected_var` (+`selected_value`) | atlas_choice / radio_button | **双方向** (var == selected_value で選択 / クリックで var へ selected_value を書き戻し) | 任意 string (`selected_value` 既定 `"1"`) |
 | `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
+| `opacity_var` | 全 widget 共通 | 読み | 不透明度 0..1 の 10 進小数 (`"0.6"`) |
 
+- `"opacity"` (0..1、 既定 1.0) / `"opacity_var"` — **要素単位の不透明度**。 canvas の global_alpha を子の描画中だけ掛ける (オフスクリーン合成ではなく、 その要素が描く fill / stroke / text / image の alpha に乗算するので軽い)。 字幕窓の下地だけ薄くする、 といった用途向け。 `opacity_var` で変数連動でき、 ホストが `setVar("sub_bg_alpha", "0.6")` するだけで変わる。 0 で描画自体を省く。
 - `at_var` — canvas 子要素の配置 rect を変数で駆動する (キャラ位置マーカー等の座標アニメ用機構)。 `"x,y"` はサイズ維持で位置のみ、 `"x,y,w,h"` は矩形ごと差し替え。 初期値は `"at"`。 build 時に変数へ既値があれば即適用。 パース不能 / 要素不足の値は無視 (現状維持)。
 
   ```jsonc

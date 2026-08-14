@@ -631,6 +631,10 @@ public:
 	// 積む。 無ければ el をそのまま返す。 Phase A は enter 発火のみ。
 	element_ptr apply_animation(const picojson::object& o, element_ptr el);
 
+	// 要素に "opacity" / "opacity_var" があれば不透明度 proxy で包む。
+	// 無ければ el をそのまま返す。
+	element_ptr apply_opacity(const picojson::object& o, element_ptr el);
+
 	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
 	std::vector<anim_binding> take_animations() { return std::move(_animations); }
 
@@ -1059,6 +1063,42 @@ element_ptr apply_focus_point(const picojson::object& o, element_ptr el)
 
 } // anonymous (focus_point)
 
+//---------------------------------------------------------------------------
+// "opacity" / "opacity_var" — 要素単位の不透明度
+//
+// canvas の global_alpha (0..1) を子の描画中だけ掛ける proxy。 オフスクリーン
+// 合成ではなく「その要素が描く fill / stroke / text / image の alpha に乗算」
+// なので軽い。 字幕窓の下地だけ薄くする、 といった用途向け
+// (設定で透過率を変えられるよう opacity_var で変数連動もできる)。
+//---------------------------------------------------------------------------
+namespace {
+
+template <typename Subject>
+class opacity_element : public ce::proxy<Subject>
+{
+public:
+	opacity_element(Subject subject, std::shared_ptr<float> a)
+	 : ce::proxy<Subject>(std::move(subject)), _alpha(std::move(a))
+	{}
+
+	void draw(ce::context const& ctx) override
+	{
+		const float a = _alpha ? *_alpha : 1.0f;
+		if (a >= 1.0f) { ce::proxy<Subject>::draw(ctx); return; }
+		if (a <= 0.0f) return;                    // 完全透明なら描かない
+		auto& cnv = ctx.canvas;
+		const float prev = cnv.global_alpha();
+		cnv.global_alpha(prev * a);
+		ce::proxy<Subject>::draw(ctx);
+		cnv.global_alpha(prev);
+	}
+
+private:
+	std::shared_ptr<float> _alpha;
+};
+
+} // anonymous (opacity)
+
 element_ptr LayoutBuilder::build(const picojson::value& v)
 {
 	if (!v.is<picojson::object>()) return nullptr;
@@ -1070,7 +1110,32 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_animation(o, std::move(el));
 	// "focus_point" 指定があれば focus hot point 上書き proxy で包む。
 	if (el) el = apply_focus_point(o, std::move(el));
+	// "opacity" / "opacity_var" 指定があれば不透明度 proxy で包む。
+	if (el) el = apply_opacity(o, std::move(el));
 	return el;
+}
+
+element_ptr LayoutBuilder::apply_opacity(const picojson::object& o, element_ptr el)
+{
+	const bool has_val = get_field(o, "opacity") != nullptr;
+	std::string var = string_or(o, "opacity_var");
+	if (!has_val && var.empty()) return el;
+
+	auto alpha = std::make_shared<float>(
+		static_cast<float>(number_or(o, "opacity", 1.0)));
+	auto clamp01 = [](float f) { return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f); };
+	*alpha = clamp01(*alpha);
+
+	if (!var.empty()) {
+		// 変数 store 連動。 値は 0..1 の 10 進小数。 パース不能な値は無視 (現状維持)。
+		if (auto* init = _vars->get(var)) {
+			try { *alpha = clamp01(std::stof(*init)); } catch (...) {}
+		}
+		_vars->subscribe(var, [alpha, clamp01](const std::string& v) {
+			try { *alpha = clamp01(std::stof(v)); } catch (...) {}
+		}, el);
+	}
+	return ce::share(opacity_element(ce::hold_any(std::move(el)), alpha));
 }
 
 element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
