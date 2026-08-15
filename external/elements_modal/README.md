@@ -144,6 +144,9 @@ int main()
   - `"text_id": "id"` — i18n。 StringStore の textID で現在言語の訳文を表示、 言語切替に追従 (後述「i18n」節。 優先順位 text_id > text_var > 静的 text)。
   - `"text_list": [s0, s1, ...]` + `"index_var": "varname"` — **指定番号表示ラベル**。 変数 store の値 (10 進 index 文字列) で text_list の 1 エントリを選んで表示し、 変数変更に追従する。 picker の `index_var` と同名にすると選択連動 (機種別 SPEC 表示等)。 範囲外 index は clamp。
   - `"text_list_id": [id0, id1, ...]` — i18n。 `text_list` の各エントリを StringStore の textID で与える版 (`text_list` より優先)。 index で引いてから現在言語で解決するので、 **言語切替でも表示中の 1 本がその場で差し替わる** (picker の `options_id` と同じ考え方)。 `text_list` を併記した場合は「i18n 非対応ランタイム / 未知 id」用の静的 fallback として同 index が使われる。
+  - **改行 (`\n`) を含む text は複数行として扱う**。 行ごとに描画し、 高さも行数ぶん確保するので、 `vtile` の子に置いても後続ウィジェットと重ならない。 幅は最長行。 縦アライン (`top`/`middle`/`bottom`) はブロック全体に効く。
+    - ただし `label` は**自動折返しをしない** (明示した `\n` でのみ改行する)。 与えられた幅で折り返したいなら `text_area` (禁則付き・ホストのテキストエンジンと改行位置が一致) か `text_box` (cycfi 内蔵 wrap) を使う。
+    - `text_var` / `text_id` で**行数が変わる**差し替えをすると、 高さは次に親がレイアウトし直すまで更新されない。 行数が動くものは `text_area` を使うか、 行ごとの label に分けるのが確実。
 - `text_box` — 複数行・自動折返しの静的テキスト (cycfi `static_text_box`)。 `"text"` + `"size"` (px 絶対) / `"size_scale"` + `"color"` + `"mono"` (真で等幅フォント) + `"text_var"` (label と同じ変数 store 購読。 setVar で本文を丸ごと差替え)。 幅は親 (`hsize` 等) が決め、 高さは折返し結果に追従。 長文は親に `scroller` を置く (ライセンス表示等の長文ビューア向け、 行 label を大量に並べるより軽い)。
 - `text_area` — 矩形に流し込む静的テキスト (lib の `block_text_box`)。 折返しを**ホストが差し込んだ block text バックエンド**に任せるのが `text_box` との違いで、 ホスト側のテキストエンジンと**改行位置が一致する** (吉里吉里Z なら `Layer.drawShapedTextArea` と同一。 行頭行末禁則が効く)。 バックエンド未注入なら lib 内蔵の幅貪欲 wrap にフォールバックする。 字幕 / セリフ窓向け。
   - `"text"` / `"text_id"` / `"text_var"` / `"text_list"` + `"text_list_id"` + `"index_var"` — label と同規約 (優先順位 index_var > text_id > text_var > 静的 text)。 指定番号表示も i18n の言語切替追従も label と同じ挙動。
