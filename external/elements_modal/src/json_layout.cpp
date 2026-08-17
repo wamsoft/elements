@@ -250,6 +250,80 @@ const picojson::array* get_array(const picojson::object& o, const char* key)
 }
 
 //---------------------------------------------------------------------------
+// value_display — スライダ等の 0..1 値を «人が読む数値» の文字列にする整形指定。
+//
+//   "display": { "min": 0, "max": 100, "step": 1, "digits": 0,
+//                "pad": 0, "prefix": "", "suffix": "%" }
+//
+// pos (0..1) を min..max へ写し、 step (>0) があればその倍数へ丸め、 digits 桁の
+// 10 進文字列にして prefix/suffix を付ける。 pad>0 なら整数部を 0 埋め (音量 "05"
+// のような固定桁表示用)。 "display" 自体が無ければ既定 (0..100 / 整数 / 装飾なし)
+// で、 表示変数を指定したときだけ使われる。
+//---------------------------------------------------------------------------
+struct value_display
+{
+	double min = 0.0;
+	double max = 100.0;
+	double step = 0.0;
+	int digits = 0;
+	int pad = 0;
+	std::string prefix;
+	std::string suffix;
+
+	std::string format(double pos) const
+	{
+		if (pos < 0.0) pos = 0.0;
+		if (pos > 1.0) pos = 1.0;
+		double v = min + pos * (max - min);
+		if (step > 0.0) v = std::round(v / step) * step;
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "%.*f", digits < 0 ? 0 : digits, v);
+		std::string body(buf);
+		if (pad > 0) {
+			// 0 埋めは整数部のみ (符号は先頭に残す)。
+			std::string sign;
+			if (!body.empty() && (body[0] == '-' || body[0] == '+')) {
+				sign = body.substr(0, 1);
+				body.erase(0, 1);
+			}
+			std::size_t int_len = body.find('.');
+			if (int_len == std::string::npos) int_len = body.size();
+			while (int_len < static_cast<std::size_t>(pad)) {
+				body.insert(body.begin(), '0');
+				++int_len;
+			}
+			body = sign + body;
+		}
+		return prefix + body + suffix;
+	}
+};
+
+value_display parse_value_display(const picojson::object& o)
+{
+	value_display d;
+	auto* v = get_field(o, "display");
+	if (!v || !v->is<picojson::object>()) return d;
+	const auto& d_o = v->get<picojson::object>();
+	d.min    = number_or(d_o, "min", d.min);
+	d.max    = number_or(d_o, "max", d.max);
+	d.step   = number_or(d_o, "step", d.step);
+	d.digits = static_cast<int>(number_or(d_o, "digits", d.digits));
+	d.pad    = static_cast<int>(number_or(d_o, "pad", d.pad));
+	d.prefix = string_or(d_o, "prefix");
+	d.suffix = string_or(d_o, "suffix");
+	return d;
+}
+
+// スライダの «生値» 変数に書く 10 進文字列 (0..1)。 桁を抑えて同値書込での
+// 無駄な subscriber 発火を防ぐ (VariableStore::set は同値なら no-op)。
+std::string fmt_slider_raw(double pos)
+{
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "%.4f", pos);
+	return std::string(buf);
+}
+
+//---------------------------------------------------------------------------
 // フォントサイズ解決ヘルパ。
 //
 // "size" / "font_size" は **絶対ピクセル**。 "size_scale" / "font_size_scale"
@@ -2572,9 +2646,68 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// スライダ (slider / slider_with_range / atlas_slider) の変数連動をまとめて仕込む。
+//
+//   widget → var : 値変化で "value_var" (生 0..1 の 10 進文字列) と
+//                  "display_var" (value_display で整形した表示用文字列) を書く。
+//   var → widget : "value_var" の外部変更で値を反映し (通知のみ・on_change は
+//                  発火しない)、 display_var も追従させる。
+//
+// これで «スライダの値を数値で表示» が label の "text_var": display_var だけで
+// 組める (ホストのコールバック実装が不要)。 fill 形式は gauge の描画値も更新。
+// 既存の on_change (ホストへの event callback / fill ゲージ更新) は保持して
+// 変数更新の後に呼ぶ。 VariableStore::set は同値なら no-op なので、
+// var → widget → var のエコーは 1 往復で自然に止まる。
+//---------------------------------------------------------------------------
+namespace {
+void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
+                      const std::shared_ptr<ce::basic_slider_base>& sb,
+                      const std::string& value_var,
+                      const std::string& display_var,
+                      const value_display& disp,
+                      const std::shared_ptr<ce::atlas_progress>& gauge = {})
+{
+	if (!vars || !sb) return;
+	if (value_var.empty() && display_var.empty()) return;
+
+	// widget → var
+	auto prev = sb->on_change;
+	sb->on_change = [prev, vars, value_var, display_var, disp](double pos) {
+		if (!value_var.empty()) vars->set(value_var, fmt_slider_raw(pos));
+		if (!display_var.empty()) vars->set(display_var, disp.format(pos));
+		if (prev) prev(pos);
+	};
+
+	// 初期値の種まき (label が最初のフレームから正しい数値を出せるように)。
+	const double init = sb->value();
+	if (!value_var.empty() && !vars->get(value_var))
+		vars->set_initial(value_var, fmt_slider_raw(init));
+	if (!display_var.empty()) vars->set(display_var, disp.format(init));
+
+	// var → widget (+ display 追従)
+	if (!value_var.empty()) {
+		std::weak_ptr<ce::basic_slider_base> ws = sb;
+		std::weak_ptr<ce::atlas_progress> wg = gauge;
+		vars->subscribe(value_var, [ws, wg, vars, display_var, disp](const std::string& v) {
+			double d = 0.0;
+			try { d = std::stod(v); } catch (...) { return; }
+			if (d < 0.0) d = 0.0;
+			if (d > 1.0) d = 1.0;
+			if (auto s = ws.lock()) s->value(d);
+			if (auto g = wg.lock()) g->set_value(d);
+			if (!display_var.empty()) vars->set(display_var, disp.format(d));
+		});
+	}
+}
+} // anonymous
+
+//---------------------------------------------------------------------------
 // slider — 0..1 範囲の素のスライダ
-//   { "type": "slider", "id": "...", "initial": 0.5 }
-// 値変化で event_callback(id, false, double pos)。
+//   { "type": "slider", "id": "...", "initial": 0.5,
+//     "value_var": "vol", "display_var": "vol_text",
+//     "display": { "min": 0, "max": 100, "suffix": "%" } }
+// 値変化で event_callback(id, false, double pos)。 value_var / display_var は
+// wire_slider_vars 参照 (数値表示は label の "text_var": display_var で受ける)。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 {
@@ -2600,6 +2733,8 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
+		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
+		                 string_or(o, "display_var"), parse_value_display(o));
 	}
 	note_vars_on_focus(o, id);
 	return shared;
@@ -2647,6 +2782,14 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	note_initial_focus(o, rs.focus);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(rs.focus)) {
 		note_focusable(id, sb);
+		// 表示整形の既定はこの widget の min/max スケール ("display" で上書き可)。
+		value_display disp = parse_value_display(o);
+		if (!get_field(o, "display")) {
+			disp.min = static_cast<double>(min_v);
+			disp.max = static_cast<double>(max_v);
+		}
+		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
+		                 string_or(o, "display_var"), disp);
 	}
 	note_vars_on_focus(o, id);
 	return rs.widget;
@@ -4008,9 +4151,17 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 //     "track": [x, y, w, h], "fill": [x, y, w, h], "fill_at": [dx, dy, w, h],
 //     "initial": 0.5 }
 //
-// どちらの形式も "value_var" (任意) で VariableStore と連動: 変数変更で
-// 値が追従し (通知のみ、 イベントは発火しない)、 ユーザ操作の on_change は
-// 通常どおり発火する。 値は "0.75" 形式の 10 進文字列。
+// どちらの形式も "value_var" (任意) で VariableStore と **双方向**連動: 変数変更で
+// 値が追従し (通知のみ、 イベントは発火しない)、 ユーザ操作では on_change が発火して
+// 変数側も更新される。 値は "0.75" 形式の 10 進文字列 (常に 0..1)。
+//
+// 数値表示: "display_var" を指定すると、 値を "display" の指定で整形した文字列を
+// その変数へ書く。 label 側に "text_var": <display_var> を置けば «スライダに連動した
+// 数値表示» になる (ホスト実装不要)。
+//   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
+//     "track": [...], "thumb": [...], "value_var": "vol",
+//     "display_var": "vol_text",
+//     "display": { "min": 0, "max": 100, "step": 1, "digits": 0, "suffix": "%" } }
 //---------------------------------------------------------------------------
 namespace {
 // fill 形式スライダの見えない thumb (0x0)。 slider_base は thumb の大きさを
@@ -4116,20 +4267,11 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
-		if (!value_var.empty()) {
-			// 変数 → スライダ値 (+fill 描画) の一方向同期。 on_change は
-			// 発火しない (ホスト起点の更新をエコーバックしないため)。
-			std::weak_ptr<ce::basic_slider_base> ws = sb;
-			std::weak_ptr<ce::atlas_progress> wg = gauge;
-			_vars->subscribe(value_var, [ws, wg](const std::string& v) {
-				double d = 0.0;
-				try { d = std::stod(v); } catch (...) { return; }
-				if (d < 0.0) d = 0.0;
-				if (d > 1.0) d = 1.0;
-				if (auto s = ws.lock()) s->value(d);
-				if (auto g = wg.lock()) g->set_value(d);
-			});
-		}
+		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
+		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
+		// 書く。 数値表示は label の "text_var": display_var で受ける。
+		wire_slider_vars(_vars, sb, value_var, string_or(o, "display_var"),
+		                 parse_value_display(o), gauge);
 	}
 	note_vars_on_focus(o, id);
 	return shared;

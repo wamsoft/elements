@@ -173,8 +173,29 @@ int main()
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `atlas_cycle_picker` — 画像矢印ボタン式の cycle_picker (アトラス素材、 「アトラス共有」節参照)。
-- `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。
-- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。
+- `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。 `"value_var"` / `"display_var"` / `"display"` は下記「スライダの数値表示」。
+- `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。 `"display_var"` を付けると `"display"` 省略時の整形は自動的にこの `min`..`max` スケールになる (下記)。
+
+#### スライダの数値表示 (`display_var` / `display`)
+
+`slider` / `slider_with_range` / `atlas_slider` に共通。 「つまみを動かすと横の数字が変わる」を**ホスト実装なし**で作るための仕組み。
+
+```jsonc
+{ "type": "atlas_slider", "atlas": "ui", "id": "vol",
+  "track": [220, 140, 256, 16], "thumb": [220, 170, 32, 32], "initial": 0.5,
+  "value_var":   "vol",            // 生値 (0..1) を書く変数。 双方向
+  "display_var": "vol_text",       // 整形済み «表示用文字列» を書く変数
+  "display": { "min": 0, "max": 100, "step": 1, "digits": 0,
+               "pad": 0, "prefix": "", "suffix": "%" } }
+// 表示側は普通の label:
+{ "type": "label", "text_var": "vol_text", "size": 28, "at": [500, 396, 120, 40] }
+```
+
+- 値が変わるたびに `display_var` へ整形済み文字列が書かれ、 `text_var` で読んでいる label が自動で更新される (`text` / `text_area` も同じ)。
+- 整形は `pos` (0..1) → `min + pos * (max - min)` → `step` があればその倍数へ丸め → `digits` 桁の 10 進 → `pad` で整数部を 0 埋め → `prefix` / `suffix` を連結。 `display` 自体を省略すると `0..100` の整数 (`slider_with_range` はその `min`..`max`)。
+- 初期値は build 時に両変数へ書かれるので、 最初のフレームから正しい数値が出る。
+- ホストが `set_var(value_var, "0.8")` で外から動かした場合も `display_var` は追従する。
+- 生値が要るとき (保存など) は `value_var` を読む。 従来の `event_callback` も変わらず発火する。
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (**px 絶対**) または `"font_size_scale"` (倍率) + `"child"`。 child の最初の focusable を click-focus target にする。
 - `tab_view` — タブ + ページの組合せ (1 画面内で複数 pane を切替)。 `"tabs": [{ "label": string, "child": element, "id"?: string }, ...]` + `"initial": int` (初期 index、 default 0) + `"tab_size": double` (タブ文字 px、 任意) または `"tab_size_scale"` (倍率)。 lib の `deck_composite` + `tab` (basic_choice ベース) を組み合わせて生成。 タブクリックで該当 pane に瞬時切替、 兄弟タブは自動 deselect (basic_choice の choice 機構)。 タブの見た目は **lib 既定の button_styler (角丸 / アクティブ色)**。 各タブの `id` を付ければ shortcut / vars_on_focus 等で参照可能。 状態 (focus 位置 / 入力途中の値 / 変数 store) は session が同じなので保持される。 さらに **PageUp/PageDown** キーが前/次タブ切替に bind される (force shortcut、 テキスト入力中もスキップ)。 **LB/RB** パッドボタンは組込デフォルトの `page_prev/next` アクション (PageUp/Down 合成) 経由で同じ切替に届く (画面 JSON の `"bindings"` で差替可)。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
@@ -250,7 +271,8 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
   - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 **`track` は省略可** — 溝 (バー) が背景画像側に描いてある素材向けで、 見えない stretchable 要素が敷かれて thumb だけ描画される (可動域は widget の bounds いっぱい)。
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
-  - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作の on_change は通常どおり発火。 値は `"0.75"` 形式の 10 進文字列。
+  - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
+  - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
 
