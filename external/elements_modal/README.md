@@ -273,6 +273,26 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
+- `atlas_number` — **数字素材 (0-9 の sub-rect) で数値を描く**表示専用パーツ。 フォントではなく «絵の数字» を出したいスコア / 残数 / 音量表示用。
+
+  ```jsonc
+  { "type": "atlas_number", "atlas": "ui",
+    "digits": [[x,y,w,h] × 10],          // 0,1,...,9 の順。 等間隔の 1 枚素材なら
+    "digits_rect": [x, y, w, h], "count": 10, "digits_vertical": false,  // 分割指定でも可
+    "glyphs": { "%": [x,y,w,h], "-": [x,y,w,h] },   // 数字以外 (任意)
+    "text": "50",                        // 静的初期値
+    "text_var": "vol_text",              // 文字列変数を購読 (スライダの display_var を直接指せる)
+    "value_var": "vol",                  // 生値 (0..1) を購読して
+    "display": { "min": 0, "max": 100, "suffix": "%" },   // 自前で整形
+    "align": "left" | "center" | "right",
+    "spacing": 0, "scale": 1.0, "space_width": 0 }
+  ```
+
+  - `text_var` / `value_var` は変数変更で即再描画 (label の `text_var` と同じ VariableStore)。 併用時は後から来た更新が反映される。
+  - 未定義の文字は幅 0 で読み飛ばす (`" "` は `space_width` があればその幅だけ送る)。
+  - 各グリフは縦中央に、 左から `spacing` 間隔で並ぶ。 `align` は widget bounds 内の水平寄せ。
+  - `set_text()` を持つ (`text_writer`) ので、 ホストから直接書き換えることもできる。
+
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
 

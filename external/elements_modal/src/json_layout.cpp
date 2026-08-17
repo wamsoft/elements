@@ -1091,6 +1091,7 @@ private:
 	element_ptr build_atlas_choice(const picojson::object& o);
 	element_ptr build_atlas_slider(const picojson::object& o);
 	element_ptr build_atlas_progress(const picojson::object& o);
+	element_ptr build_atlas_number(const picojson::object& o);
 	element_ptr build_radio_button (const picojson::object& o);
 
 	// 名前 → pixmap_ptr 解決。 未登録ならログ + nullptr。
@@ -1422,6 +1423,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "atlas_radio")    return build_atlas_choice(o);  // alias
 	if (type == "atlas_slider")   return build_atlas_slider(o);
 	if (type == "atlas_progress") return build_atlas_progress(o);
+	if (type == "atlas_number")   return build_atlas_number(o);
 	if (type == "radio_button")   return build_radio_button(o);
 	if (type == "tab_view")      return build_tab_view(o);
 
@@ -4347,6 +4349,124 @@ element_ptr LayoutBuilder::build_atlas_progress(const picojson::object& o)
 		}
 	}
 
+	register_id(o, shared);
+	return shared;
+}
+
+//---------------------------------------------------------------------------
+// atlas_number — 数字素材 (0-9 の sub-rect) で数値を描く表示専用パーツ。
+// フォントではなく «絵の数字» で出したいスコア / 残数 / 音量表示用。
+//
+//   { "type": "atlas_number", "atlas": "ui",
+//     "digits": [[x,y,w,h] × 10],        // 0,1,...,9 の順
+//     // 等間隔に並んだ 1 枚素材なら分割指定でもよい:
+//     "digits_rect": [x, y, w, h], "count": 10, "digits_vertical": false,
+//     "glyphs": { "-": [x,y,w,h], "%": [x,y,w,h] },   // 数字以外 (任意)
+//     "text": "50",                      // 静的初期値
+//     "text_var": "vol_text",            // 文字列変数を購読 (スライダの
+//                                        // display_var をそのまま指定できる)
+//     "value_var": "vol",                // 生値 (0..1) を購読して
+//     "display": { "min": 0, "max": 100, "suffix": "%" },   // 自前で整形
+//     "align": "left" | "center" | "right",
+//     "spacing": 0, "scale": 1.0, "space_width": 0 }
+//
+// text_var と value_var は併用可 (先に text_var が来た値を優先して上書き)。
+// スライダ側で display_var を出しているなら text_var 指定が一番簡単。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_number(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		em_logf("elements_modal: atlas_number without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	// 数字 10 個の矩形: 明示リスト or 等分割指定。
+	std::vector<ce::rect> digits;
+	if (auto* ds = get_array(o, "digits")) {
+		for (const auto& d : *ds) {
+			if (d.is<picojson::array>()) {
+				const auto& a = d.get<picojson::array>();
+				if (a.size() >= 4) digits.push_back(parse_xywh(a));
+			}
+		}
+	} else if (auto* dr = get_array(o, "digits_rect"); dr && dr->size() >= 4) {
+		ce::rect r = parse_xywh(*dr);
+		int count = static_cast<int>(number_or(o, "count", 10));
+		bool vert = false;
+		bool_field(get_field(o, "digits_vertical"), vert);
+		if (count > 0) {
+			float w = vert ? r.width() : r.width() / count;
+			float h = vert ? r.height() / count : r.height();
+			for (int i = 0; i < count; ++i) {
+				float x = vert ? r.left : r.left + w * i;
+				float y = vert ? r.top + h * i : r.top;
+				digits.push_back(ce::rect{x, y, x + w, y + h});
+			}
+		}
+	}
+	if (digits.empty()) {
+		em_logf("elements_modal: atlas_number \"%s\" needs 'digits' "
+		        "([[x,y,w,h] × 10]) or 'digits_rect' + 'count'",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+
+	std::map<std::string, ce::rect> glyphs;
+	if (auto* g = get_field(o, "glyphs"); g && g->is<picojson::object>()) {
+		for (const auto& [k, v] : g->get<picojson::object>()) {
+			if (v.is<picojson::array>()) {
+				const auto& a = v.get<picojson::array>();
+				if (a.size() >= 4) glyphs.emplace(k, parse_xywh(a));
+			}
+		}
+	}
+
+	auto align = ce::atlas_number::align_x::left;
+	{
+		std::string a = string_or(o, "align");
+		if (a == "center") align = ce::atlas_number::align_x::center;
+		else if (a == "right") align = ce::atlas_number::align_x::right;
+	}
+	auto num = std::make_shared<ce::atlas_number>(
+		pm, std::move(digits), std::move(glyphs),
+		static_cast<float>(number_or(o, "spacing", 0.0)),
+		static_cast<float>(number_or(o, "scale", 1.0)), align);
+	num->space_width(static_cast<float>(number_or(o, "space_width", 0.0)));
+
+	// 初期テキスト: text > (value_var の現在値を display 整形) > 空。
+	value_display disp = parse_value_display(o);
+	std::string value_var = string_or(o, "value_var");
+	std::string text_var  = string_or(o, "text_var");
+	std::string init = string_or(o, "text");
+	if (init.empty() && !text_var.empty()) {
+		if (auto* cur = _vars->get(text_var)) init = *cur;
+	}
+	if (init.empty() && !value_var.empty()) {
+		if (auto* cur = _vars->get(value_var)) {
+			try { init = disp.format(std::stod(*cur)); } catch (...) { /* 無視 */ }
+		}
+	}
+	if (!init.empty()) num->set_text(init);
+
+	element_ptr shared = num;
+	std::weak_ptr<ce::atlas_number> w = num;
+	if (!text_var.empty()) {
+		// 文字列変数をそのまま表示 (スライダの display_var / ホストの set_var)。
+		_vars->subscribe(text_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		}, shared);
+	}
+	if (!value_var.empty()) {
+		// 生値 (0..1) を自前で整形して表示。
+		_vars->subscribe(value_var, [w, disp](const std::string& v) {
+			double d = 0.0;
+			try { d = std::stod(v); } catch (...) { return; }
+			if (auto p = w.lock()) p->set_text(disp.format(d));
+		}, shared);
+	}
 	register_id(o, shared);
 	return shared;
 }

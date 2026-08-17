@@ -7,6 +7,9 @@
 
 #include <elements/element/image.hpp>
 #include <elements/element/picker.hpp>
+#include <elements/element/text.hpp>   // atlas_number の text_writer
+#include <map>
+#include <string>
 #include <vector>
 #include <chrono>
 
@@ -161,6 +164,63 @@ namespace cycfi::elements
       rect                    _fill_at;
       double                  _value;
       bool                    _vertical;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
+   // atlas_number — 数字素材 (0-9 の sub-rect) で «文字列» を描く非インタラクティブ
+   // 要素。 スコア / 残数 / 音量のような「フォントではなく絵の数字」表示用。
+   //
+   //   digits: 0,1,...,9 の順に 10 個の sub-rect。
+   //   glyphs: 数字以外のグリフ (UTF-8 1 文字 → sub-rect)。 "-" "." "%" "/" 等。
+   //           指定の無い文字は幅 0 として読み飛ばす (' ' は space_width で送る)。
+   //
+   // set_text() は text_writer 経由でも呼べるので、 VariableStore の subscriber
+   // (label の text_var と同じ仕掛け) をそのまま流用できる。
+   //
+   //   align:   bounds 内の水平寄せ (left / center / right)。 縦は常に中央。
+   //   spacing: 字間 px (負値で詰める)。
+   //   scale:   素材の拡大率 (既定 1.0 = 実寸)。
+   //
+   // limits は「digits の最大サイズ × 1 文字」を最小、 横は full_extent まで
+   // 伸びられる形にしてある (canvas + floating の絶対配置が主用途)。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_number : public element, public text_writer
+   {
+   public:
+
+      enum class align_x { left, center, right };
+
+                              atlas_number(pixmap_ptr atlas,
+                                           std::vector<rect> digits,
+                                           std::map<std::string, rect> glyphs = {},
+                                           float spacing = 0.0f,
+                                           float scale = 1.0f,
+                                           align_x align = align_x::left);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      void                    draw(context const& ctx) override;
+
+      void                    set_text(string_view text) override;
+      std::string const&      text() const { return _text; }
+
+      void                    space_width(float w) { _space_width = w; }
+      float                   space_width() const { return _space_width; }
+
+   private:
+
+      // 1 文字ぶんの描画元矩形を引く (見つからなければ nullptr)。
+      rect const*             glyph_rect(std::string const& ch) const;
+      // 現在のテキストの描画幅 (scale / spacing 込み)。
+      float                   text_width() const;
+
+      pixmap_ptr              _atlas;
+      std::vector<rect>       _digits;
+      std::map<std::string, rect> _glyphs;
+      std::string             _text;
+      float                   _spacing;
+      float                   _scale;
+      float                   _space_width = 0.0f;
+      align_x                 _align;
    };
 
    ////////////////////////////////////////////////////////////////////////////

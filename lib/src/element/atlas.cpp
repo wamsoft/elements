@@ -209,6 +209,115 @@ namespace cycfi::elements
    }
 
    //---------------------------------------------------------------------
+   // atlas_number
+   //---------------------------------------------------------------------
+   atlas_number::atlas_number(pixmap_ptr atlas, std::vector<rect> digits,
+                              std::map<std::string, rect> glyphs,
+                              float spacing, float scale, align_x align)
+    : _atlas(std::move(atlas))
+    , _digits(std::move(digits))
+    , _glyphs(std::move(glyphs))
+    , _spacing(spacing)
+    , _scale(scale > 0.0f ? scale : 1.0f)
+    , _align(align)
+   {}
+
+   namespace
+   {
+      // UTF-8 を 1 文字ずつ切り出す (先頭バイトから長さを判定)。 数字素材の
+      // グリフ名は "0".."9" / "-" / "." / "%" / "：" 等の 1 文字を想定。
+      std::vector<std::string> utf8_chars(std::string const& s)
+      {
+         std::vector<std::string> out;
+         for (std::size_t i = 0; i < s.size();)
+         {
+            unsigned char c = static_cast<unsigned char>(s[i]);
+            std::size_t n = (c < 0x80) ? 1 : ((c >> 5) == 0x6) ? 2
+                          : ((c >> 4) == 0xE) ? 3 : ((c >> 3) == 0x1E) ? 4 : 1;
+            if (i + n > s.size()) n = 1;
+            out.push_back(s.substr(i, n));
+            i += n;
+         }
+         return out;
+      }
+   }
+
+   rect const* atlas_number::glyph_rect(std::string const& ch) const
+   {
+      if (ch.size() == 1 && ch[0] >= '0' && ch[0] <= '9')
+      {
+         std::size_t i = static_cast<std::size_t>(ch[0] - '0');
+         if (i < _digits.size()) return &_digits[i];
+         return nullptr;
+      }
+      auto it = _glyphs.find(ch);
+      return it == _glyphs.end() ? nullptr : &it->second;
+   }
+
+   float atlas_number::text_width() const
+   {
+      float w = 0.0f;
+      int n = 0;
+      for (auto const& ch : utf8_chars(_text))
+      {
+         if (auto const* r = glyph_rect(ch)) { w += r->width() * _scale; ++n; }
+         else if (ch == " " && _space_width > 0.0f) { w += _space_width * _scale; ++n; }
+      }
+      if (n > 1) w += _spacing * (n - 1);
+      return w;
+   }
+
+   view_limits atlas_number::limits(basic_context const& /*ctx*/) const
+   {
+      // 最小 = 1 文字ぶん (最大の数字矩形)、 最大 = 横は伸縮可・縦は素材高さ。
+      float mw = 0.0f, mh = 0.0f;
+      for (auto const& r : _digits)
+      {
+         mw = std::max(mw, r.width() * _scale);
+         mh = std::max(mh, r.height() * _scale);
+      }
+      for (auto const& [k, r] : _glyphs)
+      {
+         mh = std::max(mh, r.height() * _scale);
+      }
+      return {{mw, mh}, {full_extent, mh}};
+   }
+
+   void atlas_number::draw(context const& ctx)
+   {
+      if (_text.empty() || !_atlas) return;
+
+      float total = text_width();
+      float x = ctx.bounds.left;
+      if (_align == align_x::center) x += (ctx.bounds.width() - total) / 2;
+      else if (_align == align_x::right) x += ctx.bounds.width() - total;
+
+      float cy = ctx.bounds.top + ctx.bounds.height() / 2;
+      for (auto const& ch : utf8_chars(_text))
+      {
+         auto const* src = glyph_rect(ch);
+         if (!src)
+         {
+            if (ch == " " && _space_width > 0.0f)
+               x += _space_width * _scale + _spacing;
+            continue;
+         }
+         float w = src->width() * _scale;
+         float h = src->height() * _scale;
+         rect dst{x, cy - h / 2, x + w, cy + h / 2};
+         ctx.canvas.draw(*_atlas, *src, dst);
+         x += w + _spacing;
+      }
+   }
+
+   void atlas_number::set_text(string_view text)
+   {
+      std::string t{text};
+      if (t == _text) return;
+      _text = std::move(t);
+   }
+
+   //---------------------------------------------------------------------
    // atlas_cycle_picker
    //---------------------------------------------------------------------
    namespace
