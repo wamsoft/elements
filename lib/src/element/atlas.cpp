@@ -254,10 +254,13 @@ namespace cycfi::elements
       auto& cnv = ctx.canvas;
       auto  st = cnv.new_state();
 
-      bool hi = focused();
-      cnv.draw(*_atlas, hi ? _left.hilite : _left.normal,
+      // 既定は「入力方向の矢印だけを短時間 hilite」。 _flash_ms = 0 のときは
+      // 従来どおり「フォーカス中は両矢印 hilite」。
+      const bool hi_left  = (_flash_ms > 0) ? flashing(-1) : focused();
+      const bool hi_right = (_flash_ms > 0) ? flashing(+1) : focused();
+      cnv.draw(*_atlas, hi_left ? _left.hilite : _left.normal,
                offset_rect(_left_at, ctx.bounds));
-      cnv.draw(*_atlas, hi ? _right.hilite : _right.normal,
+      cnv.draw(*_atlas, hi_right ? _right.hilite : _right.normal,
                offset_rect(_right_at, ctx.bounds));
 
       if (num_options())
@@ -274,6 +277,54 @@ namespace cycfi::elements
       }
    }
 
+   //---------------------------------------------------------------------------
+   // 左右入力のフィードバック
+   //
+   // フォーカスしただけで矢印が光っていると「今その向きへ入力した」のか
+   // 「単に選択中」なのか区別が付かないので、 入力があった向きだけを
+   // 短時間光らせる。 消灯のための再描画は view へ予約しておく (入力が
+   // 続かなくても通常表示へ戻す)。
+   //---------------------------------------------------------------------------
+   bool atlas_cycle_picker::flashing(int dir) const
+   {
+      return _flash_dir == dir
+          && std::chrono::steady_clock::now() < _flash_until;
+   }
+
+   void atlas_cycle_picker::flash(context const& ctx, int dir)
+   {
+      if (_flash_ms <= 0 || dir == 0)
+         return;
+      _flash_dir   = dir;
+      _flash_until = std::chrono::steady_clock::now()
+                   + std::chrono::milliseconds(_flash_ms);
+      ctx.view.refresh(ctx);
+      auto& view_ = ctx.view;
+      _flash_timer = view_.post(
+         std::chrono::milliseconds(_flash_ms + 16),
+         [&view_]() { view_.refresh(); });
+   }
+
+   bool atlas_cycle_picker::key(context const& ctx, key_info k)
+   {
+      const std::size_t before = index();
+      if (!cycle_picker::key(ctx, k))
+         return false;
+      if (index() != before)
+         flash(ctx, (k.key == key_code::left) ? -1 : +1);
+      return true;
+   }
+
+   bool atlas_cycle_picker::pad_axis(context const& ctx, pad_axis_info info)
+   {
+      const std::size_t before = index();
+      if (!cycle_picker::pad_axis(ctx, info))
+         return false;
+      if (index() != before)
+         flash(ctx, (info.value < 0.0f) ? -1 : +1);
+      return true;
+   }
+
    bool atlas_cycle_picker::click(context const& ctx, mouse_button btn)
    {
       if (!ctx.enabled)
@@ -288,7 +339,10 @@ namespace cycfi::elements
       else if (offset_rect(_right_at, ctx.bounds).includes(btn.pos))
          delta = +1;
       if (delta != 0 && step(delta))
+      {
          ctx.view.refresh(ctx);
+         flash(ctx, delta);
+      }
       return true;
    }
 }

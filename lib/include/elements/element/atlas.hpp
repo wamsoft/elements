@@ -170,8 +170,11 @@ namespace cycfi::elements
    //
    //   [左矢印絵]  現在の選択テキスト  [右矢印絵]
    //
-   // 左右の矢印はそれぞれ normal / hilite の 2 フレームを持ち、 フォーカス中は
-   // 両矢印が hilite になる (= フォーカス表示を兼ねる)。 各パーツの配置は
+   // 左右の矢印はそれぞれ normal / hilite の 2 フレームを持つ。 既定では
+   // 通常表示で、 **左右入力があったときだけ入力方向の矢印が短時間 hilite に
+   // なる** (押した向きが分かるフィードバック)。 フォーカス中に出しっぱなしに
+   // はしない。 点灯時間は arrow_flash_ms() で変更でき、 0 で従来どおり
+   // 「フォーカス中は両矢印 hilite」に戻る。 各パーツの配置は
    // widget bounds 左上原点の相対 px 矩形 (left_at / right_at / text_at) で
    // 指定する (PSD 由来の絶対配置向け)。 クリックは left_at / right_at の
    // ヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
@@ -192,11 +195,21 @@ namespace cycfi::elements
       view_limits             limits(basic_context const& ctx) const override;
       void                    draw(context const& ctx) override;
       bool                    click(context const& ctx, mouse_button btn) override;
+      bool                    key(context const& ctx, key_info k) override;
+      bool                    pad_axis(context const& ctx, pad_axis_info info) override;
 
       void                    text_color(color c) { _color = c; }
       color                   text_color() const  { return _color; }
 
+      // 入力方向の矢印を光らせる時間 (ms)。 0 = 無効 (フォーカス中は両矢印 hilite)
+      void                    arrow_flash_ms(int ms) { _flash_ms = ms; }
+      int                     arrow_flash_ms() const { return _flash_ms; }
+
    private:
+
+      // 左右入力の直後だけ、 その向きの矢印を hilite にする。
+      void                    flash(context const& ctx, int dir);
+      bool                    flashing(int dir) const;
 
       pixmap_ptr              _atlas;
       arrow_frames            _left;
@@ -205,6 +218,11 @@ namespace cycfi::elements
       rect                    _right_at;
       rect                    _text_at;
       color                   _color = colors::white;
+
+      int                     _flash_ms = 140;   // 0 で従来動作
+      int                     _flash_dir = 0;    // -1 = 左 / +1 = 右 / 0 = 無し
+      std::chrono::steady_clock::time_point _flash_until{};
+      std::shared_ptr<void>   _flash_timer;      // 消灯用の再描画予約を保持
    };
 }
 
