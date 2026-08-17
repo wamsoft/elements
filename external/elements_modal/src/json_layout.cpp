@@ -386,9 +386,17 @@ std::string preprocess_jsonc(const std::string& in)
 // poll closure が focus 変化を検知して write を実行 → subscribers (label の
 // set_text closure) が呼ばれる。
 //---------------------------------------------------------------------------
+// flatten (グループの焼き込み) の再焼き契機に使う共通リビジョン。
+// 変数 / 言語が変わるたびに bump し、 flatten proxy が値の変化を検知して
+// 焼き直す。 どの変数が変わったかまでは見ない粗い判定だが、 取りこぼすと
+// 「文字が古いまま残る」という分かりにくい不具合になるので安全側に倒す。
+using layout_revision = std::shared_ptr<std::uint64_t>;
+
 class VariableStore
 {
 public:
+	void set_revision(layout_revision r) { _rev = std::move(r); }
+
 	void set_initial(const std::string& name, std::string value)
 	{
 		_values[name] = std::move(value);
@@ -405,6 +413,7 @@ public:
 		auto& cur = _values[name];
 		if (cur == value) return false;
 		cur = value;
+		if (_rev) ++(*_rev);   // flatten の焼き直し契機
 		auto it = _subs.find(name);
 		if (it != _subs.end()) {
 			for (auto& s : it->second) {
@@ -447,6 +456,7 @@ private:
 	std::map<std::string, std::string> _values;
 	std::map<std::string, std::vector<sub>> _subs;
 	std::function<void(ce::element&)> _on_changed;
+	layout_revision _rev;
 };
 
 //---------------------------------------------------------------------------
@@ -460,6 +470,8 @@ private:
 class StringStore
 {
 public:
+	void set_revision(layout_revision r) { _rev = std::move(r); }
+
 	// "strings" の 1 エントリを登録 (id → {lang: string})。
 	void set_entry(const std::string& id, std::map<std::string, std::string> by_lang)
 	{
@@ -472,6 +484,7 @@ public:
 	{
 		if (_lang == lang) return false;
 		_lang = lang;
+		if (_rev) ++(*_rev);   // flatten の焼き直し契機 (言語で文字が変わる)
 		for (auto& kv : _subs) {
 			std::string v = resolve(kv.first);
 			for (auto& cb : kv.second) cb(v);
@@ -518,6 +531,7 @@ private:
 	std::string _lang;
 	std::map<std::string, std::vector<std::function<void(const std::string&)>>> _subs;
 	std::vector<std::function<void(const std::string&)>> _lang_subs;
+	layout_revision _rev;
 };
 
 //---------------------------------------------------------------------------
@@ -633,6 +647,8 @@ public:
 
 	// 要素に "opacity" / "opacity_var" があれば不透明度 proxy で包む。
 	// 無ければ el をそのまま返す。
+	element_ptr apply_enabled_fade(const picojson::object& o, element_ptr el);
+	element_ptr apply_flatten(const picojson::object& o, element_ptr el);
 	element_ptr apply_opacity(const picojson::object& o, element_ptr el);
 
 	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
@@ -754,6 +770,8 @@ private:
 	std::vector<anim_binding> _animations;  // "animate" から生成した演出束縛
 	std::shared_ptr<VariableStore> _vars = std::make_shared<VariableStore>();
 	std::shared_ptr<StringStore> _strings = std::make_shared<StringStore>();
+	// flatten の焼き直し契機 (両ストアが bump する)。 build 時に配線する。
+	layout_revision _rev = std::make_shared<std::uint64_t>(0);
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
 	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
 	std::vector<std::pair<std::string, std::function<bool()>>> _hoverables;
@@ -1099,6 +1117,83 @@ private:
 
 } // anonymous (opacity)
 
+//---------------------------------------------------------------------------
+// "flatten" — グループを 1 枚に焼いてから描く
+//
+// opacity / opacity_var は canvas の global_alpha に乗算するだけなので、
+// 重なった子はそれぞれ独立にブレンドされる。 ボタン画像の上にラベルが乗る
+// ような構図を薄くすると、 文字の下から画像が透けて「文字だけ浮く」見え方に
+// なる (背景も二重に薄くなる)。
+//
+//   正しい合成 : 背景*(1-a) + [画像+文字を合成したもの]*a
+//   乗算のみ   : 背景*(1-a)^2 + 画像*a*(1-a) + 文字*a
+//
+// "flatten": true を付けると、 子を一度オフスクリーンの pixmap へ描いてから
+// 1 枚の画像として描き戻す。 canvas::draw(pixmap, ...) は global_alpha を
+// ThorVG の Picture::opacity() として **画像全体に 1 回だけ** 適用するので、
+// これで本来のグループ不透明度になる。
+//
+// 焼き直しは「サイズ / スケールが変わったとき」と「変数 or 言語が変わった
+// とき (layout_revision)」。 hover / focus のように変数を介さない状態変化は
+// 検知できないので、 状態で見た目が変わる要素には現状向かない。
+//---------------------------------------------------------------------------
+namespace {
+
+template <typename Subject>
+class flatten_element : public ce::proxy<Subject>
+{
+public:
+	flatten_element(Subject subject, layout_revision rev)
+	 : ce::proxy<Subject>(std::move(subject)), _rev(std::move(rev))
+	{}
+
+	void draw(ce::context const& ctx) override
+	{
+		const auto b = ctx.bounds;
+		const float sc = ctx.canvas.scale() > 0.0f ? ctx.canvas.scale() : 1.0f;
+		const int w = int(std::ceil(b.width()  * sc));
+		const int h = int(std::ceil(b.height() * sc));
+		if (w <= 0 || h <= 0) return;
+
+		const std::uint64_t rev = _rev ? *_rev : 0;
+		if (!_pm || _w != w || _h != h || _rev_baked != rev)
+		{
+			bake(ctx, b, w, h, sc);
+			_w = w; _h = h; _rev_baked = rev;
+		}
+		if (_pm) ctx.canvas.draw(*_pm, b);
+	}
+
+private:
+	void bake(ce::context const& ctx, ce::rect b, int w, int h, float sc)
+	{
+		_pm.reset();
+		// pixmap は「ピクセル数 + scale」で持ち、 論理サイズ = px * scale。
+		// 描き戻しで src = 論理サイズ = bounds になるよう scale = 1/sc。
+		auto pm = std::make_unique<ce::pixmap>(
+			ce::point{float(w), float(h)}, 1.0f / sc);
+		{
+			ce::pixmap_context pctx(*pm);
+			if (!pctx.buffer()) return;
+			// 子は原点基準で描かせる (bounds を原点へ寄せた context を作る)。
+			ce::canvas cnv(pctx.buffer(), std::uint32_t(w), std::uint32_t(h), sc);
+			ce::context sub{ctx.view, cnv, this,
+				ce::rect{0, 0, b.width(), b.height()}};
+			ce::proxy<Subject>::draw(sub);
+			cnv.flush();
+			// pctx のデストラクタが buffer を pixmap へ commit する
+		}
+		_pm = std::move(pm);
+	}
+
+	std::unique_ptr<ce::pixmap> _pm;
+	layout_revision _rev;
+	int _w = 0, _h = 0;
+	std::uint64_t _rev_baked = std::uint64_t(-1);
+};
+
+} // anonymous (flatten)
+
 element_ptr LayoutBuilder::build(const picojson::value& v)
 {
 	if (!v.is<picojson::object>()) return nullptr;
@@ -1110,9 +1205,55 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_animation(o, std::move(el));
 	// "focus_point" 指定があれば focus hot point 上書き proxy で包む。
 	if (el) el = apply_focus_point(o, std::move(el));
+	// "enabled_var" 指定がボタン以外に付いていたら、 無効時フェード proxy で包む。
+	// (ボタンは basic_button::enable で自前にフェードするので対象外)
+	if (el) el = apply_enabled_fade(o, std::move(el));
+	// "flatten" 指定があれば、 先に 1 枚へ焼く proxy で包む。
+	// opacity より内側 (先に適用) にすることで、 焼いた 1 枚に対して
+	// opacity が掛かる = 正しいグループ不透明度になる。
+	if (el) el = apply_flatten(o, std::move(el));
 	// "opacity" / "opacity_var" 指定があれば不透明度 proxy で包む。
 	if (el) el = apply_opacity(o, std::move(el));
 	return el;
+}
+
+// "enabled_var" をボタン以外の要素にも効かせる。
+//
+// ボタンは basic_button::enable() で自前に無効表示 (テーマの disabled_opacity)
+// をするが、 ラベルなど隣に並ぶ要素は別ウィジェットなので取り残され、
+// 「板だけ薄くなって文字が濃いまま浮く」見え方になっていた。
+// ボタン以外にも同じ変数を書けば一緒に薄くなるようにする。
+element_ptr LayoutBuilder::apply_enabled_fade(const picojson::object& o, element_ptr el)
+{
+	if (!el) return el;
+	std::string var = string_or(o, "enabled_var");
+	if (var.empty()) return el;
+	// ボタンは自前でフェードするので二重掛けしない
+	if (std::dynamic_pointer_cast<ce::basic_button>(el)) return el;
+
+	const float off = ce::get_theme().disabled_opacity;
+	auto alpha = std::make_shared<float>(1.0f);
+	auto apply = [alpha, off](const std::string& v) {
+		*alpha = (v == "0") ? off : 1.0f;
+	};
+	if (auto* cur = _vars->get(var)) apply(*cur);
+	_vars->subscribe(var, apply, el);
+	return ce::share(opacity_element(ce::hold_any(std::move(el)), alpha));
+}
+
+element_ptr LayoutBuilder::apply_flatten(const picojson::object& o, element_ptr el)
+{
+	if (!el) return el;
+	const auto* v = get_field(o, "flatten");
+	if (!v) return el;
+	bool on = false;
+	if (v->is<bool>())        on = v->get<bool>();
+	else if (v->is<double>()) on = v->get<double>() != 0.0;
+	if (!on) return el;
+	// 両ストアが bump する revision を渡す (変数 / 言語の変化で焼き直す)。
+	_vars->set_revision(_rev);
+	_strings->set_revision(_rev);
+	return ce::share(flatten_element(ce::hold_any(std::move(el)), _rev));
 }
 
 element_ptr LayoutBuilder::apply_opacity(const picojson::object& o, element_ptr el)
@@ -4726,6 +4867,17 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			builder.set_font_scale(static_cast<float>(pj_num(*fs)));
 		builder.set_tile_gap(static_cast<float>(number_or(so, "tile_gap", 0.0)));
 		builder.set_row_height(static_cast<float>(number_or(so, "row_height", 0.0)));
+		// 無効 (disabled) 表示の不透明度。 0 以下 / 未指定でテーマ既定のまま。
+		// 薄すぎて読めないときに画面ごとへ上書きできる。
+		if (auto* dop = get_field(so, "disabled_opacity"); dop && pj_is_num(*dop)) {
+			float v = static_cast<float>(pj_num(*dop));
+			if (v > 0.0f) {
+				if (v > 1.0f) v = 1.0f;
+				ce::theme t = ce::get_theme();
+				t.disabled_opacity = v;
+				ce::set_theme(t);
+			}
+		}
 		style_padding = static_cast<float>(number_or(so, "padding", 0.0));
 	}
 

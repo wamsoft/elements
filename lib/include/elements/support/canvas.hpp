@@ -261,6 +261,11 @@ namespace cycfi { namespace elements
       float             global_alpha() const;
       void              global_alpha(float a);
 
+      // Device pixels per logical unit (the scale given at construction).
+      // Needed by callers that rasterize a sub-tree into an offscreen pixmap
+      // and want it at the same resolution as the screen.
+      float             scale() const { return _scale; }
+
       ///////////////////////////////////////////////////////////////////////////////////
       // Types used by text backends (public for plugin access)
 
