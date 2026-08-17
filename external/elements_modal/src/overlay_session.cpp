@@ -297,6 +297,9 @@ struct overlay_session::impl
 	// focused_id_slot の変化として一元的に拾える)。
 	std::string se_last_focused;
 	bool se_focus_seen = false;
+	// フォーカスが初めて確定したか。 開いた直後の 1 フレーム目は
+	// focused_id_slot がまだ空で、 確定は次フレームに起きる。
+	bool focus_ever_seen = false;
 
 	// --- 再ラスタライズ抑止 (ダーティ管理) ---
 	// needs_render_: 次の render_to_buffer が必要か。 入力転送 / focus・hover
@@ -988,6 +991,27 @@ bool overlay_session::update()
 	if ((_impl->cursor_warp_enabled || !_impl->se_map.empty())
 	    && _impl->focused_id_slot) {
 		const std::string& cur = *_impl->focused_id_slot;
+
+		// 初期フォーカスの hover。
+		//
+		// hover の見た目は実マウスカーソルの位置で決まるので、 画面を開いた
+		// 直後は初期フォーカス項目がオーバー表示にならず「どこにもフォーカスが
+		// 無い」ように見える (カーソルはまだ前の位置にある)。
+		// warp でカーソルを動かすと、 マウス操作中のユーザのカーソルを勝手に
+		// 飛ばしてしまうため、 **カーソルは動かさず「そこにマウスが乗っている
+		// ことにする」** hover だけを合成する。 次に実際にマウスが動けば
+		// on_mouse_move が普通に上書きするので、 マウス操作の邪魔にならない。
+		if (_impl->cursor_warp_enabled && !_impl->focus_ever_seen && !cur.empty()) {
+			ce::point hp{};
+			if (_impl->view->focused_hot_point(hp)) {
+				_impl->last_cursor = hp;
+				_impl->view->cursor(hp, ce::cursor_tracking::hovering);
+				_impl->needs_render_ = true;
+				_impl->dirty_full_ = true;   // 範囲不明 (全面)
+			}
+		}
+		if (!cur.empty()) _impl->focus_ever_seen = true;
+
 		if (_impl->se_focus_seen && cur != _impl->se_last_focused
 		    && !cur.empty()) {
 			_impl->play_se("nav");
