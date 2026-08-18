@@ -14,6 +14,7 @@
 #include <elements/element/image.hpp>            // ce::image (mem:// サムネ再ロード)
 #include <elements_modal/modal.h>                // refresh_mem_image 宣言
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>    // choice_nav_group の pad エッジ検出
 #include <cmath>
@@ -777,6 +778,9 @@ private:
 	std::vector<std::pair<std::string, std::function<bool()>>> _hoverables;
 	std::vector<std::function<void(cycfi::elements::view&)>> _deferred_view_cbs;
 	std::shared_ptr<std::string> _focused_id_slot = std::make_shared<std::string>();
+	// "focus_link": フォーカス中の id を受け取って見た目を変える飾り要素。
+	// take_focus_poll がフォーカス変化のたびに現在の id で呼ぶ。
+	std::vector<std::function<void(const std::string&)>> _focus_links;
 	std::shared_ptr<std::string> _hovered_id_slot = std::make_shared<std::string>();
 
 	// focusable build site で、 id と「現在 focus されているか」を返す
@@ -1539,15 +1543,18 @@ std::function<void()> LayoutBuilder::take_focus_poll()
 	auto vars_on_focus   = std::move(_vars_on_focus);
 	auto focusables      = std::move(_focusables);
 	auto last_focused_id = _focused_id_slot;  // ホストと共有 (focused_id() 用)
+	auto focus_links     = std::move(_focus_links);
 	// "" は「何も focus されていない」を表す sentinel。 初回はその状態と
 	// 比較されるので、 初回 focus に対して必ず 1 回 set される。
-	return [vars, vars_on_focus, focusables, last_focused_id]() {
+	return [vars, vars_on_focus, focusables, last_focused_id, focus_links]() {
 		std::string current;
 		for (auto& kv : focusables) {
 			if (kv.second()) { current = kv.first; break; }
 		}
 		if (current == *last_focused_id) return;
 		*last_focused_id = current;
+		// focus_link の飾り要素へ通知 (フォーカスが外れた "" も配る)。
+		for (auto& fn : focus_links) fn(current);
 		if (current.empty()) return;
 		auto it = vars_on_focus.find(current);
 		if (it == vars_on_focus.end()) return;
@@ -3318,6 +3325,57 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	bool stretch_h = false, stretch_v = false;
 	bool_field(get_field(o, "stretch_h"), stretch_h);
 	bool_field(get_field(o, "stretch_v"), stretch_v);
+
+	// "frames" + "focus_link": 別ウィジェットのフォーカスに追従して絵を変える飾り。
+	//   { "type": "atlas_image", "atlas": "ui",
+	//     "frames": { "normal": [x,y,w,h], "hilite": [x,y,w,h] },
+	//     "focus_link": "PICKER_機種" }
+	// 行の下地のように「自分はフォーカスを取らないが、 行内のコントロールが
+	// フォーカスされていることを示したい」飾りのためのもの。 focus_link に
+	// 指定した id がフォーカスを持っている間だけ hilite を描く。
+	if (auto* fv = get_field(o, "frames");
+	    fv && fv->is<picojson::object>() && get_field(o, "focus_link")) {
+		const auto& fr = fv->get<picojson::object>();
+		auto* n_arr = get_array(fr, "normal");
+		auto* h_arr = get_array(fr, "hilite");
+		if (!n_arr || n_arr->size() < 4 || !h_arr || h_arr->size() < 4) {
+			em_logf("elements_modal: atlas_image \"%s\" focus_link needs "
+			        "frames.normal / frames.hilite as [x,y,w,h]",
+			        atlas_name.c_str());
+		} else {
+			const ce::rect r_normal = parse_xywh(*n_arr);
+			const ce::rect r_hilite = parse_xywh(*h_arr);
+			// "focus_link" は id 文字列、 または id の配列 (1 行に複数の
+			// コントロールがある場合は、 そのどれかが focus されていれば hilite)。
+			std::vector<std::string> targets;
+			if (auto* lv = get_field(o, "focus_link")) {
+				if (lv->is<std::string>()) {
+					targets.push_back(lv->get<std::string>());
+				} else if (lv->is<picojson::array>()) {
+					for (auto& e : lv->get<picojson::array>())
+						if (e.is<std::string>()) targets.push_back(e.get<std::string>());
+				}
+			}
+			// normal / hilite は寸法が違うことがある (PSD の 通常 と オーバー は
+			// 同心だが オーバー の方が一回り大きい)。 atlas_sprite の native
+			// モードは各 frame を実寸のまま bounds 中央へ描くので、 どちらの
+			// frame も潰れずに済む (box は generate.py 側でユニオンにしてある)。
+			auto img = std::make_shared<ce::atlas_sprite>(
+				pm, std::vector<ce::rect>{r_normal, r_hilite}, /*native*/ true);
+			std::weak_ptr<ce::atlas_sprite> w = img;
+			_focus_links.push_back(
+				[w, targets](const std::string& focused) {
+					if (auto p = w.lock()) {
+						const bool on = !focused.empty()
+							&& std::find(targets.begin(), targets.end(), focused)
+							   != targets.end();
+						p->index(on ? 1 : 0);
+					}
+				});
+			register_id(o, img);
+			return img;
+		}
+	}
 
 	// "rect_list" + "index_var": ソース矩形のリストを変数 index で切替える
 	// (picker の index_var と連動する機種別スクショ等)。 rect より優先。
