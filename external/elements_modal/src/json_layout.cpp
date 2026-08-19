@@ -725,6 +725,7 @@ public:
 	element_ptr apply_enabled_fade(const picojson::object& o, element_ptr el);
 	element_ptr apply_flatten(const picojson::object& o, element_ptr el);
 	element_ptr apply_opacity(const picojson::object& o, element_ptr el);
+	element_ptr apply_visible(const picojson::object& o, element_ptr el);
 
 	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
 	std::vector<anim_binding> take_animations() { return std::move(_animations); }
@@ -1194,6 +1195,90 @@ private:
 	std::shared_ptr<float> _alpha;
 };
 
+
+//---------------------------------------------------------------------------
+// "visible_var" — 表示 / 非表示を変数で切り替える
+//
+// 値 "0" (と "false" / 空文字) で非表示、 それ以外で表示。 非表示のときは
+//   ・描かない
+//   ・フォーカスを受け取らない (方向ナビの飛び先にならない)
+//   ・当たり判定に出ない (クリックが下の要素へ抜ける)
+//   ・入力イベントを一切受けない
+// 機種によって不要な設定項目を消す用途 (PC 専用のフルスクリーン切替を
+// コンソール版で出さない等) を想定している。
+//
+// ⚠ **場所は空けたまま**であることに注意。 canvas は子を絶対座標で配置する
+//    ので、 非表示にしてもそこに空白が残り、 下の項目は詰まらない。 詰めたい
+//    ならレイアウト自体を機種別に用意する必要がある。
+//---------------------------------------------------------------------------
+namespace {
+
+template <typename Subject>
+class visible_element : public ce::proxy<Subject>
+{
+public:
+	visible_element(Subject subject, std::shared_ptr<bool> vis)
+	 : ce::proxy<Subject>(std::move(subject)), _vis(std::move(vis))
+	{}
+
+	bool shown() const { return !_vis || *_vis; }
+
+	void draw(ce::context const& ctx) override
+	{
+		if (!shown()) return;
+		ce::proxy<Subject>::draw(ctx);
+	}
+
+	ce::element* hit_test(ce::context const& ctx, ce::point p,
+	                      bool leaf, bool control) override
+	{
+		if (!shown()) return nullptr;
+		return ce::proxy<Subject>::hit_test(ctx, p, leaf, control);
+	}
+
+	bool wants_focus() const override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::wants_focus();
+	}
+
+	bool wants_control() const override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::wants_control();
+	}
+
+	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::click(ctx, btn);
+	}
+
+	bool key(ce::context const& ctx, ce::key_info k) override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::key(ctx, k);
+	}
+
+	bool cursor(ce::context const& ctx, ce::point p,
+	            ce::cursor_tracking status) override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::cursor(ctx, p, status);
+	}
+
+	bool scroll(ce::context const& ctx, ce::point dir, ce::point p) override
+	{
+		if (!shown()) return false;
+		return ce::proxy<Subject>::scroll(ctx, dir, p);
+	}
+
+private:
+	std::shared_ptr<bool> _vis;
+};
+
+} // anonymous (visible)
+
 } // anonymous (opacity)
 
 //---------------------------------------------------------------------------
@@ -1293,6 +1378,9 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_flatten(o, std::move(el));
 	// "opacity" / "opacity_var" 指定があれば不透明度 proxy で包む。
 	if (el) el = apply_opacity(o, std::move(el));
+	// "visible_var" 指定があれば表示制御 proxy で包む (いちばん外側)。
+	// 非表示のときは中を一切触らせないので、 最外周である必要がある。
+	if (el) el = apply_visible(o, std::move(el));
 	return el;
 }
 
@@ -1356,6 +1444,26 @@ element_ptr LayoutBuilder::apply_opacity(const picojson::object& o, element_ptr 
 		}, el);
 	}
 	return ce::share(opacity_element(ce::hold_any(std::move(el)), alpha));
+}
+
+// "visible_var" — 表示 / 非表示を変数で切り替える (値 "0"/"false"/空 で非表示)。
+// 機種によって不要な項目を消す用途。 場所は空けたままなので注意 (visible_element
+// のコメント参照)。
+element_ptr LayoutBuilder::apply_visible(const picojson::object& o, element_ptr el)
+{
+	if (!el) return el;
+	std::string var = string_or(o, "visible_var");
+	if (var.empty()) return el;
+
+	auto vis = std::make_shared<bool>(true);
+	auto parse = [](const std::string& v) {
+		return !(v == "0" || v == "false" || v.empty());
+	};
+	if (auto* cur = _vars->get(var)) *vis = parse(*cur);
+	_vars->subscribe(var, [vis, parse](const std::string& v) {
+		*vis = parse(v);
+	}, el);
+	return ce::share(visible_element(ce::hold_any(std::move(el)), vis));
 }
 
 element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
