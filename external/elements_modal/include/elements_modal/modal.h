@@ -443,6 +443,17 @@ public:
 	//! @return true: 未消費のフォーカス移動があった / false: なし
 	bool take_key_focus_move(float& out_surface_x, float& out_surface_y);
 
+	//! @brief 入力フォーカス (キーボード/パッドの届き先) を得直したときに
+	//!        呼ぶ。 上に載っていたダイアログが閉じて自分が最前面へ戻った
+	//!        ような場合、 こちらのフォーカスは動いていないため
+	//!        take_key_focus_move は発火せず、 実マウスカーソルは閉じた
+	//!        ダイアログの位置に取り残される (hover 表示だけ別要素に付く)。
+	//!        この関数は現在のフォーカス要素に対して
+	//!          ・直前がキー/パッド操作なら warp を 1 回積む
+	//!          ・そうでなければカーソルを動かさず hover だけ合成する
+	//!        ことで表示を一致させる。 cursor_warp 無効の画面では何もしない。
+	void notify_input_focus_gained();
+
 	//! @brief content の自然サイズ (view limits の min、 logical 座標) を取得。
 	//!        run_modal が独立ウィンドウを内容サイズに縮めるのと同じ値で、
 	//!        ホストが overlay の view extent を内容にフィットさせて上下の

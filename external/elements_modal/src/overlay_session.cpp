@@ -910,6 +910,29 @@ overlay_session::render_rect overlay_session::get_current_rect() const
 	return _impl->last_rect;
 }
 
+//---------------------------------------------------------------------------
+// 入力フォーカスを得直したときの表示合わせ (詳細は modal.h)
+//---------------------------------------------------------------------------
+void overlay_session::notify_input_focus_gained()
+{
+	if (!_impl || !_impl->view) return;
+	if (!_impl->cursor_warp_enabled) return;
+	ce::point hp{};
+	if (!_impl->view->focused_hot_point(hp)) return;
+	if (_impl->last_nav_source == impl::nav_source::key) {
+		// キー/パッド操作中はカーソルを隠しているので warp してよい
+		_impl->warp_sx = hp.x + _impl->last_rect.x;
+		_impl->warp_sy = hp.y + _impl->last_rect.y;
+		_impl->warp_pending = true;
+	} else {
+		// マウス操作中はカーソルを動かさず hover だけ合わせる
+		_impl->last_cursor = hp;
+		_impl->view->cursor(hp, ce::cursor_tracking::hovering);
+		_impl->needs_render_ = true;
+		_impl->dirty_full_ = true;
+	}
+}
+
 bool overlay_session::take_key_focus_move(float& out_surface_x,
                                           float& out_surface_y)
 {
