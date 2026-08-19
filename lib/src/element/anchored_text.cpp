@@ -131,22 +131,62 @@ namespace cycfi::elements
       return fd;
    }
 
-   font_descr anchored_text::make_descr() const
+   font_descr anchored_text::make_descr(float sz) const
    {
-      // family 未指定 or 未登録なら theme 既定フォントを土台に。 いずれも _size 適用。
+      // family 未指定 or 未登録なら theme 既定フォントを土台に。 いずれも sz 適用。
       // _families は string_view なので描画中だけ生きていればよい (_family はメンバ)。
       if (_family.empty() || !_resolved)
       {
          font_descr fd = get_theme().label_font;
-         fd._size = _size;
+         fd._size = sz;
          return fd;
       }
       font_descr fd{};
       fd._families = _family;
       fd._weight = _weight;
       fd._slant = _slant;
-      fd._size = _size;
+      fd._size = sz;
       return fd;
+   }
+
+   font_descr anchored_text::make_descr() const
+   {
+      return make_descr(_size);
+   }
+
+   // fit 有効時の実描画サイズ。 _size のまま測って bounds 幅に収まればそのまま、
+   // はみ出すなら (bounds 幅 / 実測幅) を倍率として縮める。 複数行 (改行区切り) は
+   // 最も長い行を基準にする (行ごとにサイズを変えると段が揃わないため)。
+   // 下限は _fit_min_scale。 measure_text はフォント実測なので言語・書体差
+   // (EN の長い単語 / CJK の全角) をそのまま吸収できる。
+   float anchored_text::fit_size(context const& ctx) const
+   {
+      const float maxw = ctx.bounds.width();
+      if (!_fit || maxw <= 0.0f || _text.empty())
+         return _size;
+
+      const font_descr fd = make_descr(_size);
+      float widest = 0.0f;
+      std::size_t start = 0;
+      for (std::size_t i = 0; i <= _text.size(); ++i)
+      {
+         if (i == _text.size() || _text[i] == '\n')
+         {
+            if (i > start)
+            {
+               const float w =
+                  measure_text(ctx.canvas, std::string_view(_text).substr(start, i - start), fd).x;
+               if (w > widest) widest = w;
+            }
+            start = i + 1;
+         }
+      }
+      if (widest <= maxw || widest <= 0.0f)
+         return _size;
+
+      float scale = maxw / widest;
+      if (scale < _fit_min_scale) scale = _fit_min_scale;
+      return _size * scale;
    }
 
    view_limits anchored_text::limits(basic_context const& ctx) const
@@ -165,8 +205,12 @@ namespace cycfi::elements
       auto& cnv = ctx.canvas;
       auto  state = cnv.new_state();
 
+      // fit 有効なら bounds 幅に収まるサイズへ落とす (無効時は _size のまま)。
+      // wrap は自前で折り返して収めるので fit は効かせない。
+      const float dsz = _wrap ? _size : fit_size(ctx);
+
       cnv.fill_style(_color);
-      cnv.font(make_descr(), _size);
+      cnv.font(make_descr(dsz), dsz);
       if (!_locale.empty())
          cnv.text_locale(_locale);
       // tracking (1/1000 em, 加算) → advance 倍率 (全角で近似的に一致)。
@@ -175,7 +219,7 @@ namespace cycfi::elements
 
       // 水平 align のみ渡す (垂直ビット無し) → tvg backend の既定 = baseline。
       cnv.text_align(_halign & 0x3);
-      float lead = _leading > 0.0f ? _leading : _size * 1.2f;
+      float lead = _leading > 0.0f ? _leading : dsz * 1.2f;
 
       // テキストボックス: bounds 幅で word-wrap し、 枠上 + ascent から下へ流す。
       if (_wrap)
@@ -186,7 +230,7 @@ namespace cycfi::elements
          float ax = (_halign & 0x3) == canvas::center ? ctx.bounds.left + maxw * 0.5f
                   : (_halign & 0x3) == canvas::right  ? ctx.bounds.right
                   :                                     ctx.bounds.left;
-         auto  fd = make_descr();
+         auto  fd = make_descr(_size);   // wrap は折り返しで収めるので fit 非適用
          int   li = 0;
          std::size_t start = 0;
          for (std::size_t i = 0; i <= _text.size(); ++i)

@@ -1761,6 +1761,16 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		bool wrap = truthy_field(get_field(o, "wrap"));
 		out = ce::make_anchored_text(text, family, a_sz, a_col, halign,
 		                             ce::point{ax, ay}, tracking, leading, wrap, locale);
+		// "fit": true — 実測幅が at 矩形の幅を超えるときだけフォントを縮めて
+		// 収める。 多言語化 (EN/TC/SC) で訳文が枠に入らないのを、 訳を詰めずに
+		// 表示側で吸収するための指定。 "fit_min_scale" で縮小の下限倍率を変えられる
+		// (既定 0.5)。 言語切替で text が差し替わっても描画のたびに測り直すので
+		// 追従する。 wrap / runs (rich text) との併用は無効。
+		if (truthy_field(get_field(o, "fit"))) {
+			if (auto* at = dynamic_cast<ce::anchored_text*>(out.get()))
+				at->set_fit_width(true,
+					static_cast<float>(number_or(o, "fit_min_scale", 0.5)));
+		}
 		// "runs" (run 別書式) があれば anchored_text に設定 (rich text)。 段落別
 		// アラインは "para_align" (left/right/center の配列)。
 		if (auto* rarr = get_array(o, "runs"); rarr && !rarr->empty()) {

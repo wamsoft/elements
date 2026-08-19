@@ -86,10 +86,22 @@ namespace cycfi::elements
       void                    set_runs(std::vector<text_run> r) { _runs = std::move(r); }
       // 段落別アライン (canvas::left/center/right)。 段落 = \n 区切り。
       void                    set_para_aligns(std::vector<int> a) { _para_aligns = std::move(a); }
+      // 幅追従 (auto-shrink)。 有効にすると、 描画時に実測幅が bounds 幅を超える
+      // 場合だけフォントサイズを縮めて収める。 多言語化で訳文が枠に入らない
+      // ケース (EN/TC/SC) を、 訳を詰めずに表示側で吸収するための仕掛け。
+      //   min_scale … 縮小の下限倍率 (0.5 なら半分まで)。 それでも入らない場合は
+      //               下限で描く (= 従来どおりはみ出す)。 読めなくなるより崩れて
+      //               見える方を選べるようにしてある。
+      // wrap / rich text (runs) とは併用しない (それぞれ別の収め方をするため)。
+      void                    set_fit_width(bool on, float min_scale = 0.5f)
+                              { _fit = on; _fit_min_scale = min_scale; }
 
    private:
 
       font_descr              make_descr() const;
+      font_descr              make_descr(float sz) const;   // サイズ指定版 (fit 用)
+      // fit 有効時の実描画サイズ。 bounds 幅に収まる最大サイズ (<= _size)。
+      float                   fit_size(context const& ctx) const;
       void                    draw_rich(context const& ctx);   // run 別描画
 
       font_descr              run_descr(text_run const& r) const;
@@ -109,6 +121,8 @@ namespace cycfi::elements
       std::string             _locale;
       std::vector<text_run>   _runs;          // rich text (空=単一書式)
       std::vector<int>        _para_aligns;   // 段落別 halign (空=_halign 一律)
+      bool                    _fit = false;   // bounds 幅に収まるよう自動縮小
+      float                   _fit_min_scale = 0.5f;  // 縮小の下限倍率
    };
 
    inline element_ptr make_anchored_text(
