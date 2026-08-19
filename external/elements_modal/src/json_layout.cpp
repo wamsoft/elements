@@ -5442,8 +5442,30 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 
 	if (auto* arr = get_array(o, "background")) {
 		ce::color bg = parse_color(*arr);
+		element_ptr bgel = ce::share(ce::box(bg));
+		// "background_opacity_var": 背景板だけの不透明度を変数連動にする
+		// (0..1 の 10 進小数)。 中身 (文字やボタン) はそのままなので、
+		// 「下のゲーム画面を透かす」用途で可読性を落とさない。 字幕窓の
+		// 下地と同じ考え方 (ウィンドウ透過率 / UI の透過率)。
+		// ※ content ではなく背景 box にだけ掛けるのが要点。 全体に掛けると
+		//   重なった要素が二重にブレンドされて文字が浮く。
+		if (std::string bvar = string_or(o, "background_opacity_var");
+		    !bvar.empty()) {
+			auto vars = builder.vars();
+			auto alpha = std::make_shared<float>(1.0f);
+			auto clamp01 = [](float f) {
+				return f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+			};
+			if (auto* init = vars->get(bvar)) {
+				try { *alpha = clamp01(std::stof(*init)); } catch (...) {}
+			}
+			vars->subscribe(bvar, [alpha, clamp01](const std::string& v) {
+				try { *alpha = clamp01(std::stof(v)); } catch (...) {}
+			}, bgel);
+			bgel = ce::share(opacity_element(ce::hold_any(std::move(bgel)), alpha));
+		}
 		ce::layer_composite ly;
-		ly.push_back(ce::share(ce::box(bg)));
+		ly.push_back(std::move(bgel));
 		ly.push_back(content);
 		result.root = ce::share(std::move(ly));
 	} else {
