@@ -3169,9 +3169,12 @@ namespace
 // 降りず、 このグループ自体が 1 focusable になる)。
 // 左右キー / パッド横軸で選択メンバー (selectable = atlas_choice /
 // radio_button な子) を切替え、 クリック時と同じ semantics でイベント発火
-// (新しく選ばれた側の on_click(true) のみ)。 端で止まる (wrap しない) ので、
-// 端からさらに押した左右は view の focus nav に素通しになる (segmented_picker
-// と同じ)。 フォーカス表示 = 選択中メンバーの hilite 兼用 (focus 中だけ
+// (新しく選ばれた側の on_click(true) のみ)。
+// **端では反対側へ折り返す** ("choice_wrap": false で従来どおり素通しにできる)。
+// 素通しだと「ON/OFF の OFF でさらに右」「言語の最後でさらに右」が別の行へ
+// フォーカスを飛ばしてしまい、 選択操作のつもりが縦移動になる (SGOCT-61/98)。
+// ただしメンバーが 1 つしか無いグループは折り返しても意味が無いので素通しする。
+// フォーカス表示 = 選択中メンバーの hilite 兼用 (focus 中だけ
 // 選択メンバーを hilite フレームにする)。 マウスクリックは従来どおり子へ。
 //---------------------------------------------------------------------------
 namespace
@@ -3179,9 +3182,11 @@ namespace
 	class choice_nav_group : public ce::focus_unit_element
 	{
 	public:
-		choice_nav_group(element_ptr subject_, std::vector<element_ptr> members)
+		choice_nav_group(element_ptr subject_, std::vector<element_ptr> members,
+		                 bool wrap = true)
 		 : _subject(std::move(subject_))
 		 , _members(std::move(members))
+		 , _wrap(wrap)
 		{}
 
 		ce::element const& subject() const override { return *_subject; }
@@ -3275,10 +3280,17 @@ namespace
 		{
 			if (_members.empty())
 				return false;
+			const int n = int(_members.size());
 			int cur = selected_index();
-			int next = (cur < 0) ? (delta > 0 ? 0 : int(_members.size()) - 1)
-			                     : cur + delta;
-			if (next < 0 || next >= int(_members.size()) || next == cur)
+			int next = (cur < 0) ? (delta > 0 ? 0 : n - 1) : cur + delta;
+			if (_wrap && n > 1) {
+				// 端は反対の端へ折り返す。 メンバーが 1 つしか無いときは
+				// 折り返しても自分自身なので、 素通しさせて view の focus nav
+				// に任せる (下の next == cur で false になる)。
+				if (next < 0)  next = n - 1;
+				if (next >= n) next = 0;
+			}
+			if (next < 0 || next >= n || next == cur)
 				return false;
 			if (cur >= 0)
 				if (auto* s = ce::find_element<ce::selectable*>(_members[cur].get()))
@@ -3310,6 +3322,7 @@ namespace
 		std::vector<element_ptr> _members;
 		int _hilited = -1;
 		bool _pad_engaged = false;   // pad-axis ヒステリシス状態
+		bool _wrap = true;           // 端で反対側へ折り返すか
 	};
 }
 
@@ -3383,8 +3396,12 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		if (nav_members.empty()) {
 			em_logf("elements_modal: canvas choice_nav: no selectable children");
 		} else {
+			// "choice_wrap": 端で反対側へ折り返すか (既定 true)。
+			// false にすると従来どおり端で素通しし、 view の focus nav に渡る。
+			bool cw = true;
+			bool_field(get_field(o, "choice_wrap"), cw);
 			auto grp = std::make_shared<choice_nav_group>(
-				root, std::move(nav_members));
+				root, std::move(nav_members), cw);
 			std::string id = string_or(o, "id");
 			note_focusable(id, grp);
 			register_id(o, grp);
