@@ -3340,6 +3340,11 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 	// "choice_nav": true — この canvas の selectable な直接子 (atlas_choice /
 	// radio_button) をまとめて 1 フォーカス対象の左右トグルグループにする。
 	bool choice_nav = truthy_field(get_field(o, "choice_nav"));
+	// 左右ナビの並びは **配置座標 (画面上の左→右) 順**で決める。 children の
+	// 記載順は PSD のレイヤ順に由来していて視覚順と一致するとは限らず、 実際に
+	// 「フルスクリーン切替」だけ子の順序が右→左で、 左右操作が逆になっていた
+	// (SGOCT-61)。 (x, y) を持って回して最後に並べ替える。
+	std::vector<std::pair<ce::point, element_ptr>> nav_placed;
 	std::vector<element_ptr> nav_members;
 
 	auto layer = std::make_shared<canvas_layer_element>();
@@ -3363,7 +3368,7 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		if (!widget) continue;
 
 		if (choice_nav && ce::find_element<ce::selectable*>(widget.get()))
-			nav_members.push_back(widget);
+			nav_placed.push_back({ce::point{x, y}, widget});
 
 		// canvas_layer_element に直接 (rect, widget) で追加。 floating ラップ
 		// は使わない (相対座標を canvas_layer_element の bounds_of で計算する)。
@@ -3389,6 +3394,17 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 			if (auto* cur = _vars->get(at_var)) apply(*cur);
 			_vars->subscribe(at_var, apply);
 		}
+	}
+
+	if (choice_nav) {
+		// 画面上の左→右 (同じ x なら上→下) に並べ替えてからナビ対象にする。
+		std::stable_sort(nav_placed.begin(), nav_placed.end(),
+			[](auto const& a, auto const& b) {
+				if (a.first.x != b.first.x) return a.first.x < b.first.x;
+				return a.first.y < b.first.y;
+			});
+		nav_members.reserve(nav_placed.size());
+		for (auto& np : nav_placed) nav_members.push_back(std::move(np.second));
 	}
 
 	element_ptr root = layer;
