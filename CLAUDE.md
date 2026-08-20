@@ -105,6 +105,11 @@ The FT loader gives per-codepoint fallback (load order = priority), HarfBuzz sha
 
 ## Code Conventions
 
+- **No client/project-identifying information anywhere in this repository.** This is a
+  general-purpose library: product names, client names, and issue keys (`ABCD-123` style)
+  must not appear in source, **comments**, docs, file names, **commit messages**, branch
+  names, or tags. Explaining *why* a change exists is encouraged — generalize it and let
+  the description of the symptom stand on its own.
 - C++20 standard required
 - Namespace: `cycfi::elements`
 - MSVC builds use `/utf-8` and `/Zc:__cplusplus`
