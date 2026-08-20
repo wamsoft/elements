@@ -3314,7 +3314,7 @@ namespace
 // (新しく選ばれた側の on_click(true) のみ)。
 // **端では反対側へ折り返す** ("choice_wrap": false で従来どおり素通しにできる)。
 // 素通しだと「ON/OFF の OFF でさらに右」「言語の最後でさらに右」が別の行へ
-// フォーカスを飛ばしてしまい、 選択操作のつもりが縦移動になる (SGOCT-61/98)。
+// フォーカスを飛ばしてしまい、 選択操作のつもりが縦移動になる。
 // ただしメンバーが 1 つしか無いグループは折り返しても意味が無いので素通しする。
 // フォーカス表示 = 選択中メンバーの hilite 兼用 (focus 中だけ
 // 選択メンバーを hilite フレームにする)。 マウスクリックは従来どおり子へ。
@@ -3484,8 +3484,8 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 	bool choice_nav = truthy_field(get_field(o, "choice_nav"));
 	// 左右ナビの並びは **配置座標 (画面上の左→右) 順**で決める。 children の
 	// 記載順は PSD のレイヤ順に由来していて視覚順と一致するとは限らず、 実際に
-	// 「フルスクリーン切替」だけ子の順序が右→左で、 左右操作が逆になっていた
-	// (SGOCT-61)。 (x, y) を持って回して最後に並べ替える。
+	// 子の順序が右→左になっていて左右操作が逆になる、 という実例があった。
+	// (x, y) を持って回して最後に並べ替える。
 	std::vector<std::pair<ce::point, element_ptr>> nav_placed;
 	std::vector<element_ptr> nav_members;
 
