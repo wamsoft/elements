@@ -55,14 +55,14 @@ const resource_resolver& get_resource_resolver()
 	return resolver_slot();
 }
 
-namespace {
-
 //---------------------------------------------------------------------------
 // JSON 文字列 → Elements enum 変換
+//
+// JSON の入力バインドで使う語彙 ("enter" / "dpad_up" / "shift" 等) の変換表。
+// ホストが「名前で入力を注入する」(検証パネル / REPL / 自動テスト) ときも
+// 同じ語彙で書けるよう公開している (宣言は modal.h)。
 //---------------------------------------------------------------------------
 
-//! "enter"/"escape"/... / "a"-"z" / "0"-"9" / "f1"-"f12" 等を ce::key_code に
-//! 変換。 未知名は key_code::unknown を返す。
 ce::key_code parse_key_code(const std::string& s)
 {
 	using k = ce::key_code;
@@ -103,23 +103,17 @@ ce::key_code parse_key_code(const std::string& s)
 	return k::unknown;
 }
 
-//! "shift"/"ctrl"/"alt"/"super"/"action" の OR を返す。
-int parse_modifiers(const picojson::array& arr)
+int parse_modifier(const std::string& s)
 {
-	int m = 0;
-	for (const auto& v : arr) {
-		if (!v.is<std::string>()) continue;
-		const auto& s = v.get<std::string>();
-		if      (s == "shift")   m |= ce::mod_shift;
-		else if (s == "ctrl" ||
-		         s == "control") m |= ce::mod_control;
-		else if (s == "alt")     m |= ce::mod_alt;
-		else if (s == "super" ||
-		         s == "cmd" ||
-		         s == "command") m |= ce::mod_super;
-		else if (s == "action")  m |= ce::mod_action;
-	}
-	return m;
+	if (s == "shift")   return ce::mod_shift;
+	if (s == "ctrl" ||
+	    s == "control") return ce::mod_control;
+	if (s == "alt")     return ce::mod_alt;
+	if (s == "super" ||
+	    s == "cmd" ||
+	    s == "command") return ce::mod_super;
+	if (s == "action")  return ce::mod_action;
+	return 0;
 }
 
 ce::pad_button parse_pad_button(const std::string& s)
@@ -149,6 +143,18 @@ ce::pad_button parse_pad_button(const std::string& s)
 	if (s == "start")           return b::start;
 	if (s == "guide")           return b::guide;
 	return b::unknown;
+}
+
+namespace {
+
+//! "shift"/"ctrl"/... の配列を修飾ビットの OR にする (JSON バインド用)。
+int parse_modifiers(const picojson::array& arr)
+{
+	int m = 0;
+	for (const auto& v : arr) {
+		if (v.is<std::string>()) m |= parse_modifier(v.get<std::string>());
+	}
+	return m;
 }
 
 ce::pad_axis_mode parse_axis_mode(const std::string& s, ce::pad_axis_mode dflt)

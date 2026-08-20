@@ -137,6 +137,27 @@ void set_resource_resolver(resource_resolver fn);
 //! @brief 現在のリゾルバ (未設定なら空の function)。
 const resource_resolver& get_resource_resolver();
 
+//---------------------------------------------------------------------------
+// 入力名の変換 (JSON の入力バインドと同じ語彙)
+//
+// 画面 JSON の "input"."bindings" で使う名前を、 そのまま enum に直す。
+// ホストが「名前で入力を注入する」場面 (検証パネル / REPL / 自動テスト) でも
+// 同じ表を使えるよう公開している。 native (SDL 等) → enum の変換は別物なので
+// ホストアダプタ (sdl_input.h 等) を使うこと。
+//---------------------------------------------------------------------------
+
+//! @brief "enter" / "esc" / "a"-"z" / "0"-"9" / "f1"-"f12" / "left" 等を
+//! key_code へ。 未知名は key_code::unknown。
+cycfi::elements::key_code parse_key_code(const std::string& name);
+
+//! @brief "a" / "b" / "dpad_up" / "lb" / "start" 等を pad_button へ。
+//! 未知名は pad_button::unknown。
+cycfi::elements::pad_button parse_pad_button(const std::string& name);
+
+//! @brief "shift" / "ctrl" / "alt" / "super" / "action" を修飾ビットへ。
+//! 未知名は 0 (OR して使う)。
+int parse_modifier(const std::string& name);
+
 //! @brief id 付き widget のイベント callback。
 //!        button の click は is_button_click=true、 state widget の値変化は
 //!        is_button_click=false で呼ばれる。 button の payload は空 (default
