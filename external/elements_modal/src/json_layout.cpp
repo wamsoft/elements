@@ -481,6 +481,8 @@ public:
 		auto it = _values.find(name);
 		return it == _values.end() ? nullptr : &it->second;
 	}
+	// 現在値の一括参照 (検証ツールの変数一覧用)。
+	const std::map<std::string, std::string>& values() const { return _values; }
 	// 戻り値 = 値が実際に変わったか (同値書込は false、 subscriber も発火しない)。
 	// ホストの再描画要否 (ダーティ) 判定に使える。
 	bool set(const std::string& name, const std::string& value)
@@ -506,6 +508,9 @@ public:
 				}
 			}
 		}
+		// 観測フック: 「どの変数がどう変わったか」を外へ出す。 subscriber の
+		// 有無に関係なく発火するので、 誰も見ていない変数の変化も拾える。
+		if (_watcher) _watcher(name, cur);
 		return true;
 	}
 	// owner = この変数で見た目が変わる要素 (省略可)。 部分再描画のダーティ
@@ -521,6 +526,13 @@ public:
 	{
 		_on_changed = std::move(f);
 	}
+	// 変数変化 (名前, 新しい値) の観測先 (ホストが仕掛ける)。 set_change_notifier
+	// が部分再描画のために「どの要素か」を返すのに対し、 こちらは「どの変数か」を
+	// 外へ出すためのもの (検証パネルへの push 等)。
+	void set_watcher(std::function<void(const std::string&, const std::string&)> f)
+	{
+		_watcher = std::move(f);
+	}
 
 private:
 	struct sub
@@ -531,6 +543,7 @@ private:
 	std::map<std::string, std::string> _values;
 	std::map<std::string, std::vector<sub>> _subs;
 	std::function<void(ce::element&)> _on_changed;
+	std::function<void(const std::string&, const std::string&)> _watcher;
 	layout_revision _rev;
 };
 
@@ -587,6 +600,21 @@ public:
 
 	// 対応表に id が存在するか (build_label の fallback 判定用)。
 	bool has(const std::string& id) const { return _table.count(id) != 0; }
+
+	// 対応表に現れる言語コードの一覧 (辞書順・重複なし)。 画面がどの言語を
+	// 持っているかをホスト (言語切替 UI) に見せるためのもの。
+	std::vector<std::string> languages() const
+	{
+		std::vector<std::string> out;
+		for (const auto& kv : _table) {
+			for (const auto& lv : kv.second) {
+				if (std::find(out.begin(), out.end(), lv.first) == out.end())
+					out.push_back(lv.first);
+			}
+		}
+		std::sort(out.begin(), out.end());
+		return out;
+	}
 
 	void subscribe(const std::string& id,
 	               std::function<void(const std::string&)> cb)
@@ -5300,6 +5328,52 @@ std::function<void(ce::view&)> build_input_applier(
 }
 
 //---------------------------------------------------------------------------
+// 変数参照の収集 — 「この画面はどの変数を何に使っているか」を JSON から拾う。
+//
+// ビルダの各所 (text_var / visible_var / enabled_var / index_var / value_var
+// / at_var / …) を 1 つずつ計装するのではなく、 JSON の木を 1 回歩いて
+// 「`_var` で終わるキー」を集める。 参照箇所が増えても取りこぼさないのと、
+// 変数を持つ要素が build されなかった場合 (条件付きで作られない等) でも
+// 「画面が使っている変数」として見えるのが利点。
+//
+// id は「いちばん近い祖先の "id"」を使う。 変数を持つのが id 無しの子要素
+// (layout の子の at_var など) でも、 どのパーツの話かは辿れる。
+//---------------------------------------------------------------------------
+void collect_var_refs(const picojson::value& v, const std::string& id,
+                      var_ref_map& out)
+{
+	if (v.is<picojson::array>()) {
+		for (const auto& e : v.get<picojson::array>())
+			collect_var_refs(e, id, out);
+		return;
+	}
+	if (!v.is<picojson::object>()) return;
+
+	const auto& o = v.get<picojson::object>();
+	std::string cur = id;
+	if (auto* iv = get_field(o, "id"); iv && iv->is<std::string>())
+		cur = iv->get<std::string>();
+
+	for (const auto& kv : o) {
+		const std::string& key = kv.first;
+		// "<なにか>_var": "変数名" — 読み取り参照。
+		if (key.size() > 4 && key.compare(key.size() - 4, 4, "_var") == 0 &&
+		    kv.second.is<std::string>()) {
+			const std::string& name = kv.second.get<std::string>();
+			if (!name.empty()) out[name].push_back({ cur, key });
+			continue;
+		}
+		// "vars_on_focus": {name: value} — focus 時の書き込み。
+		if (key == "vars_on_focus" && kv.second.is<picojson::object>()) {
+			for (const auto& wv : kv.second.get<picojson::object>())
+				out[wv.first].push_back({ cur, "vars_on_focus" });
+			continue;
+		}
+		collect_var_refs(kv.second, cur, out);
+	}
+}
+
+//---------------------------------------------------------------------------
 // Top level parsing
 //---------------------------------------------------------------------------
 parsed_layout build_top_level(const picojson::value& root, event_callback cb,
@@ -5597,6 +5671,24 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		[vars = builder.vars()](std::function<void(ce::element&)> f) {
 			vars->set_change_notifier(std::move(f));
 		};
+
+	// 変数の観測 (検証パネル用)。 現在値のスナップショット、 変化の通知フック、
+	// そして JSON から拾った参照表。 参照表は build されなかった要素の分も
+	// 含む「画面が使っている変数」の一覧になる。
+	result.var_snapshot = [vars = builder.vars()]() {
+		return vars->values();
+	};
+	result.set_var_watcher =
+		[vars = builder.vars()](
+			std::function<void(const std::string&, const std::string&)> f) {
+			vars->set_watcher(std::move(f));
+		};
+	collect_var_refs(root, std::string(), result.var_refs);
+
+	// i18n: 画面が持つ言語の一覧 ("strings" の lang キーの和集合)。
+	result.languages = [strings = builder.strings()]() {
+		return strings->languages();
+	};
 
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();

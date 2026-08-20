@@ -39,7 +39,9 @@ struct SDL_Window;
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace elements_modal {
 
@@ -343,6 +345,45 @@ public:
 	//! @brief 現在の表示言語。 一度も set_language していない場合は JSON の
 	//! "lang"、 それも無ければ空文字列。
 	const std::string& language() const;
+
+	//! @brief i18n: この画面が持つ言語コードの一覧 (top-level "strings" に
+	//! 現れる lang キーの和集合、 辞書順)。 "strings" 未定義なら空。
+	//! ホストが言語切替 UI を組むのに使う (どの言語を出せる画面か)。
+	std::vector<std::string> languages() const;
+
+	//! @brief 画面が使っている変数 1 件の記述 (list_vars() の要素)。
+	struct var_desc
+	{
+		//! 変数名。
+		std::string name;
+		//! 現在値 (一度も書かれていなければ空文字列)。
+		std::string value;
+		//! この変数を参照している {要素 id, 参照の種類}。 種類は JSON の
+		//! キーそのもの ("text_var" / "visible_var" / "vars_on_focus" 等)。
+		//! id は「いちばん近い祖先の id」なので、 id 無しの子要素での参照も
+		//! どのパーツの話か辿れる。 空 = どこからも参照されていない
+		//! (ホストが set_var で作っただけの変数)。
+		std::vector<std::pair<std::string, std::string>> used_by;
+	};
+
+	//! @brief 画面が使っている変数の一覧 (名前順)。 JSON から集めた参照表と
+	//! 変数ストアの現在値をマージしたもの。 参照だけあって一度も書かれて
+	//! いない変数、 逆に参照は無いがホストが書いた変数、 どちらも載る。
+	//! 検証ツール / デバッグパネルが「この画面の変数」を出すのに使う。
+	std::vector<var_desc> list_vars() const;
+
+	//! @brief 変数の現在値を取る。 未知の変数なら false (out は触らない)。
+	bool get_var(const std::string& name, std::string& out) const;
+
+	//! @brief 変数が変わったときに呼ばれる観測フック。 set_var だけでなく
+	//! vars_on_focus やスライダの value_var 書込など、 全ての書込経路で
+	//! 発火する (同値書込では発火しない)。 画面ごとに設定し直すこと
+	//! (各画面で session は作り直されるため)。 空の function で解除。
+	//! 注: コールバックはレンダリング中に呼ばれうるので、 中で画面を
+	//! 作り直すような操作はせず、 通知の記録に留めること。
+	using var_watcher =
+		std::function<void(const std::string& name, const std::string& value)>;
+	void set_var_watcher(var_watcher fn);
 
 	//! @brief 変数 store への書込 (text_var label の動的更新)。
 	//! JSON で "text_var": name を指定した label が subscribe している変数を

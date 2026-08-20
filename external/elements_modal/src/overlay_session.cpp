@@ -274,6 +274,14 @@ struct overlay_session::impl
 	// 戻り値 = 値が実際に変わったか (同値書込は false、 ダーティ判定用)。
 	std::function<bool(const std::string&, const std::string&)> set_var_fn;
 
+	// 変数の観測 (検証ツール向け)。 現在値のスナップショット、 変化通知の
+	// 設置口、 JSON から集めた参照表、 画面が持つ言語の一覧。
+	std::function<std::map<std::string, std::string>()> var_snapshot_fn;
+	std::function<void(std::function<void(const std::string&,
+	                                     const std::string&)>)> set_var_watcher_fn;
+	var_ref_map var_refs;
+	std::function<std::vector<std::string>()> languages_fn;
+
 	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
 	std::string current_lang;
 
@@ -698,6 +706,10 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->set_language_fn = std::move(layout.set_language);
 	_impl->current_lang = std::move(layout.lang);
 	_impl->set_var_fn = std::move(layout.set_var);
+	_impl->var_snapshot_fn = std::move(layout.var_snapshot);
+	_impl->set_var_watcher_fn = std::move(layout.set_var_watcher);
+	_impl->var_refs = std::move(layout.var_refs);
+	_impl->languages_fn = std::move(layout.languages);
 
 	// パーツ演出束縛を animator に積み、 初期値 (進捗 0) を適用してから開始。
 	for (auto& b : layout.animations) _impl->anim.add(std::move(b));
@@ -865,6 +877,61 @@ const std::string& overlay_session::language() const
 	static const std::string empty;
 	if (!_impl) return empty;
 	return _impl->current_lang;
+}
+
+std::vector<std::string> overlay_session::languages() const
+{
+	if (!_impl || !_impl->languages_fn) return {};
+	return _impl->languages_fn();
+}
+
+std::vector<overlay_session::var_desc> overlay_session::list_vars() const
+{
+	std::vector<var_desc> out;
+	if (!_impl) return out;
+
+	// 参照表 (JSON 由来) とストアの現在値をマージする。 どちらか片方にしか
+	// 無い変数もある: 参照だけあって一度も書かれていない / 参照は無いが
+	// ホストが set_var で作った。 どちらも「画面の変数」として見せる。
+	std::map<std::string, std::string> values;
+	if (_impl->var_snapshot_fn) values = _impl->var_snapshot_fn();
+
+	for (const auto& kv : _impl->var_refs) {
+		var_desc d;
+		d.name = kv.first;
+		d.used_by = kv.second;
+		if (auto it = values.find(kv.first); it != values.end())
+			d.value = it->second;
+		out.push_back(std::move(d));
+	}
+	for (const auto& kv : values) {
+		if (_impl->var_refs.count(kv.first)) continue;
+		var_desc d;
+		d.name  = kv.first;
+		d.value = kv.second;
+		out.push_back(std::move(d));
+	}
+	// 参照表もストアも std::map なので、 それぞれは名前順。 連結した全体を
+	// 名前順に揃え直す (ホストがそのまま一覧に出せるように)。
+	std::sort(out.begin(), out.end(),
+	          [](const var_desc& a, const var_desc& b) { return a.name < b.name; });
+	return out;
+}
+
+bool overlay_session::get_var(const std::string& name, std::string& out) const
+{
+	if (!_impl || !_impl->var_snapshot_fn) return false;
+	auto values = _impl->var_snapshot_fn();
+	auto it = values.find(name);
+	if (it == values.end()) return false;
+	out = it->second;
+	return true;
+}
+
+void overlay_session::set_var_watcher(var_watcher fn)
+{
+	if (!_impl || !_impl->set_var_watcher_fn) return;
+	_impl->set_var_watcher_fn(std::move(fn));
 }
 
 void overlay_session::set_var(const std::string& name, const std::string& value)

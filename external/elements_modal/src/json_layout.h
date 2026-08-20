@@ -18,6 +18,8 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace elements_modal {
 
@@ -61,6 +63,12 @@ struct input_action_config
 	//! -1=未指定 (下層の値を継承) / 0=off / 1=on。 組込既定は off。
 	int cursor_warp = -1;
 };
+
+//! @brief 変数参照表: 変数名 → [{要素 id, 参照の種類}]。
+//! 種類は JSON のキーそのもの ("text_var" / "visible_var" / "vars_on_focus" 等)。
+//! id は「いちばん近い祖先の id」なので、 id 無しの子要素での参照も辿れる。
+using var_ref_map =
+	std::map<std::string, std::vector<std::pair<std::string, std::string>>>;
 
 //! @brief JSON 1 件のパース結果。
 struct parsed_layout
@@ -147,6 +155,22 @@ struct parsed_layout
 	//! フォールバックすること。
 	std::function<void(std::function<void(cycfi::elements::element&)>)>
 		set_var_change_notifier;
+
+	//! 変数ストアの現在値スナップショット (検証ツールの変数一覧用)。
+	std::function<std::map<std::string, std::string>()> var_snapshot;
+
+	//! 変数の変化 (名前, 新しい値) をホストへ流すフックの設置口。
+	//! set_var だけでなく vars_on_focus 等あらゆる書込経路で発火する。
+	std::function<void(std::function<void(const std::string&,
+	                                      const std::string&)>)> set_var_watcher;
+
+	//! 画面 JSON が参照している変数の一覧 (JSON から直接収集したもの)。
+	//! ストアの現在値と違い、 一度も書かれていない変数もここには載る。
+	var_ref_map var_refs;
+
+	//! i18n: 画面が持つ言語コードの一覧 ("strings" の lang キーの和集合)。
+	//! "strings" 未定義でも非 null (空リストを返す)。
+	std::function<std::vector<std::string>()> languages;
 
 	//! 配置アンカー (JSON top-level "align")。 0=左/上、 0.5=中央、 1=右/下。
 	//! render_to_buffer がサーフェス内での描画矩形位置の決定に使う。 既定は
