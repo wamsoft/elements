@@ -468,6 +468,8 @@ bool on = elements_modal::focus_ring_enabled();
 - 値型は string のみ (将来拡張余地あり)。
 - 同じ変数に複数 label が subscribe してもよい。
 - `vars_on_focus` は dict なので 1 widget で複数変数を一度に書ける。
+- 外から一覧・観測したいときは `list_vars()` / `get_var()` / `set_var_watcher()`
+  (→「外から覗く・触る」)。 「この画面がどの変数を何に使っているか」も取れる。
 - ホストからも `overlay_session::set_var(name, value)` で書ける (focus poll 以外の書き手。 ソフトウェアキーボードの入力文字列表示のような「ホスト状態 → label」の動的反映に使う)。 反映は次フレームの `render_to_buffer`。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
 
@@ -536,6 +538,7 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 - label / text_area の `"text_list_id": ["help.save", ...]` (+ `index_var`) — 指定番号表示の textID 版 (`text_list` より優先)。 言語切替時は**表示中の index を維持**したまま引き直す。 メニューの説明文のように「focus 連動 + 多言語」な 1 本のラベルはこれで賄える。
 - 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
 - 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
+- その画面が**どの言語を出せるか**は `overlay_session::languages()` (`strings` の lang キーの和集合)。 ホストが言語切替 UI を組むのに使う。
 
 ### 画面遷移 (`transitions` + マニフェスト)
 
@@ -905,6 +908,50 @@ if (dirty) {
 - ダーティになる契機: 入力イベントの転送 / focus・hover の変化 / パーツ演出の再生中 / `set_var`・`set_language` の実変化 (同値書込は無視) / view 内部の refresh 要求 (キャレット点滅等) / `notify_view_resize`。
 - `needs_render()` で現在のダーティ状態だけ読める。 `invalidate()` はセッションから観測できない外部変化 (`refresh_mem_image` による mem:// 画像差替等) 用の明示的な再描画要求。
 - `update()` を呼ばず従来どおり `render_to_buffer` だけ呼ぶホストは無変更で動く (内部で update 相当を自動実行する後方互換)。
+
+### 外から覗く・触る (検証ツール / デバッグパネル向け)
+
+「実行中の画面を外から観測して操作する」ためのホスト API 一式。 elements_console
+の操作パネル (ブラウザ + REPL) はこれだけで組んである。 ゲーム本体では使わなくて
+よいが、 画面の作り込み中に「今この変数はいくつか」「この言語は出せるのか」を
+見たいときの入口になる。
+
+```cpp
+// 画面が使っている変数 — JSON の参照表 + ストアの現在値をマージしたもの。
+// 参照だけあって一度も書かれていない変数も、 逆にホストが set_var で作った
+// だけの変数も載る。
+for (auto const& v : sess.list_vars()) {
+    // v.name / v.value / v.used_by = [{要素 id, 参照の種類}]
+    // 種類は JSON のキーそのもの ("text_var" / "visible_var" / "vars_on_focus" …)
+}
+std::string cur;
+sess.get_var("hp", cur);                    // 現在値だけ引く
+
+// 変数が変わったら教えてもらう。 ホストの set_var だけでなく vars_on_focus の
+// 書込やスライダの value_var / display_var 連動など、 全ての書込経路で発火する
+// (同値書込では発火しない)。 画面ごとに session を作り直すので毎回設定する。
+sess.set_var_watcher([](std::string const& name, std::string const& value) {
+    // 注: レンダリング中に呼ばれうる。 記録に留め、 ここで画面を作り直さない
+});
+
+// この画面が出せる言語 ("strings" の lang キーの和集合、 辞書順)
+for (auto const& lang : sess.languages()) { /* 言語切替 UI を組む */ }
+
+// 名前で入力を注入する。 語彙は画面 JSON の "input"."bindings" と同じ表
+// (native → enum の変換はホストアダプタ側の仕事なので混同しないこと)。
+sess.on_key_down(elements_modal::parse_key_code("enter"),
+                 elements_modal::parse_modifier("shift"));
+sess.on_pad_button(elements_modal::parse_pad_button("dpad_up"), true);
+```
+
+`list_widgets()` (id + type の列挙)、 `focus_by_id()` / `activate_by_id()`
+(要素を名指しで動かす)、 `play_animation()` (演出の手動発火) も同じ用途で使える。
+**要素を名指しで動かす API と、 実際の入力を流す API は別物**で、 当たり判定・
+フォーカスナビ・ドラッグの確認は後者でないと意味がない。
+
+画面スタックを直接動かす `navigator::push()` / `pop()` / `replace()` /
+`stack()` も検証ツール向け (通常の遷移は `advance()`)。 いずれもスタックを
+書き換えるだけなので、 画面の作り直しはホストの責務。
 
 ### 入力転送の戻り値 (handled / pass-through)
 
