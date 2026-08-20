@@ -81,6 +81,27 @@ const std::string& navigator::current() const
 	return _stack.empty() ? empty : _stack.back();
 }
 
+void navigator::push(const std::string& name)
+{
+	if (!name.empty()) _stack.push_back(name);
+}
+
+bool navigator::pop()
+{
+	// 最後の 1 枚は降ろさない (空スタック = 終了状態を、 直接操作では作らない。
+	// アプリを畳むのは advance() の exit だけ、 という不変を保つ)。
+	if (_stack.size() <= 1) return false;
+	_stack.pop_back();
+	return true;
+}
+
+void navigator::replace(const std::string& name)
+{
+	if (name.empty()) return;
+	if (_stack.empty()) _stack.push_back(name);
+	else                _stack.back() = name;
+}
+
 nav_step navigator::advance(
 	const std::string& action,
 	const std::map<std::string, transition_spec>& transitions)

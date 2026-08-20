@@ -101,6 +101,9 @@ public:
 	//! @brief スタック深度。
 	std::size_t depth() const { return _stack.size(); }
 
+	//! @brief 画面スタック (下 → 上)。 検証ツールが現在地を表示するのに使う。
+	const std::vector<std::string>& stack() const { return _stack; }
+
 	//! @brief 現画面がスタック起点 (深度 1) か。
 	bool at_entry() const { return _stack.size() == 1; }
 
@@ -116,6 +119,14 @@ public:
 	//!   - スタック更新後の現画面は current() で取得する。
 	nav_step advance(const std::string& action,
 	                 const std::map<std::string, transition_spec>& transitions);
+
+	//! @brief ホスト主導のスタック直接操作。 transitions を経由しない
+	//! 「検証ツールからの直接ジャンプ」用で、 通常の遷移は advance() を使う。
+	//! いずれもスタックを書き換えるだけなので、 画面の作り直し (session の
+	//! 張り直し) はホストの責務。
+	void push(const std::string& name);          //!< name を積む (空なら no-op)
+	bool pop();                                  //!< 現画面を降ろす。 残り 1 枚なら false
+	void replace(const std::string& name);       //!< 現画面を name にすげ替える
 
 	// --- focus メモリ ---
 
