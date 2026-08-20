@@ -541,6 +541,43 @@
          return best;
       }
 
+      // Entry point for arrow navigation when nothing is focused yet:
+      // pick the widget furthest along 'dir' (Left -> leftmost, Right ->
+      // rightmost, Up -> topmost, Down -> bottommost). Ties on the primary
+      // axis are broken by the perpendicular axis, then by collection
+      // order, so the result is stable.
+      element* pick_extreme(
+         std::vector<focusable_entry> const& list,
+         arrow_dir dir)
+      {
+         element* best = nullptr;
+         float best_primary = 0.0f;
+         float best_cross = 0.0f;
+         for (auto const& f : list)
+         {
+            float const cx = (f.bounds.left + f.bounds.right) * 0.5f;
+            float const cy = (f.bounds.top + f.bounds.bottom) * 0.5f;
+            // Score so that "larger is better" in every direction.
+            float primary, cross;
+            switch (dir)
+            {
+               case arrow_dir::left:  primary = -cx; cross = -cy; break;
+               case arrow_dir::right: primary =  cx; cross = -cy; break;
+               case arrow_dir::up:    primary = -cy; cross = -cx; break;
+               default:               primary =  cy; cross = -cx; break;
+            }
+            if (!best
+               || primary > best_primary
+               || (primary == best_primary && cross > best_cross))
+            {
+               best = f.el;
+               best_primary = primary;
+               best_cross = cross;
+            }
+         }
+         return best;
+      }
+
       // Wrap-around fallback for pick_directional: when a move in 'dir'
       // finds no candidate (we are at the edge), pick the candidate
       // nearest the *opposite* edge — i.e. moving Down past the bottom
@@ -608,6 +645,16 @@
    void view::focus_skip_disabled(bool on)
    {
       _focus_skip_disabled = on;
+   }
+
+   void view::arrow_focus_enter_directional(bool on)
+   {
+      _arrow_focus_enter_dir = on;
+   }
+
+   bool view::arrow_focus_enter_directional() const
+   {
+      return _arrow_focus_enter_dir;
    }
 
    bool view::focus_skip_disabled() const
@@ -768,8 +815,10 @@
          {
             bool const wrap = _arrow_focus_wrap;
             bool const skip_disabled = _focus_skip_disabled;
+            bool const enter_directional = _arrow_focus_enter_dir;
             with_context_do(
-               [d, wrap, skip_disabled, &handled](auto const& ctx, auto& _main_element)
+               [d, wrap, skip_disabled, enter_directional, &handled]
+               (auto const& ctx, auto& _main_element)
                {
                   std::vector<focusable_entry> list;
                   collect_focusables(ctx, _main_element, list);
@@ -808,8 +857,13 @@
                   element* target = nullptr;
                   if (!cur_collected)
                   {
-                     // No matching focus yet: take the first focusable.
-                     target = list.front().el;
+                     // No matching focus yet. Legacy behavior takes the
+                     // first focusable; with enter_directional the arrow
+                     // instead lands on the widget furthest in the pressed
+                     // direction (Right -> rightmost, and so on).
+                     target = enter_directional
+                        ? pick_extreme(list, d)
+                        : list.front().el;
                   }
                   else
                   {

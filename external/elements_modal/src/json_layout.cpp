@@ -5057,6 +5057,7 @@ input_action_config parse_input_actions(const picojson::object& input_obj)
 // JSON 例:
 //   "input": {
 //     "arrow_focus_nav": true,
+//     "arrow_focus_enter": "directional",  // first (既定) / directional
 //     "dpad_mode":         "both",     // disabled / focus / value / both
 //     "left_stick_mode":   "focus",
 //     "right_stick_mode":  "value",
@@ -5089,6 +5090,9 @@ std::function<void(ce::view&)> build_input_applier(
 
 		bool skip_disabled_set = false;
 		bool skip_disabled = false;
+
+		bool enter_dir_set = false;
+		bool enter_dir = false;
 
 		bool repeat_set = false;
 		int  repeat_delay_ms = 400;
@@ -5130,6 +5134,14 @@ std::function<void(ce::view&)> build_input_applier(
 	if (bool b = false; bool_field(get_field(input_obj, "skip_disabled"), b)) {
 		cfg->skip_disabled_set = true;
 		cfg->skip_disabled = b;
+	}
+	// "arrow_focus_enter": どこにも focus が無い状態で方向キーを押したときに
+	// どれへ入るか。 "first" (既定) = 収集順の先頭 / "directional" = 押した
+	// 方向の端 (右なら一番右)。 初期 focus 無しで開く確認ダイアログ向け。
+	if (auto* v = get_field(input_obj, "arrow_focus_enter"); v && v->is<std::string>()) {
+		std::string const m = v->get<std::string>();
+		cfg->enter_dir_set = true;
+		cfg->enter_dir = (m == "directional" || m == "direction");
 	}
 	if (auto* v = get_field(input_obj, "repeat_delay_ms"); v && pj_is_num(*v)) {
 		cfg->repeat_set = true;
@@ -5231,6 +5243,7 @@ std::function<void(ce::view&)> build_input_applier(
 		if (cfg->arrow_nav_set)   view_.arrow_focus_navigation(cfg->arrow_nav);
 		if (cfg->focus_wrap_set)  view_.arrow_focus_wrap(cfg->focus_wrap);
 		if (cfg->skip_disabled_set) view_.focus_skip_disabled(cfg->skip_disabled);
+		if (cfg->enter_dir_set)   view_.arrow_focus_enter_directional(cfg->enter_dir);
 		if (cfg->repeat_set)      view_.axis_repeat(cfg->repeat_delay_ms,
 		                                            cfg->repeat_rate_ms);
 		if (cfg->hover_focus_set) view_.hover_focus(cfg->hover_focus);

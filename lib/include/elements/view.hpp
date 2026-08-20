@@ -84,6 +84,17 @@ namespace cycfi::elements
       void                    focus_skip_disabled(bool on);
       bool                    focus_skip_disabled() const;
 
+      // Chooses which widget an arrow key focuses when nothing is focused
+      // yet (e.g. a dialog opened without initial focus). Defaults to
+      // false = the first focusable in collection order, preserving legacy
+      // behavior. When enabled, the arrow picks the widget furthest in the
+      // pressed direction instead — Left focuses the leftmost widget,
+      // Right the rightmost, Up the topmost, Down the bottommost. Useful
+      // for confirmation dialogs that deliberately start unfocused so that
+      // the direction pressed selects the option on that side.
+      void                    arrow_focus_enter_directional(bool on);
+      bool                    arrow_focus_enter_directional() const;
+
       // When enabled, moving the mouse over a focusable widget also moves
       // keyboard focus to it, so the hovered widget and the focused widget
       // stay in sync (pointer-driven focus). Defaults to true. Widgets opt
@@ -291,6 +302,7 @@ namespace cycfi::elements
       bool                    _arrow_focus_nav = false;
       bool                    _arrow_focus_wrap = false;
       bool                    _focus_skip_disabled = false;
+      bool                    _arrow_focus_enter_dir = false;
       bool                    _hover_focus = true;
 
       struct pad_key_binding
