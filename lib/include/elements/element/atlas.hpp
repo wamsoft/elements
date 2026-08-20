@@ -119,6 +119,12 @@ namespace cycfi::elements
       bool                    loop() const { return _loop; }
       void                    set_loop(bool l) { _loop = l; }
 
+      // Play again from the first frame on the next draw. Needed for
+      // loop=false animations that are shown more than once: elapsed time
+      // keeps running while the sprite is hidden, so without this the
+      // second showing would start (and stay) at the last frame.
+      void                    restart() { _started = false; }
+
    private:
 
       float                                 _fps;

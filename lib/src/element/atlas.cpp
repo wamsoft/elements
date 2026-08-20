@@ -136,6 +136,13 @@ namespace cycfi::elements
             ? static_cast<std::size_t>(std::fmod(f, static_cast<double>(n)))
             : std::min<std::size_t>(static_cast<std::size_t>(f), n - 1);
          index(idx);
+
+         // ホストがダーティフラグ駆動 (毎フレーム再描画しない) だと、 誰も
+         // dirty にしないので次のフレームが来ず、 アニメが 1 枚目で止まって
+         // 見える。 再生中は自分で再描画を要求する。 loop=false が最終
+         // フレームへ着いたら要求をやめるので、 そこでアイドルへ戻る。
+         if (_loop || idx + 1 < n)
+            ctx.view.refresh(ctx);
       }
       atlas_sprite::draw(ctx);
    }

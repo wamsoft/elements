@@ -3860,6 +3860,26 @@ element_ptr LayoutBuilder::build_animated_sprite(const picojson::object& o)
 	auto sprite = ce::share(
 		ce::animated_sprite(pm, std::move(frames), fps, loop, native));
 	register_id(o, sprite);   // id があればホストから参照可能に
+
+	// "visible_var" で出したり消したりするアニメは、 出るたびに頭から再生する。
+	// 経過時間は隠れている間も進んでいるので、 これが無いと loop=false の
+	// アニメが 2 回目以降ずっと最終フレームのままになる。
+	// (表示制御そのものは apply_visible が最外周で行う)
+	if (std::string vis_var = string_or(o, "visible_var"); !vis_var.empty()) {
+		auto shown = std::make_shared<bool>(true);
+		auto parse = [](const std::string& v) {
+			return !(v == "0" || v == "false" || v.empty());
+		};
+		if (auto* cur = _vars->get(vis_var)) *shown = parse(*cur);
+		std::weak_ptr<ce::animated_sprite> weak = sprite;
+		_vars->subscribe(vis_var, [weak, shown, parse](const std::string& v) {
+			bool const now = parse(v);
+			if (now && !*shown) {
+				if (auto s = weak.lock()) s->restart();
+			}
+			*shown = now;
+		}, sprite);
+	}
 	return sprite;
 }
 
