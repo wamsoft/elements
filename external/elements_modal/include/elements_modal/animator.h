@@ -55,6 +55,11 @@ struct anim_binding
 	// --- 再生状態 (animator が制御) ---
 	bool active   = false;  //!< 現在 tick 対象か (focus/select は発火まで false)。
 	bool reversed = false;  //!< true なら to→from へ逆再生 (focus 解除時)。
+	//! 直近の tick() で完了して active が下りたか。 完了 tick では from 側→
+	//! 最終位置への移動が起きているのに active だけ見ると収集から漏れるため、
+	//! 部分再描画のダーティ矩形収集はこの印も含めて「今フレーム見た目が
+	//! 変わった束縛」を拾う。 次の tick() 冒頭でクリアされる。
+	bool finished_tick = false;
 
 	//! @brief 進捗を読んで対象チャンネルへ反映する。
 	void apply() const
@@ -153,13 +158,17 @@ public:
 		if (_bindings.empty()) return false;
 		bool all = true;
 		bool ticked = false;
+		for (auto& b : _bindings) b.finished_tick = false;
 		for (auto& b : _bindings) {
 			if (!b.active) continue;
 			ticked = true;
 			b.prog.tick(dt_ms);
 			b.apply();
-			if (b.prog.done()) b.active = false;  // 無限ループは done() にならない
-			else               all = false;
+			if (b.prog.done()) {                  // 無限ループは done() にならない
+				b.active = false;
+				b.finished_tick = true;
+			}
+			else all = false;
 		}
 		_all_done = all;
 		return ticked;

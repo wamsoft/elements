@@ -360,7 +360,10 @@ struct overlay_session::impl
 		const xform_state* seen[16];
 		int nseen = 0;
 		for (const auto& b : anim.bindings()) {
-			if (!b.active || !b.st) continue;
+			// active に加えて「この tick で完了した」束縛も拾う。 完了 tick にも
+			// 最終位置への移動があり、 active だけ見ると最終矩形が漏れて
+			// 演出付き要素がそのフレームだけ欠ける (次の全面描画まで残留)。
+			if ((!b.active && !b.finished_tick) || !b.st) continue;
 			bool dup = false;
 			for (int i = 0; i < nseen; ++i)
 				if (seen[i] == b.st.get()) { dup = true; break; }
