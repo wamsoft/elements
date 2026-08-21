@@ -262,6 +262,10 @@ option(TVG_LOADER_TTF "Enable TTF Loader" OFF)
 option(TVG_LOADER_FT "Enable FreeType+HarfBuzz multilingual text loader (mutually exclusive with TVG_LOADER_TTF)" ON)
 option(TVG_LOADER_WEBP "Enable WebP Loader" OFF)
 option(TVG_LOG "Enable log message" OFF)
+# SW ラスタの SIMD カーネル (x64: AVX / ARM: NEON)。ThorVG 側 default は
+# OFF だが、elements は SW 描画のみなので常用する。ビットレベルの検証は
+# external/thorvg の raster ゴールデン比較テストで行う。
+option(TVG_SIMD "Enable CPU Vectorization (SIMD)" ON)
 # ThorVG のファイル I/O を撤去。elements 側で resource_loader 経由のメモリ
 # ロードに統一したため、ThorVG が直接 fopen することはなくなった。
 # option() ではなく FORCE 付き set() を使うのは、ThorVG 側 CMakeLists の
