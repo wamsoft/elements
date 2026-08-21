@@ -5,7 +5,9 @@
 =============================================================================*/
 #include <elements/support/canvas.hpp>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <unordered_map>
 
 namespace cycfi { namespace elements
 {
@@ -844,7 +846,36 @@ namespace cycfi { namespace elements
 
    canvas::text_metrics canvas::measure_text(char const* utf8)
    {
-      return get_text_backend()->measure_text(*this, utf8);
+      // 測定メモ化: limits() はツリー探索 (フォーカスナビ / refresh / レイアウト)
+      // のたびに同じ文字列を測り直し、その都度シェーピングが走る。文字列 +
+      // フォント状態をキーに結果を記憶して 2 回目以降を O(1) にする。
+      // フォント登録は起動時に済む前提 (後から register_font しても既存エントリ
+      // の測定値は既に描画に使われた値なので実害は薄い)。肥大化時は全クリア。
+      auto const& s = get_state();
+      std::string key;
+      key.reserve(s.font_family.size() + s.font_file.size()
+                  + s.text_locale.size() + std::strlen(utf8) + 40);
+      key += s.font_family;
+      key += '\x01';
+      key += s.font_file;
+      key += '\x01';
+      char num[48];
+      std::snprintf(num, sizeof(num), "%.3f|%.4f|", s.font_size, s.letter_spacing);
+      key += num;
+      key += s.text_locale;
+      key += '\x01';
+      key += utf8;
+
+      static std::unordered_map<std::string, text_metrics> cache;
+      auto it = cache.find(key);
+      if (it != cache.end())
+         return it->second;
+
+      auto m = get_text_backend()->measure_text(*this, utf8);
+      if (cache.size() > 4096)
+         cache.clear();
+      cache.emplace(std::move(key), m);
+      return m;
    }
 
    canvas::font_metrics canvas::measure_font()
