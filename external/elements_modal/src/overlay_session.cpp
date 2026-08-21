@@ -318,8 +318,10 @@ struct overlay_session::impl
 	// --- 部分再描画用のダーティ領域 (render_to_buffer_partial) ---
 	// dirty_full_: 全面再描画が必要 (初回 / 入力・focus・演出・set_var 等、
 	// 位置を特定できない契機)。 false の間は dirty_px_* が合併ダーティ矩形
-	// (直近 draw の密度における buffer ピクセル座標。 view の refresh(rect)
-	// は draw 時の canvas 変換適用後 = device px で届く)。
+	// (直近 draw の密度における buffer ピクセル座標)。 view の refresh(rect)
+	// は **view 論理 px** で届く (canvas::user_to_device は初期行列 = 描画
+	// 密度を畳まない相対変換のため) ので、 合併時に直近 render の密度で
+	// buffer px へ直す。
 	// needs_render_ を立てる契機のうち rect を特定できるのは view の
 	// refresh(rect) 経由のみで、 それ以外は update() 冒頭の昇格処理で
 	// 全面扱いになる (契機側のコードは無変更で正しさを保つ)。
@@ -1185,8 +1187,11 @@ bool overlay_session::update()
 
 	// 遅延タスク (focus 適用 / キャレット点滅タイマ / shortcut 発火 等) を実行
 	// してから、 view 側に蓄積された再描画要求 (refresh()) を回収する。
-	// rect 付き要求 (キャレット点滅等) は device px のままダーティ矩形へ合併し、
-	// 全面要求 (引数なし refresh) は全面ダーティにする。
+	// rect 付き要求 (キャレット点滅等) の座標は view 論理 px で届く
+	// (canvas::user_to_device は初期行列 = 描画密度を畳まない Cairo 流儀の
+	// 「相対 device」なので、 追加変換が無いトップレベルでは論理 px のまま)。
+	// 直近 render の密度で buffer px へ直して合併する。 全面要求 (引数なし
+	// refresh) は全面ダーティにする。
 	_impl->view->poll();
 	{
 		bool full = false;
@@ -1196,8 +1201,11 @@ bool overlay_session::update()
 				_impl->needs_render_ = true;
 				_impl->dirty_full_ = true;
 			} else {
-				_impl->mark_dirty_rect_px(area.left, area.top,
-				                          area.right, area.bottom);
+				const float d = (_impl->view_w > 0 && _impl->last_buf_w_ > 0)
+					? static_cast<float>(_impl->last_buf_w_) / _impl->view_w
+					: 1.0f;
+				_impl->mark_dirty_rect_px(area.left * d, area.top * d,
+				                          area.right * d, area.bottom * d);
 			}
 		}
 	}
@@ -1328,9 +1336,13 @@ bool overlay_session::render_to_buffer_impl(std::uint32_t* pixel_buffer,
 			//     カリング (view_bounds との交差判定) がこれを見るので、
 			//     矩形外の要素は shape 生成ごとスキップされる — ラスタだけ
 			//     狭めるより効く (コストの大半は shape 生成側)。
+			//     ⚠ 座標は view 論理 px で渡す。 カリング側の device_to_user は
+			//     初期行列 (= render_scale) を畳まないため、 buffer px のまま
+			//     渡すと縮小描画時に矩形が論理空間で小さくなり、 ダーティ領域
+			//     内にある要素まで誤カリングされて消える。
 			_impl->view->draw_bounds(
-				ce::rect{ static_cast<float>(cl), static_cast<float>(ct),
-				          static_cast<float>(cr), static_cast<float>(cb) });
+				ce::rect{ cl / render_scale, ct / render_scale,
+				          cr / render_scale, cb / render_scale });
 		}
 		_impl->view->draw(cnv);
 		if (partial) _impl->view->draw_bounds(ce::rect{});   // 次フレームへ持ち越さない
