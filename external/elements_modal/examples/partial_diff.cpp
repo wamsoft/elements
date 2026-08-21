@@ -13,7 +13,9 @@
 // なので CI / コマンドラインで回せる。 不一致が出た最初のフレームは A/B/差分
 // マスクを BMP で書き出す。
 //
-// 使い方: elements_modal_partial_diff [出力ディレクトリ (既定 ".")]
+// 使い方: elements_modal_partial_diff [出力ディレクトリ (既定 ".")] [追加レイアウト.json...]
+//   追加レイアウトを与えると "custom" シナリオとして同じ入力列で検証する
+//   (実アプリの画面構造を持ち込んで部分再描画の取りこぼしを機械検出する用)。
 // 終了コード: 0 = 全シナリオ一致、 1 = 不一致あり、 2+ = 起動失敗。
 //---------------------------------------------------------------------------
 #include <elements.hpp>
@@ -160,8 +162,12 @@ std::unique_ptr<elements_modal::overlay_session> make_session(const char* json)
 }
 
 // 1 シナリオを lockstep 駆動して不一致フレーム数を返す (-1 = 起動失敗)。
+// buf_w/buf_h をビュー論理サイズ (kW×kH) より小さく渡すと縮小密度で
+// レンダリングする (実ホストの「present サイズ直接ラスタライズ」相当。
+// device px ↔ user 座標の変換を含むダーティ矩形経路の検証になる)。
 int run_scenario(const char* name, const char* json, int frames,
-                 const std::string& out_dir)
+                 const std::string& out_dir,
+                 int buf_w = kW, int buf_h = kH)
 {
 	auto sess_full    = make_session(json);
 	auto sess_partial = make_session(json);
@@ -170,7 +176,7 @@ int run_scenario(const char* name, const char* json, int frames,
 		return -1;
 	}
 
-	const std::size_t npx = std::size_t(kW) * kH;
+	const std::size_t npx = std::size_t(buf_w) * buf_h;
 	std::vector<std::uint32_t> buf_full(npx, 0u);
 	std::vector<std::uint32_t> buf_partial(npx, 0u);
 	std::vector<std::uint32_t> buf_diff(npx, 0u);
@@ -191,25 +197,25 @@ int run_scenario(const char* name, const char* json, int frames,
 
 		elements_modal::overlay_session::render_rect rect{}, up{};
 		// A: 常に全面 (基準)。
-		if (!sess_full->render_to_buffer(buf_full.data(), kW, kH, kW, kH, rect)) {
+		if (!sess_full->render_to_buffer(buf_full.data(), buf_w, buf_h, kW, kH, rect)) {
 			std::fprintf(stderr, "%s frame %d: full render failed\n", name, frame);
 			return -1;
 		}
 		// B: 実ホストの手順 — 変化があったフレームだけ部分再描画。
 		if (need_b) {
 			if (!sess_partial->render_to_buffer_partial(
-					buf_partial.data(), kW, kH, kW, kH, rect, up)) {
+					buf_partial.data(), buf_w, buf_h, kW, kH, rect, up)) {
 				std::fprintf(stderr, "%s frame %d: partial render failed\n", name, frame);
 				return -1;
 			}
 		}
 
 		// 比較
-		int mism = 0, bl = kW, bt = kH, br = -1, bb = -1;
-		for (int y = 0; y < kH; ++y) {
-			const std::uint32_t* pa = buf_full.data()    + std::size_t(y) * kW;
-			const std::uint32_t* pb = buf_partial.data() + std::size_t(y) * kW;
-			for (int x = 0; x < kW; ++x) {
+		int mism = 0, bl = buf_w, bt = buf_h, br = -1, bb = -1;
+		for (int y = 0; y < buf_h; ++y) {
+			const std::uint32_t* pa = buf_full.data()    + std::size_t(y) * buf_w;
+			const std::uint32_t* pb = buf_partial.data() + std::size_t(y) * buf_w;
+			for (int x = 0; x < buf_w; ++x) {
 				if (pa[x] != pb[x]) {
 					++mism;
 					if (x < bl) bl = x;
@@ -231,9 +237,9 @@ int run_scenario(const char* name, const char* json, int frames,
 					buf_diff[i] = (buf_full[i] != buf_partial[i]) ? 0xffff00ffu
 					            : (buf_full[i] & 0x00ffffffu) | 0x40000000u;
 				const std::string base = out_dir + "/pd_" + name;
-				write_bmp((base + "_full.bmp").c_str(),    buf_full.data(),    kW, kH);
-				write_bmp((base + "_partial.bmp").c_str(), buf_partial.data(), kW, kH);
-				write_bmp((base + "_diff.bmp").c_str(),    buf_diff.data(),    kW, kH);
+				write_bmp((base + "_full.bmp").c_str(),    buf_full.data(),    buf_w, buf_h);
+				write_bmp((base + "_partial.bmp").c_str(), buf_partial.data(), buf_w, buf_h);
+				write_bmp((base + "_diff.bmp").c_str(),    buf_diff.data(),    buf_w, buf_h);
 				std::printf(" (dumped)");
 			}
 		}
@@ -264,12 +270,51 @@ int main(int argc, char** argv)
 	setenv("ELEMENTS_TEXTCACHE_OFF", "1", 1);
 #endif
 
+	// 各シナリオは等倍と縮小密度 (present サイズ直接ラスタライズ相当) の
+	// 両方で検証する。 縮小時は device px ↔ view 論理 px の変換を含む
+	// ダーティ矩形/カリング経路が exercised される (等倍は恒等変換なので
+	// 変換の欠落を検出できない)。
 	int total_bad = 0;
-	const int r1 = run_scenario("static",     kLayoutStatic,    32, out_dir);
-	const int r2 = run_scenario("anim",       kLayoutAnim,      32, out_dir);
-	const int r3 = run_scenario("focus_anim", kLayoutFocusAnim, 32, out_dir);
-	if (r1 < 0 || r2 < 0 || r3 < 0) return 2;
-	total_bad = r1 + r2 + r3;
+	struct scen { const char* name; const char* json; };
+	const scen scens[] = {
+		{"static",     kLayoutStatic},
+		{"anim",       kLayoutAnim},
+		{"focus_anim", kLayoutFocusAnim},
+	};
+	for (auto const& s : scens) {
+		const int r = run_scenario(s.name, s.json, 32, out_dir);
+		if (r < 0) return 2;
+		total_bad += r;
+		const std::string sname = std::string(s.name) + "_s";
+		const int rs = run_scenario(sname.c_str(), s.json, 32, out_dir,
+		                            kW * 3 / 4, kH * 3 / 4);
+		if (rs < 0) return 2;
+		total_bad += rs;
+	}
+
+	for (int a = 2; a < argc; ++a) {
+		std::FILE* f = std::fopen(argv[a], "rb");
+		if (!f) {
+			std::fprintf(stderr, "partial_diff: cannot open %s\n", argv[a]);
+			return 2;
+		}
+		std::string json;
+		char tmp[4096];
+		for (std::size_t n; (n = std::fread(tmp, 1, sizeof(tmp), f)) > 0; )
+			json.append(tmp, n);
+		std::fclose(f);
+		char name[32];
+		std::snprintf(name, sizeof(name), "custom%d", a - 1);
+		const int rc = run_scenario(name, json.c_str(), 32, out_dir);
+		if (rc < 0) return 2;
+		total_bad += rc;
+		// 縮小密度 (present サイズ直接ラスタライズ相当) でも検証する。
+		std::snprintf(name, sizeof(name), "custom%d_s", a - 1);
+		const int rs = run_scenario(name, json.c_str(), 32, out_dir,
+		                            kW * 3 / 4, kH * 3 / 4);
+		if (rs < 0) return 2;
+		total_bad += rs;
+	}
 
 	std::printf(total_bad ? "FAIL: %d frame(s) mismatched\n"
 	                      : "PASS: all frames matched\n", total_bad);
