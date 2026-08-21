@@ -211,8 +211,10 @@ int main()
   `name` に使える論理名 (theme 横断):
   - **Steam Input style**: `face_south` / `face_east` / `face_west` / `face_north` / `dpad_up` / `dpad_down` / `dpad_left` / `dpad_right` / `lb` / `rb` / `lt` / `rt` / `lstick` / `rstick` / `lstick_press` / `rstick_press` / `start` / `back` (= `select`) / `home` / `share`
   - **theme-native** (xbox): `a` / `b` / `x` / `y` / `view` / `menu` / `share` / `guide`
-  - **theme-native** (ps): `cross` / `circle` / `square` / `triangle` / `options` / `touchpad` / `playstation` / `l1` / `r1` / `l2` / `r2` / `l3` / `r3`
+  - **theme-native** (ps): `cross` / `circle` / `square` / `triangle` / `options` / `touchpad` / `playstation` / `l1` / `r1` / `l2` / `r2` / `l3` / `r3`。 刻印基準の別名 `a` (= cross) / `b` (= circle) / `x` (= square) / `y` (= triangle) も可 (刻印は無いが役割が対応: A=決定=cross、 B=cancel=circle)
   - **theme-native** (switch): `a` / `b` / `x` / `y` / `l` / `r` / `zl` / `zr` / `plus` / `minus` / `capture` / `home` / `sl` / `sr`
+
+  フェイスボタンの名前は**位置基準** (`face_south` 等 = 「その位置にあるボタン」の絵) と**刻印基準** (`a`/`b`/`x`/`y` = 「その刻印のボタン」の絵) の 2 系統が全 theme で使える。 入力側 (bindings の `pad`) も同じ 2 系統を持つので、 割り当てと表示は同じ基準どうしで組にすること (任天堂系は A が右・B が下なので、 基準が食い違うと絵と実際のボタンがずれる)。
   - **theme-native** (keyboard): `keyboard_enter` / `keyboard_space` / `keyboard_escape` / `keyboard_arrow_{up,down,left,right}` / `keyboard_a`…`keyboard_z` / `keyboard_0`…`keyboard_9` 等
 
 #### 画像 / sprite / 9-patch 系
@@ -752,7 +754,8 @@ view 全体のナビゲーション設定。 全フィールドが任意:
     "initial_focus": "BTN_START",
 
     // 入力 → named action のバインド (組込デフォルトへの差分)。
-    // 同一入力の再宣言で上書き、 "action": "none" で無効化。
+    // 同一入力の再宣言で上書き、 "action": "none" で無効化、
+    // "action": "passthrough" で未処理化 (消費せずホストへ素通し。 後述)。
     // mouse は "right"/"middle" (左クリックは widget 直接操作)、 wheel は "up"/"down"
     "bindings": [
         { "key": "escape", "action": "cancel" },
@@ -807,6 +810,10 @@ action に再宣言しても登録はスキップされる (キー合成の自�
 
 - `cancel` / `none` の force 既定は true (text input focus 中も効く)。
   他 action は false (text 編集優先)。 `"force"` で個別上書き可。
+- `"action": "passthrough"` は何も bind しない = その入力を**未処理のまま
+  ホストへ素通し**する (組込デフォルトも無効化した上で)。 常駐する非モーダル
+  オーバレイが「この入力は下のアプリのもの」と宣言するのに使う。 `"none"` は
+  消費して何もしない (下へは届かない) のに対し、 こちらは消費自体をやめる。
 - Esc の旧 hard-code (`on_key_down` 直 `begin_finish`) は撤廃済み。 バインド
   差し替え / 無効化で画面ごとに戻る挙動を制御できる。
 - SE はアクション発火時に `event_callback("<se>", false, SE名)` で通知
@@ -816,7 +823,8 @@ action に再宣言しても登録はスキップされる (キー合成の自�
 
 - `key`: `"enter"` / `"escape"` (`"esc"`) / `"tab"` / `"space"` / `"backspace"` / `"delete"` / `"insert"` / `"left"` / `"right"` / `"up"` / `"down"` / `"page_up"` (`"pgup"`) / `"page_down"` (`"pgdn"`) / `"home"` / `"end"` / `"a"`〜`"z"` / `"0"`〜`"9"` / `"f1"`〜`"f12"`
 - `mods` 配列要素: `"shift"` / `"ctrl"` (`"control"`) / `"alt"` / `"super"` (`"cmd"` / `"command"`) / `"action"` (= Ctrl on Win/Linux, Cmd on Mac)
-- `pad`: `"a"` / `"b"` / `"x"` / `"y"` / `"dpad_up"` / `"dpad_down"` / `"dpad_left"` / `"dpad_right"` / `"lb"` (`"l1"`) / `"rb"` (`"r1"`) / `"lt"` (`"l2"` / `"lt_click"`) / `"rt"` (`"r2"` / `"rt_click"`) / `"l3"` / `"r3"` / `"back"` / `"start"` / `"guide"`
+- `pad`: `"a"` / `"b"` / `"x"` / `"y"` / `"dpad_up"` / `"dpad_down"` / `"dpad_left"` / `"dpad_right"` / `"lb"` (`"l1"`) / `"rb"` (`"r1"`) / `"lt"` (`"l2"` / `"lt_click"`) / `"rt"` (`"r2"` / `"rt_click"`) / `"l3"` / `"r3"` / `"back"` / `"start"` / `"guide"` / `"face_south"` / `"face_east"` / `"face_west"` / `"face_north"`
+  - フェイスボタンは**刻印基準** (`"a"`/`"b"`/`"x"`/`"y"`) と**位置基準** (`"face_*"`) の 2 系統。 1 回の押下で両方が届くので、 ボタンごとにどちらで縛るかを選ぶ (任天堂系と Xbox で X/Y の位置が入れ替わるため)。 説明表示の `pad_icon` も同じ 2 系統の名前を持つので、 割り当てと表示は同じ基準どうしで組にする (例: `"pad": "a"` の説明は `name: "a"`、 `"pad": "face_north"` の説明は `name: "face_north"`)
 - `pad_axis_mode`: `"disabled"` / `"focus"` / `"value"` / `"both"`
 
 ## イベント callback
