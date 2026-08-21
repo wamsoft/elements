@@ -18,6 +18,12 @@ namespace elements_modal {
 //!        アニメーションの経過時間計算に使う (絶対原点は不定で差分のみ意味を持つ)。
 std::uint64_t em_now_ms();
 
+//! @brief em_now_ms の供給元を差し替える (nullptr で steady_clock 既定へ戻す)。
+//!        検証ツールがフレーム単位で時間を決定的に進める (演出の tick を
+//!        再現可能にする) ために使う。 通常ホストは触らない。
+using em_clock = std::uint64_t (*)();
+void em_set_clock(em_clock clock);
+
 //! @brief printf 形式の診断ログ。 SDL_Log() の置き換え。 シンク未設定なら
 //!        stderr へ "elements_modal" 接頭辞 + 改行付きで出力する。
 void em_logf(const char* fmt, ...);

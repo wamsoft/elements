@@ -9,8 +9,16 @@
 
 namespace elements_modal {
 
+static em_clock g_clock = nullptr;
+
+void em_set_clock(em_clock clock)
+{
+	g_clock = clock;
+}
+
 std::uint64_t em_now_ms()
 {
+	if (g_clock) return g_clock();
 	using namespace std::chrono;
 	return static_cast<std::uint64_t>(
 		duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());

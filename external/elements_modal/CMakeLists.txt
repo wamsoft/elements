@@ -96,6 +96,8 @@ if (ELEMENTS_MODAL_BUILD_EXAMPLES)
 	set(_em_examples
 		elements_modal_hello_example=examples/hello_modal.cpp
 		elements_modal_navigator_example=examples/navigator_screens.cpp
+		elements_modal_partial_diff=examples/partial_diff.cpp
+		elements_modal_layout_shot=examples/layout_shot.cpp
 	)
 	foreach (_em_pair IN LISTS _em_examples)
 		string(REPLACE "=" ";" _em_kv "${_em_pair}")
