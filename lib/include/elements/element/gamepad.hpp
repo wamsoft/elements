@@ -40,7 +40,14 @@ namespace cycfi::elements
       l3, r3,
 
       // Misc.
-      back, start, guide
+      back, start, guide,
+
+      // Face buttons addressed by *position* instead of label.
+      // A single physical press also raises the label-based value
+      // above (a/b/x/y); a binding picks whichever basis it wants.
+      // Nintendo pads label the south button B and the east button A,
+      // so "the button on the right" is only expressible this way.
+      face_south, face_east, face_west, face_north
    };
 
    /**

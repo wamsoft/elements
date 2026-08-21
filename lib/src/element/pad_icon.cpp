@@ -103,6 +103,10 @@ namespace cycfi::elements
             {"circle",   "playstation_button_circle"},
             {"square",   "playstation_button_square"},
             {"triangle", "playstation_button_triangle"},
+            // Label-basis aliases. PlayStation has no A/B/X/Y prints, but
+            // the roles line up: A(accept)=cross, B(cancel)=circle.
+            {"a", "playstation_button_cross"},  {"b", "playstation_button_circle"},
+            {"x", "playstation_button_square"}, {"y", "playstation_button_triangle"},
             // dpad
             {"dpad_up",    "playstation_dpad_up"},
             {"dpad_down",  "playstation_dpad_down"},
@@ -194,6 +198,9 @@ namespace cycfi::elements
             {"face_east",  "keyboard_escape"},
             {"face_west",  "keyboard_shift"},
             {"face_north", "keyboard_tab"},
+            // Label-basis aliases (same keys as the positional names).
+            {"a", "keyboard_enter"}, {"b", "keyboard_escape"},
+            {"x", "keyboard_shift"}, {"y", "keyboard_tab"},
             {"dpad_up",    "keyboard_arrow_up"},
             {"dpad_down",  "keyboard_arrow_down"},
             {"dpad_left",  "keyboard_arrow_left"},
