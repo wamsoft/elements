@@ -142,6 +142,11 @@ ce::pad_button parse_pad_button(const std::string& s)
 	if (s == "back")            return b::back;
 	if (s == "start")           return b::start;
 	if (s == "guide")           return b::guide;
+	// 位置基準 (刻印ではなく配置で指す)
+	if (s == "face_south")      return b::face_south;
+	if (s == "face_east")       return b::face_east;
+	if (s == "face_west")       return b::face_west;
+	if (s == "face_north")      return b::face_north;
 	return b::unknown;
 }
 
@@ -2967,6 +2972,17 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 // theme は global state (parse_top_level で top-level "pad_theme" を見て
 // 切り替え済み)。 名前 / theme で解決できなければ pad_icon::draw が灰色
 // プレースホルダを出すか、 use_font 時は空 label。
+//
+// 名前は 2 系統ある。 どちらの基準でボタンを指したいかで選ぶこと。
+//   位置基準 face_south / face_east / face_west / face_north
+//     … 「下のボタン」「上のボタン」。 theme が変わっても位置は不変で、
+//        描かれる絵はその機種でその位置にあるボタンになる。
+//   刻印基準 a / b / x / y (PS では cross / circle / square / triangle)
+//     … 「A と書かれたボタン」。 任天堂系は A が右・B が下なので、
+//        位置基準とは別の絵になる。
+// 入力側 (bindings の "pad") も同じ 2 系統を持つので、 割り当てと表示は
+// 同じ基準どうしで組にする (例: "pad":"a" の説明は name:"a"、
+// "pad":"face_north" の説明は name:"face_north")。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 {
@@ -5013,9 +5029,17 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 //                          ["force": bool], ["target": "<id>"] }
 //   - key:   "escape"/"enter"/"a".. (parse_key_code)
 //   - pad:   "a"/"b"/"lb".. (parse_pad_button)
+//           刻印基準 ("a"/"b"/"x"/"y") と位置基準
+//           ("face_south"/"face_east"/"face_west"/"face_north") の 2 系統。
+//           1 回の押下で両方が届くので、 ボタンごとにどちらで縛るかを選ぶ
+//           (任天堂系と Xbox で X/Y の位置が入れ替わるため)。
 //   - mouse: "right"/"middle" (左クリックは widget 直接操作のため対象外)
 //   - wheel: "up"/"down"
 //   - action "none" = 該当入力を無効化 (消費するが何もしない)
+//   - action "passthrough" = 何も bind しない (組込デフォルトも無効化した
+//     上で、 未処理としてホスト側へ素通しする)。 常駐する非モーダル
+//     オーバレイで「この入力は下のゲームのもの」と宣言するのに使う。
+//     "none" だと消費されてゲームまで届かない点が違う。
 //---------------------------------------------------------------------------
 input_action_config parse_input_actions(const picojson::object& input_obj)
 {

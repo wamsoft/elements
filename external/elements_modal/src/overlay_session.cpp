@@ -555,6 +555,13 @@ struct overlay_session::impl
 				view->bind_shortcut(ki, []() {}, /*force=*/true);
 				continue;
 			}
+			if (b.action == "passthrough") {
+				// 何も bind しない = このセッションでは未処理。 組込デフォルトも
+				// 潰した上でホスト (ゲーム) へ素通しになる。 常駐の非モーダル
+				// オーバレイで「この入力は下のゲームのもの」と宣言するのに使う
+				// ("none" だと消費されてゲームに届かない)。
+				continue;
+			}
 			if (is_identity_binding(b.action, ki.key, ki.modifiers)) {
 				continue;   // ネイティブ経路がその action の実装 (再帰防止)
 			}
@@ -568,6 +575,9 @@ struct overlay_session::impl
 			if (b.action == "none") {
 				view->bind_shortcut(btn, []() {}, /*force=*/true);
 				continue;
+			}
+			if (b.action == "passthrough") {
+				continue;   // 上の key 側と同じ (未処理にしてゲームへ素通し)
 			}
 			bool force = b.force_set ? b.force : default_force(b.action);
 			std::string action = b.action;
