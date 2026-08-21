@@ -1432,11 +1432,10 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 {
 	if (!active()) return;
 	// hover の hilite 変化は hovered_id_slot の変化 (update の矩形ダーティ) と
-	// widget 自身の refresh(rect) で矩形として届くので、 移動イベントでは全面
-	// ダーティにしない。 cursor-warp ナビの合成 move が毎フォーカス移動で
-	// 届くため、 ここで全面化すると部分再描画が一切効かなくなる。
-	_impl->needs_render_ = true;
-	_impl->last_nav_source = impl::nav_source::mouse;
+	// widget 自身の refresh(rect) で矩形として届くので、 移動イベント自体は
+	// needs_render も立てない (widget 上を通らない移動・cursor-warp ナビの
+	// 合成 move が毎回無変化の全面再描画になっていた)。 drag 中の見た目変化も
+	// tracker widget が refresh(rect) を発行する契約。
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
 	if (_impl->mouse_down) {
@@ -1490,10 +1489,11 @@ void overlay_session::on_mouse_leave()
 bool overlay_session::on_key_down(ce::key_code key, int mods)
 {
 	if (!active()) return false;
-	// 入力そのものでは全面ダーティにしない。 見た目の変化は widget の
+	// 入力そのものでは needs_render を立てない。 見た目の変化は widget の
 	// refresh(rect) / focus 変化 (update の矩形ダーティ) / fire 経由で
-	// 矩形として届く (デスクトップの damage 駆動描画と同じ契約)。
-	_impl->needs_render_ = true;
+	// 矩形として届く (デスクトップの damage 駆動描画と同じ契約)。 無条件に
+	// 立てると「変化なしのキー入力ごとに全面再描画」になり renderCount が
+	// 操作中に過剰となる。
 	_impl->last_nav_source = impl::nav_source::key;
 	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
 	// escape→cancel が view の key shortcut (force=true) として登録されて
@@ -1510,7 +1510,7 @@ bool overlay_session::on_key_down(ce::key_code key, int mods)
 bool overlay_session::on_key_up(ce::key_code key, int mods)
 {
 	if (!active()) return false;
-	_impl->needs_render_ = true;   // 変化は refresh(rect) 経由 (on_key_down 参照)
+	// 変化は refresh(rect) 経由で届く (on_key_down 参照)。
 	ce::key_info ki{
 		.key = key,
 		.action = ce::key_action::release,
@@ -1522,7 +1522,7 @@ bool overlay_session::on_key_up(ce::key_code key, int mods)
 void overlay_session::on_text_input(const char* utf8_text)
 {
 	if (!active() || !utf8_text) return;
-	_impl->needs_render_ = true;   // 変化は refresh(rect) 経由 (on_key_down 参照)
+	// 変化は refresh(rect) 経由で届く (on_key_down 参照)。
 	const char* p = utf8_text;
 	const char* end = p + std::strlen(p);
 	while (p < end) {
@@ -1537,7 +1537,7 @@ bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 {
 	if (!active()) return false;
 	if (button == ce::pad_button::unknown) return false;
-	_impl->needs_render_ = true;   // 変化は refresh(rect) 経由 (on_key_down 参照)
+	// 変化は refresh(rect) 経由で届く (on_key_down 参照)。
 	_impl->last_nav_source = impl::nav_source::key;
 	_impl->view->pad_button_event({button, down});
 	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
@@ -1547,12 +1547,10 @@ void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
 {
 	if (!active()) return;
 	if (axis == ce::pad_axis::unknown) return;
-	// deadzone 未満の微小ノイズ (静止スティックのドリフト) はダーティにしない。
-	// deadzone 超の入力による focus 移動 / 値変化は poll 内の処理が refresh /
-	// focus 変化として別途矩形ダーティになるが、 入力時点でも立てておく。
-	// (旧コードは brace 抜けで dirty_full が無条件実行になっていた)
-	if (std::fabs(value) >= _impl->view->stick_deadzone())
-		_impl->needs_render_ = true;
+	// 入力そのものでは needs_render を立てない。 focus 移動 / 値変化は
+	// poll 内の処理が refresh / focus 変化として矩形ダーティになる
+	// (on_key_down 参照)。 スティックは保持中毎フレーム軸値が届くので、
+	// ここで立てると保持中ずっと無変化の全面再描画が続いてしまう。
 	// スティック/dpad 軸によるナビもキー系入力として扱う (deadzone 未満の
 	// 微小ノイズは無視して mouse 判定を上書きしない)。
 	if (value > 0.5f || value < -0.5f)
