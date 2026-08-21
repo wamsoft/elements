@@ -16,11 +16,25 @@ std::uint64_t em_now_ms()
 		duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
+static em_log_sink g_log_sink = nullptr;
+
+void em_set_log_sink(em_log_sink sink)
+{
+	g_log_sink = sink;
+}
+
 void em_logf(const char* fmt, ...)
 {
-	std::fputs("elements_modal: ", stderr);
 	va_list ap;
 	va_start(ap, fmt);
+	if (g_log_sink) {
+		char buf[1024];
+		std::vsnprintf(buf, sizeof(buf), fmt, ap);
+		va_end(ap);
+		g_log_sink(buf);
+		return;
+	}
+	std::fputs("elements_modal: ", stderr);
 	std::vfprintf(stderr, fmt, ap);
 	va_end(ap);
 	std::fputc('\n', stderr);

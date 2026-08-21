@@ -18,9 +18,15 @@ namespace elements_modal {
 //!        アニメーションの経過時間計算に使う (絶対原点は不定で差分のみ意味を持つ)。
 std::uint64_t em_now_ms();
 
-//! @brief printf 形式の診断ログ。 SDL_Log() の置き換え。 stderr へ
-//!        "elements_modal" 接頭辞 + 改行付きで出力する。
+//! @brief printf 形式の診断ログ。 SDL_Log() の置き換え。 シンク未設定なら
+//!        stderr へ "elements_modal" 接頭辞 + 改行付きで出力する。
 void em_logf(const char* fmt, ...);
+
+//! @brief em_logf の出力先を差し替える (整形済み 1 行、接頭辞・改行なしで届く)。
+//!        コンソール機など stderr が回収できないホストが自前のログ機構へ
+//!        流すために使う。 nullptr で stderr 既定へ戻す。
+using em_log_sink = void (*)(const char* line);
+void em_set_log_sink(em_log_sink sink);
 
 } // namespace elements_modal
 
