@@ -729,11 +729,18 @@
          {
             if (_content.empty())
                return;
+            // Refresh only the outgoing and incoming focus elements — a
+            // full-view refresh here defeats partial redraw on hosts that
+            // track damage rects (the focus frames are all that changed).
+            std::vector<element*> prev_path;
+            walk_focus_path(_main_element, prev_path);
             _main_element.end_focus();
             if (descend_set_focus(_main_element, ep))
             {
                _main_element.begin_focus(element::focus_request::restore_previous);
-               base_view::refresh();
+               if (!prev_path.empty())
+                  refresh(*prev_path.back());
+               refresh(*ep);
                _is_focus = _main_element.focus();
             }
          }
@@ -752,11 +759,16 @@
             if (_content.empty())
                return;
 
+            // Targeted refresh — see focus(element&) above.
+            std::vector<element*> prev_path;
+            walk_focus_path(_main_element, prev_path);
             _main_element.end_focus();
             if (descend_set_focus(_main_element, e.get()))
             {
                _main_element.begin_focus(element::focus_request::restore_previous);
-               base_view::refresh();
+               if (!prev_path.empty())
+                  refresh(*prev_path.back());
+               refresh(*e);
                _is_focus = _main_element.focus();
             }
          }
@@ -875,13 +887,34 @@
                   if (!target || target == cur_collected)
                      return;
 
+                  // Refresh only the outgoing and incoming focus rects — a
+                  // whole-view refresh defeats partial redraw on hosts that
+                  // track damage rects. The bounds come from the collected
+                  // list (no tree walk / re-measure). Inflate a little for
+                  // focus frames drawn around the widget.
+                  rect target_bounds;
+                  for (auto const& f : list)
+                     if (f.el == target)
+                     {
+                        target_bounds = f.bounds;
+                        break;
+                     }
+                  auto inflate =
+                     [](rect r)
+                     {
+                        r.left -= 8; r.top -= 8;
+                        r.right += 8; r.bottom += 8;
+                        return r;
+                     };
                   _main_element.end_focus();
                   if (descend_set_focus(_main_element, target))
                   {
                      _main_element.begin_focus(
                         element::focus_request::restore_previous);
                      handled = true;
-                     ctx.view.refresh(ctx);
+                     if (cur_collected)
+                        ctx.view.refresh(ctx, inflate(cur_bounds));
+                     ctx.view.refresh(ctx, inflate(target_bounds));
                   }
                },
                *this, _current_bounds
@@ -902,6 +935,9 @@
          with_context_do(
             [reverse, &handled](auto const& ctx, auto& _main_element)
             {
+               // Targeted refresh — see the arrow-nav branch above.
+               std::vector<element*> prev_path;
+               walk_focus_path(_main_element, prev_path);
                _main_element.end_focus();
                _main_element.begin_focus(
                   reverse
@@ -910,7 +946,14 @@
                );
                handled = _main_element.focus() != nullptr;
                if (handled)
-                  ctx.view.refresh(ctx);
+               {
+                  if (!prev_path.empty())
+                     ctx.view.refresh(*prev_path.back());
+                  std::vector<element*> new_path;
+                  walk_focus_path(_main_element, new_path);
+                  if (!new_path.empty())
+                     ctx.view.refresh(*new_path.back());
+               }
             },
             *this, _current_bounds
          );
