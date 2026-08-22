@@ -40,6 +40,7 @@ namespace cycfi::elements
 
       bool                    key(context const& ctx, key_info k) override;
       bool                    pad_axis(context const& ctx, pad_axis_info info) override;
+      bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
 
       bool                    wants_focus() const override;
       void                    begin_focus(focus_request req) override;

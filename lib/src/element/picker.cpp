@@ -261,6 +261,18 @@ namespace cycfi::elements
    // ==================================================================
    // framed_cycle_picker
    // ==================================================================
+   bool cycle_picker::cursor(context const& ctx, point /*p*/, cursor_tracking status)
+   {
+      // Pointer-driven focus, same as basic_button::cursor: hovering moves
+      // keyboard focus here (unless the view disabled hover_focus), so
+      // focus_row highlights and focus frames respond to the mouse for
+      // pickers, not just buttons. Fires only on the transition in.
+      if (status != cursor_tracking::leaving && !focused()
+          && ctx.enabled && is_enabled() && ctx.view.hover_focus())
+         ctx.view.focus(*this);
+      return false;
+   }
+
    framed_cycle_picker::framed_cycle_picker(
       std::vector<std::string> options, std::size_t initial)
     : _options(std::move(options))
@@ -485,6 +497,18 @@ namespace cycfi::elements
    // ==================================================================
    // segmented_picker
    // ==================================================================
+   bool framed_cycle_picker::cursor(context const& ctx, point /*p*/, cursor_tracking status)
+   {
+      // Pointer-driven focus, same as basic_button::cursor: hovering moves
+      // keyboard focus here (unless the view disabled hover_focus), so
+      // focus_row highlights and focus frames respond to the mouse for
+      // pickers, not just buttons. Fires only on the transition in.
+      if (status != cursor_tracking::leaving && !focused()
+          && ctx.enabled && is_enabled() && ctx.view.hover_focus())
+         ctx.view.focus(*this);
+      return false;
+   }
+
    segmented_picker::segmented_picker(std::vector<std::string> options, std::size_t initial)
     : _options(std::move(options))
     , _index(_options.empty() ? 0 : std::min(initial, _options.size() - 1))
@@ -683,4 +707,17 @@ namespace cycfi::elements
       }
       return true;
    }
+
+   bool segmented_picker::cursor(context const& ctx, point /*p*/, cursor_tracking status)
+   {
+      // Pointer-driven focus, same as basic_button::cursor: hovering moves
+      // keyboard focus here (unless the view disabled hover_focus), so
+      // focus_row highlights and focus frames respond to the mouse for
+      // pickers, not just buttons. Fires only on the transition in.
+      if (status != cursor_tracking::leaving && !focused()
+          && ctx.enabled && is_enabled() && ctx.view.hover_focus())
+         ctx.view.focus(*this);
+      return false;
+   }
+
 }

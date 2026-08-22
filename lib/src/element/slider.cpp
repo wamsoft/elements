@@ -234,6 +234,19 @@ namespace cycfi::elements
       return true;
    }
 
+   bool slider_base::cursor(context const& ctx, point p, cursor_tracking status)
+   {
+      // Pointer-driven focus, same as basic_button::cursor: when the cursor
+      // moves over the slider, sync keyboard focus to it (unless the view
+      // disabled hover_focus). Guarded by !focused() so it only fires on the
+      // transition in. This is what makes focus_row highlights and focus
+      // frames respond to mouse hover for sliders, not just buttons.
+      if (status != cursor_tracking::leaving && !focused()
+          && ctx.enabled && is_enabled() && ctx.view.hover_focus())
+         ctx.view.focus(*this);
+      return tracker<>::cursor(ctx, p, status);
+   }
+
    bool slider_base::wants_focus() const
    {
       return true;

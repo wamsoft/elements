@@ -44,6 +44,7 @@ namespace cycfi::elements
       bool                    click(context const& ctx, mouse_button btn) override;
       bool                    key(context const& ctx, key_info k) override;
       bool                    pad_axis(context const& ctx, pad_axis_info info) override;
+      bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
@@ -104,6 +105,7 @@ namespace cycfi::elements
       bool                    click(context const& ctx, mouse_button btn) override;
       bool                    key(context const& ctx, key_info k) override;
       bool                    pad_axis(context const& ctx, pad_axis_info info) override;
+      bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
@@ -158,6 +160,7 @@ namespace cycfi::elements
       bool                    click(context const& ctx, mouse_button btn) override;
       bool                    key(context const& ctx, key_info k) override;
       bool                    pad_axis(context const& ctx, pad_axis_info info) override;
+      bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
 
       std::size_t             index() const { return _index; }
       void                    select(std::size_t i);
