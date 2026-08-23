@@ -151,6 +151,45 @@ namespace cycfi { namespace elements
          return end && *end == '\0' && end != s.c_str() + eq + 1;
       }
 
+      // 既定可変軸 ("tag=val,...")。set_default_variations() で family 単位に
+      // 登録し、フォント参照が軸を指定しないとき補われる (suffix が常に勝つ)。
+      std::map<std::string, std::string>& default_variations_map()
+      {
+         static std::map<std::string, std::string> map_;
+         return map_;
+      }
+
+      // suffix ("#a=1,b=2" or 空) が軸タグを含むか ('#'/',' 直後の "tag=")。
+      bool suffix_has_tag(std::string const& suffix, std::string const& tag)
+      {
+         std::string needle = tag + "=";
+         for (std::size_t pos = 0;
+              (pos = suffix.find(needle, pos)) != std::string::npos; ++pos)
+         {
+            if (pos > 0 && (suffix[pos - 1] == '#' || suffix[pos - 1] == ','))
+               return true;
+         }
+         return false;
+      }
+
+      // suffix に、まだ含まれない軸だけ extra ("tag=val,...") を補う。
+      std::string merge_suffix_axes(std::string suffix, std::string const& extra)
+      {
+         std::istringstream str(extra);
+         std::string tok;
+         while (std::getline(str, tok, ','))
+         {
+            trim(tok);
+            auto eq = tok.find('=');
+            if (eq == std::string::npos || eq == 0)
+               continue;
+            if (suffix_has_tag(suffix, tok.substr(0, eq)))
+               continue;
+            suffix += (suffix.empty() ? "#" : ",") + tok;
+         }
+         return suffix;
+      }
+
       match_result match_ex(font_descr descr)
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
@@ -450,6 +489,24 @@ namespace cycfi { namespace elements
       auto m = match_ex(descr);
       if (m.entry)
       {
+#ifndef ELEMENTS_TVG_GW
+         // 無指定軸の既定 (FT ビルド): set_default_variations の登録軸 →
+         // それでも wght が無ければ wght=400 (CSS の font-weight 既定に合わせ、
+         // fvar 既定が Regular でない VF (Noto VF=Thin 等) も無指定で Regular
+         // 相当に読めるようにする)。明示 suffix が常にタグ単位で勝つ。wght 軸を
+         // 持たない face への wght=400 は各バックエンドが無視する。
+         // gw ビルドは正規化も既定もホスト (エンジン) 側で行う。
+         if (m.entry->variable)
+         {
+            {
+               std::lock_guard<std::mutex> lock(font_map_mutex());
+               auto it = default_variations_map().find(m.family);
+               if (it != default_variations_map().end())
+                  m.suffix = merge_suffix_axes(std::move(m.suffix), it->second);
+            }
+            m.suffix = merge_suffix_axes(std::move(m.suffix), "wght=400");
+         }
+#endif
          // A variation suffix travels on the FILE: the ThorVG loaders and the
          // glyph layout backend split it off, apply the axes, and register
          // the instance under a suffix-aware name.
@@ -657,5 +714,22 @@ namespace cycfi { namespace elements
       auto base = split_variation_suffix(family, suffix);
       std::lock_guard<std::mutex> lock(font_map_mutex());
       return font_map().find(base) != font_map().end();
+   }
+
+   void set_default_variations(std::string const& family,
+                               std::string const& axes)
+   {
+#ifdef ELEMENTS_TVG_GW
+      // gw ビルドは既定軸も正規化もホスト (エンジン) 側で管理する。
+      (void)family; (void)axes;
+#else
+      if (family.empty())
+         return;
+      std::lock_guard<std::mutex> lock(font_map_mutex());
+      if (axes.empty())
+         default_variations_map().erase(family);
+      else
+         default_variations_map()[family] = axes;
+#endif
    }
 }}

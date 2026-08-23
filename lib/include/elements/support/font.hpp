@@ -393,6 +393,21 @@ namespace cycfi { namespace elements
    // drawing). If false, a matching font file must be added to the fonts
    // directory (see load_fonts_from_directory).
    bool font_family_available(std::string const& family);
+
+   ////////////////////////////////////////////////////////////////////////////
+   // set_default_variations — default variable-font axes for `family`
+   // ("tag=val,..."), applied when a font reference does not specify the axis
+   // itself (a "#tag=val" suffix always wins per tag). Pass an empty string
+   // to clear. Without a registration, a variable font referenced with no
+   // wght specification is normalized to wght=400 (matching the CSS
+   // font-weight default) instead of the font's fvar default instance —
+   // fonts whose fvar default is not Regular (e.g. Noto VF = Thin) thus
+   // still read as Regular when unspecified.
+   //
+   // In host-engine (gw loader) builds both the normalization and the
+   // defaults are the host's job — this function is a no-op there.
+   void set_default_variations(std::string const& family,
+                               std::string const& axes);
 }}
 
 #endif
