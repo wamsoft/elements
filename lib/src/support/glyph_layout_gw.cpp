@@ -39,6 +39,7 @@ namespace cycfi { namespace elements
          float          ascent = 0;     // font units, positive
          float          descent = 0;    // font units, positive
          float          height = 0;     // font units
+         bool           variable = false;   // fvar あり (bridge->isVariable)
       };
 
       struct gw_state
@@ -77,6 +78,8 @@ namespace cycfi { namespace elements
          face.ascent = std::abs(float(b->ascender(b->ctx, handle)));
          face.descent = std::abs(float(b->descender(b->ctx, handle)));
          face.height = float(b->height(b->ctx, handle));
+         // isVariable は後付けメンバ: 旧ホストでは NULL (= 不明 → 非可変扱い)
+         face.variable = b->isVariable && b->isVariable(b->ctx, handle) != 0;
          auto& gw = get_gw();
          gw.faces[key] = face;
          return true;
@@ -306,6 +309,12 @@ namespace cycfi { namespace elements
                                 std::size_t size) override
       {
          open_face(key, data, size);
+      }
+
+      bool is_variable(std::string const& key) override
+      {
+         auto const* f = find_face(key);
+         return f && f->variable;
       }
    };
 

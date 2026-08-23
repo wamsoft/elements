@@ -296,6 +296,12 @@ namespace cycfi { namespace elements
       // gw ローダビルド: `file` はホストキー。バイトをここで読まず、ThorVG の
       // path 版 Text::load (gw ローダがブリッジ openFaceByKey でホストの共有
       // バッファから開く) と glyph backend にキーをそのまま渡す (ゼロコピー)。
+      // 計測側 (glyph_layout_gw) を先に開き、fvar の有無 (可変フォントか) を
+      // ブリッジ経由で教えてもらう — "#tag=val" 解決の VF 優先に使う。
+      get_font_backend()->initialize();
+      get_font_backend()->register_font(file);
+      auto variable = get_font_backend()->is_variable(file);
+
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
          font_entry entry;
@@ -303,6 +309,7 @@ namespace cycfi { namespace elements
          entry.weight = uint8_t(weight);
          entry.slant = uint8_t(slant);
          entry.stretch = uint8_t(stretch);
+         entry.variable = variable;
          font_map()[family].push_back(std::move(entry));
       }
 
@@ -312,13 +319,9 @@ namespace cycfi { namespace elements
       auto thorvg_name = stem_from_path(file);
       auto embedded = query_embedded_family(thorvg_name);
       if (!embedded.empty() && embedded != family)
-         add_family_alias(embedded, file, weight, slant, stretch);
+         add_family_alias(embedded, file, weight, slant, stretch, variable);
       if (thorvg_name != family)
-         add_family_alias(thorvg_name, file, weight, slant, stretch);
-
-      // 計測側 (glyph_layout_gw) もキーで開く (共有 face)
-      get_font_backend()->initialize();
-      get_font_backend()->register_font(file);
+         add_family_alias(thorvg_name, file, weight, slant, stretch, variable);
 
       return embedded;
 #else

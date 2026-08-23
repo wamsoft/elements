@@ -77,6 +77,12 @@ namespace cycfi { namespace elements
       virtual void register_font_buffer(std::string const& /*key*/,
                                         std::uint8_t const* /*data*/,
                                         std::size_t /*size*/) {}
+
+      // Whether a registered font has variable axes (fvar). Used to prefer
+      // the variable entry when a "#tag=val" instance suffix resolves against
+      // a family that has both static and variable registrations. Backends
+      // that cannot tell return false.
+      virtual bool is_variable(std::string const& /*key*/) { return false; }
    };
 
    ////////////////////////////////////////////////////////////////////////////
