@@ -10,8 +10,12 @@
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_MULTIPLE_MASTERS_H
 #include <hb.h>
 #include <hb-ft.h>
+
+#include <cstdint>
+#include <cstdlib>
 
 #include <map>
 #include <mutex>
@@ -56,6 +60,57 @@ namespace cycfi { namespace elements
          return s;
       }
 
+      // Applies fvar design coordinates from a "tag=val[,tag=val...]" spec
+      // (the part after '#' in a font key). Mirrors the ThorVG FT loader's
+      // FtFace::setVariations so measurement matches rendering.
+      void apply_variations(FT_Face face, char const* spec)
+      {
+         if (!face || !spec || !*spec)
+            return;
+         FT_MM_Var* mm = nullptr;
+         if (FT_Get_MM_Var(face, &mm) != 0 || !mm)
+            return;
+         FT_Fixed coords[16];
+         FT_UInt axis_count = mm->num_axis;
+         if (axis_count > 16)
+            axis_count = 16;
+         for (FT_UInt i = 0; i < axis_count; ++i)
+            coords[i] = mm->axis[i].def;
+         bool applied = false;
+         char const* p = spec;
+         while (*p)
+         {
+            while (*p == ' ' || *p == '\t' || *p == ',') ++p;
+            if (!*p) break;
+            char tag[4] = {' ', ' ', ' ', ' '};
+            int tlen = 0;
+            while (*p && *p != '=' && *p != ',')
+            {
+               if (*p != ' ' && *p != '\t' && tlen < 4) tag[tlen++] = *p;
+               ++p;
+            }
+            if (*p != '=') { while (*p && *p != ',') ++p; continue; }
+            ++p;
+            char* end = nullptr;
+            float value = std::strtof(p, &end);
+            if (end == p) { while (*p && *p != ',') ++p; continue; }
+            p = end;
+            FT_ULong packed =
+               (FT_ULong(std::uint8_t(tag[0])) << 24) | (FT_ULong(std::uint8_t(tag[1])) << 16) |
+               (FT_ULong(std::uint8_t(tag[2])) << 8)  |  FT_ULong(std::uint8_t(tag[3]));
+            for (FT_UInt i = 0; i < axis_count; ++i)
+            {
+               if (mm->axis[i].tag != packed) continue;
+               coords[i] = FT_Fixed(value * 65536.0f);
+               applied = true;
+               break;
+            }
+         }
+         if (applied)
+            FT_Set_Var_Design_Coordinates(face, axis_count, coords);
+         FT_Done_MM_Var(get_ft().library, mm);
+      }
+
       FT_Face get_face(std::string const& file_path)
       {
          auto& ft = get_ft();
@@ -64,6 +119,31 @@ namespace cycfi { namespace elements
          auto it = ft.faces.find(file_path);
          if (it != ft.faces.end())
             return it->second;
+
+         // Variable-font instance key "base#tag=val,...": open a SEPARATE face
+         // from the base (registered memory buffer or file), apply the axes,
+         // and cache it under the full key. Variant faces are intentionally
+         // NOT added to face_order — fallback priority stays on the base
+         // registrations (mirroring the drawing side).
+         if (auto hash = file_path.find('#'); hash != std::string::npos)
+         {
+            auto base = file_path.substr(0, hash);
+            FT_Face face = nullptr;
+            if (auto mb = ft.mem_buffers.find(base); mb != ft.mem_buffers.end())
+            {
+               FT_New_Memory_Face(ft.library, mb->second.data(),
+                  FT_Long(mb->second.size()), 0, &face);
+            }
+            else
+            {
+               FT_New_Face(ft.library, base.c_str(), 0, &face);
+            }
+            if (!face)
+               return nullptr;
+            apply_variations(face, file_path.c_str() + hash + 1);
+            ft.faces[file_path] = face;
+            return face;
+         }
 
          FT_Face face = nullptr;
          if (FT_New_Face(ft.library, file_path.c_str(), 0, &face) == 0)

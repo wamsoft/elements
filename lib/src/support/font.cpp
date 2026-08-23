@@ -70,7 +70,37 @@ namespace cycfi { namespace elements
          return mtx_;
       }
 
-      font_entry const* match(font_descr descr)
+      ////////////////////////////////////////////////////////////////////////
+      // Variable-font instance suffix
+      //
+      // A family token may address a variable-font instance as
+      // "Family#tag=val[,tag=val...]". The base family is looked up in the
+      // font map as usual; the suffix is re-appended to the resolved FILE so
+      // the render/measure backends (ThorVG loaders, glyph layout) apply the
+      // axes and register the instance as a distinct font.
+      ////////////////////////////////////////////////////////////////////////
+      std::string split_variation_suffix(std::string family, std::string& out_suffix)
+      {
+         auto pos = family.find('#');
+         if (pos == std::string::npos)
+         {
+            out_suffix.clear();
+            return family;
+         }
+         out_suffix = family.substr(pos);   // keeps the '#'
+         family.erase(pos);
+         trim(family);
+         return family;
+      }
+
+      struct match_result
+      {
+         font_entry const* entry = nullptr;
+         std::string family;    // matched base family (without suffix)
+         std::string suffix;    // "#tag=val,..." or empty
+      };
+
+      match_result match_ex(font_descr descr)
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
 
@@ -79,7 +109,9 @@ namespace cycfi { namespace elements
          while (getline(str, family, ','))
          {
             trim(family);
-            if (auto i = font_map().find(family); i != font_map().end())
+            std::string suffix;
+            auto base = split_variation_suffix(std::move(family), suffix);
+            if (auto i = font_map().find(base); i != font_map().end())
             {
                int min_diff = 10000;
                font_entry const* best = nullptr;
@@ -98,25 +130,23 @@ namespace cycfi { namespace elements
                   }
                }
                if (best)
-                  return best;
+                  return { best, std::move(base), std::move(suffix) };
             }
          }
-         return nullptr;
+         return {};
+      }
+
+      font_entry const* match(font_descr descr)
+      {
+         return match_ex(descr).entry;
       }
 
       std::string find_matched_family(font_descr descr)
       {
-         std::lock_guard<std::mutex> lock(font_map_mutex());
-
-         std::istringstream str(std::string{descr._families});
-         std::string family;
-         while (getline(str, family, ','))
-         {
-            trim(family);
-            if (font_map().find(family) != font_map().end())
-               return family;
-         }
-         return {};
+         auto m = match_ex(descr);
+         if (!m.entry)
+            return {};
+         return m.suffix.empty() ? m.family : m.family + m.suffix;
       }
 
       ////////////////////////////////////////////////////////////////////////
@@ -332,11 +362,14 @@ namespace cycfi { namespace elements
    ////////////////////////////////////////////////////////////////////////////
    font::font(font_descr descr)
    {
-      auto match_ptr = match(descr);
-      if (match_ptr)
+      auto m = match_ex(descr);
+      if (m.entry)
       {
-         _file = match_ptr->file;
-         _family = find_matched_family(descr);
+         // A variation suffix travels on the FILE: the ThorVG loaders and the
+         // glyph layout backend split it off, apply the axes, and register
+         // the instance under a suffix-aware name.
+         _file = m.entry->file + m.suffix;
+         _family = m.suffix.empty() ? m.family : m.family + m.suffix;
       }
       _size = descr._size;
    }
@@ -510,6 +543,16 @@ namespace cycfi { namespace elements
    ////////////////////////////////////////////////////////////////////////////
    parsed_font_name parse_font_name(std::string const& name)
    {
+      // A variable-font instance suffix ("Family#tag=val,...") is not part of
+      // the PSD-style name: parse the base only and re-append the suffix to
+      // the family, so font resolution (font_descr -> match) receives it and
+      // carries the axes through to the render/measure backends.
+      if (auto hash = name.find('#'); hash != std::string::npos)
+      {
+         auto r = parse_font_name(name.substr(0, hash));
+         r.family += name.substr(hash);
+         return r;
+      }
       auto info = parse_font_filename(name);   // 同一 TU の anon 実装を流用
       parsed_font_name r;
       r.family  = info.family;
@@ -523,7 +566,11 @@ namespace cycfi { namespace elements
    {
       if (family.empty())
          return false;
+      // Availability is decided on the base family; the variation suffix only
+      // selects an instance of it.
+      std::string suffix;
+      auto base = split_variation_suffix(family, suffix);
       std::lock_guard<std::mutex> lock(font_map_mutex());
-      return font_map().find(family) != font_map().end();
+      return font_map().find(base) != font_map().end();
    }
 }}

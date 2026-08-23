@@ -23,11 +23,22 @@ namespace cycfi { namespace elements
 
       std::string stem_from_path(std::string const& path)
       {
-         auto slash = path.find_last_of("/\\");
+         // A variable-font instance suffix ("#tag=val,...") stays in the stem —
+         // it must match the ThorVG loader's suffix-aware font name
+         // (tvg::fontname), and the extension is looked up only in the part
+         // before the suffix (a '.' inside e.g. "wdth=87.5" is not an
+         // extension).
+         auto hash = path.find('#');
+         auto const& base = (hash == std::string::npos)
+            ? path : path.substr(0, hash);
+         auto slash = base.find_last_of("/\\");
          auto start = (slash != std::string::npos) ? slash + 1 : 0;
-         auto dot = path.rfind('.');
-         auto end = (dot != std::string::npos && dot > start) ? dot : path.size();
-         return path.substr(start, end - start);
+         auto dot = base.rfind('.');
+         auto end = (dot != std::string::npos && dot > start) ? dot : base.size();
+         auto stem = base.substr(start, end - start);
+         if (hash != std::string::npos)
+            stem += path.substr(hash);
+         return stem;
       }
 
       auto clamp8 = [](float v) -> uint8_t {
