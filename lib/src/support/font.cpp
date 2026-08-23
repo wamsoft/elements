@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <vector>
 #include <cmath>
+#include <cstdlib>
 
 namespace cycfi { namespace elements
 {
@@ -100,15 +101,43 @@ namespace cycfi { namespace elements
          std::string suffix;    // "#tag=val,..." or empty
       };
 
+      // "wght=700" 形状 (1..4 文字の軸タグ + '=' + 数値) はファミリ名ではなく
+      // 可変フォント軸指定 — families のカンマ分割で multi-axis suffix
+      // ("Family#wght=700,wdth=75") が千切れたときの復元判定に使う。
+      bool is_axis_token(std::string const& s)
+      {
+         auto eq = s.find('=');
+         if (eq == std::string::npos || eq < 1 || eq > 4)
+            return false;
+         char* end = nullptr;
+         std::strtod(s.c_str() + eq + 1, &end);
+         return end && *end == '\0' && end != s.c_str() + eq + 1;
+      }
+
       match_result match_ex(font_descr descr)
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
 
-         std::istringstream str(std::string{descr._families});
-         std::string family;
-         while (getline(str, family, ','))
+         // families をカンマで分割。 ただし軸トークンは直前の '#' 付き
+         // トークンの suffix の続きなので連結し直す。
+         std::vector<std::string> tokens;
          {
-            trim(family);
+            std::istringstream str(std::string{descr._families});
+            std::string piece;
+            while (getline(str, piece, ','))
+            {
+               trim(piece);
+               if (!tokens.empty()
+                   && tokens.back().find('#') != std::string::npos
+                   && is_axis_token(piece))
+                  tokens.back() += "," + piece;
+               else
+                  tokens.push_back(std::move(piece));
+            }
+         }
+
+         for (auto& family : tokens)
+         {
             std::string suffix;
             auto base = split_variation_suffix(std::move(family), suffix);
             if (auto i = font_map().find(base); i != font_map().end())
