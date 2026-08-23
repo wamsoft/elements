@@ -55,7 +55,44 @@ namespace cycfi { namespace elements
          std::uint8_t   weight;
          std::uint8_t   slant;
          std::uint8_t   stretch;
+         bool           variable = false;   // fvar を持つ (可変フォント)
       };
+
+      // sfnt テーブルディレクトリに 'fvar' があるか (可変フォント判定)。
+      // 同じファミリが static 版と VF 版の両方で登録されたとき、 "#tag=val"
+      // サフィックス付き解決で VF 側を選ぶために登録時へ記録しておく。
+      bool sniff_fvar(std::uint8_t const* data, std::size_t size)
+      {
+         auto u32 = [&](std::size_t off) -> std::uint32_t {
+            return (std::uint32_t(data[off]) << 24) | (std::uint32_t(data[off + 1]) << 16)
+                 | (std::uint32_t(data[off + 2]) << 8) | std::uint32_t(data[off + 3]);
+         };
+         auto u16 = [&](std::size_t off) -> std::uint32_t {
+            return (std::uint32_t(data[off]) << 8) | std::uint32_t(data[off + 1]);
+         };
+         if (!data || size < 12)
+            return false;
+         std::size_t base = 0;
+         auto tag = u32(0);
+         if (tag == 0x74746366)                 // 'ttcf': 先頭フォントで判定
+         {
+            if (size < 16) return false;
+            base = u32(12);
+            if (base + 12 > size) return false;
+            tag = u32(base);
+         }
+         if (tag != 0x00010000 && tag != 0x4F54544F && tag != 0x74727565)  // sfnt/OTTO/true
+            return false;
+         auto num = u16(base + 4);
+         for (std::uint32_t i = 0; i < num; ++i)
+         {
+            auto rec = base + 12 + 16 * std::size_t(i);
+            if (rec + 16 > size) return false;
+            if (u32(rec) == 0x66766172)         // 'fvar'
+               return true;
+         }
+         return false;
+      }
 
       using font_map_type = std::map<std::string, std::vector<font_entry>>;
 
@@ -142,10 +179,18 @@ namespace cycfi { namespace elements
             auto base = split_variation_suffix(std::move(family), suffix);
             if (auto i = font_map().find(base); i != font_map().end())
             {
+               // "#tag=val" サフィックス付きは可変フォントのエントリを優先する
+               // (同じファミリで static 版と VF 版が両方登録されているとき、
+               //  static 側を掴むと軸が黙って効かないため)。
+               bool const want_var = !suffix.empty() &&
+                  std::any_of(i->second.begin(), i->second.end(),
+                              [](font_entry const& e) { return e.variable; });
                int min_diff = 10000;
                font_entry const* best = nullptr;
                for (auto const& entry : i->second)
                {
+                  if (want_var && !entry.variable)
+                     continue;
                   // Biased score: slant (3.0) > weight (1.0) > stretch (0.25)
                   auto diff =
                      (std::abs(int(descr._weight) - int(entry.weight)) * 1.0) +
@@ -217,7 +262,8 @@ namespace cycfi { namespace elements
          std::string const& file_key,
          font_constants::weight_enum weight,
          font_constants::slant_enum slant,
-         font_constants::stretch_enum stretch)
+         font_constants::stretch_enum stretch,
+         bool variable = false)
       {
          std::lock_guard<std::mutex> lock(font_map_mutex());
          font_entry entry;
@@ -225,6 +271,7 @@ namespace cycfi { namespace elements
          entry.weight = uint8_t(weight);
          entry.slant = uint8_t(slant);
          entry.stretch = uint8_t(stretch);
+         entry.variable = variable;
          font_map()[family_alias].push_back(std::move(entry));
       }
    }
@@ -279,6 +326,8 @@ namespace cycfi { namespace elements
       if (bytes.empty())
          return {};
 
+      auto variable = sniff_fvar(bytes.data(), bytes.size());
+
       // Register in internal font map. The file path stays the entry key
       // so canvas state and glyph layout (which keys FT_Face by f.file())
       // can find the registered face.
@@ -289,6 +338,7 @@ namespace cycfi { namespace elements
          entry.weight = uint8_t(weight);
          entry.slant = uint8_t(slant);
          entry.stretch = uint8_t(stretch);
+         entry.variable = variable;
          font_map()[family].push_back(std::move(entry));
       }
 
@@ -308,12 +358,12 @@ namespace cycfi { namespace elements
       // so lookups by either name resolve.
       auto embedded = query_embedded_family(thorvg_name);
       if (!embedded.empty() && embedded != family)
-         add_family_alias(embedded, file, weight, slant, stretch);
+         add_family_alias(embedded, file, weight, slant, stretch, variable);
 
       // ファイル名 stem (= PSD の PostScript 名 "NotoSansJP-Regular" 等と一致し
       // やすい) でも font_descr から引けるよう alias 登録する。
       if (thorvg_name != family)
-         add_family_alias(thorvg_name, file, weight, slant, stretch);
+         add_family_alias(thorvg_name, file, weight, slant, stretch, variable);
 
       // FreeType side uses the original file string as the cache key, to
       // match glyph_layout_ft.cpp's get_face(f.file()) lookup.
@@ -339,6 +389,8 @@ namespace cycfi { namespace elements
       if (!data || size == 0 || key.empty())
          return {};
 
+      auto variable = sniff_fvar(data, size);
+
       // Register in internal font map. `key` plays the role normally taken
       // by the file path, so canvas/text rendering will use it as identifier.
       {
@@ -348,6 +400,7 @@ namespace cycfi { namespace elements
          entry.weight = uint8_t(weight);
          entry.slant = uint8_t(slant);
          entry.stretch = uint8_t(stretch);
+         entry.variable = variable;
          font_map()[family].push_back(std::move(entry));
       }
 
@@ -371,11 +424,11 @@ namespace cycfi { namespace elements
       // keeps entry.file == key so the FreeType backend lookup stays consistent.
       auto embedded = query_embedded_family(thorvg_name);
       if (!embedded.empty() && embedded != family)
-         add_family_alias(embedded, key, weight, slant, stretch);
+         add_family_alias(embedded, key, weight, slant, stretch, variable);
 
       // stem 名でも font_descr から引けるよう alias (register_font と同様)。
       if (thorvg_name != family)
-         add_family_alias(thorvg_name, key, weight, slant, stretch);
+         add_family_alias(thorvg_name, key, weight, slant, stretch, variable);
 
       // Register with the active font backend (FreeType etc.). The backend
       // takes its own copy of the buffer. FreeType side uses the raw `key` as
