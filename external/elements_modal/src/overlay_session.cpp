@@ -224,6 +224,9 @@ struct overlay_session::impl
 	float anchor_y = 0.5f;
 	int   margin   = 0;
 
+	// 配置 / 拡縮の基準 (JSON top-level "base")。 既定はウィンドウ全面。
+	overlay_base placement_base = overlay_base::window;
+
 	// logical → pixel 倍率 (canvas に渡す)
 	float scale = 1.0f;
 
@@ -711,6 +714,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->anchor_x = layout.anchor_x;
 	_impl->anchor_y = layout.anchor_y;
 	_impl->margin   = layout.margin;
+	_impl->placement_base = layout.placement_base;
 	_impl->scale  = pixel_scale;
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
@@ -1050,6 +1054,11 @@ void overlay_session::placement(float& out_anchor_x, float& out_anchor_y,
 	out_anchor_x = _impl->anchor_x;
 	out_anchor_y = _impl->anchor_y;
 	out_margin   = _impl->margin;
+}
+
+overlay_base overlay_session::placement_base() const
+{
+	return _impl->placement_base;
 }
 
 //---------------------------------------------------------------------------

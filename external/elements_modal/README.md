@@ -83,6 +83,7 @@ int main()
 | `background_opacity_var` | string | **背景板だけ**の不透明度を変数連動にする (0..1 の 10 進小数)。 中身 (文字やボタン) はそのままなので、 下のゲーム画面を透かしても可読性が落ちない。 全体に掛けると重なった要素が二重にブレンドされて文字が浮くので、 背景 box にだけ掛けるのが要点 |
 | `align` | `"bottom"` / `"top_right"` 等 | **サーフェス内の配置アンカー** (既定 = 中央)。 文字列に `top`/`bottom` が含まれれば縦、 `left`/`right` が含まれれば横をその端へ寄せる (含まれない軸は中央のまま)。 `"center"` は中央 |
 | `margin` | number | `align` が非中央のときのサーフェス端からの余白 px (既定 0) |
+| `base` | `"window"` / `"content"` | **overlay 提示時の配置 / 拡縮の基準** (既定 `"window"` = ホストのウィンドウ全面)。 `"content"` はホストが定義するコンテンツ矩形 (メイン画像の表示領域等) 基準。 ホストは `overlay_session::placement_base()` で参照する。 `run_modal` (独立ウィンドウ) では無視。 widget 内の `base` (text_area の文字方向) とは別物 |
 | `locale` | `"ja-JP"` 等 | label の `"locale"` 未指定時に使う既定ロケール (CJK 同形漢字の出し分け用) |
 | `pad_theme` | `"xbox"` / `"ps"` / `"switch"` / `"keyboard"` / `"none"` | content build 前に global pad theme を切り替える (任意)。 未指定なら呼出側がセットした既存値を維持。 `pad_icon` の name 解決に効く |
 | `content` | element | ルート要素 |

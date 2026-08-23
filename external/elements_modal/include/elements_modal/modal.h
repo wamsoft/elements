@@ -61,6 +61,18 @@ struct result
 };
 
 //---------------------------------------------------------------------------
+// overlay の配置 / 拡縮基準
+//---------------------------------------------------------------------------
+
+//! @brief overlay 提示時の配置 / 拡縮の基準 (JSON top-level "base")。
+//!   window  : ホストのウィンドウ全面を基準にする (既定)
+//!   content : ホストが定義するコンテンツ矩形を基準にする。 どの矩形を
+//!             使うか (メイン画像の表示領域等) はホスト実装に委ねる。
+//! 独立ウィンドウ (run_modal) では使用しない。 パース結果の受け渡しは
+//! overlay_session::placement_base() を参照。
+enum class overlay_base { window, content };
+
+//---------------------------------------------------------------------------
 // 画面遷移 (JSON 駆動ランナ用)
 //---------------------------------------------------------------------------
 
@@ -533,6 +545,12 @@ public:
 	//!        ケース。 ホストが中央固定にしていると align が効かなくなる)。
 	void placement(float& out_anchor_x, float& out_anchor_y,
 	               int& out_margin) const;
+
+	//! @brief JSON top-level "base" で指定された配置 / 拡縮の基準を返す。
+	//!        "content" 指定時のみ overlay_base::content、 それ以外 (未指定
+	//!        含む) は overlay_base::window。 ホストは placement() と併せて
+	//!        提示位置・倍率の決定に使う。
+	overlay_base placement_base() const;
 
 	// --- SDL イベント転送 (surface logical 座標で渡す) ---
 

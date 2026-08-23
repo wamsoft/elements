@@ -77,6 +77,10 @@ struct parsed_layout
 	int  width  = 400;  //!< top-level "size":[w,h] から取得 (run_modal は無視)
 	int  height = 300;
 
+	//! overlay の配置 / 拡縮基準 (JSON top-level "base":
+	//! "window" (既定) | "content")。 modal.h の overlay_base 参照。
+	overlay_base placement_base = overlay_base::window;
+
 	//! 初期キーボードフォーカスを当てる要素 (任意)。
 	//! JSON で要素に "initial_focus": true を付けたものから単一選択。
 	//! ホストは view.content() の後に view.focus(initial_focus) を呼ぶ。

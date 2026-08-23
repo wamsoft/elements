@@ -5436,6 +5436,18 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	}
 	result.margin = static_cast<int>(number_or(o, "margin", 0.0));
 
+	// 配置 / 拡縮の基準: "base": "window" (既定) | "content"。 overlay ホストが
+	// ウィンドウ全面とホスト定義のコンテンツ矩形のどちらを基準に配置・拡縮する
+	// かの宣言 (独立ウィンドウの run_modal では使わない)。 widget 内の "base"
+	// (text_area の文字方向) とは別物。
+	if (auto* v = get_field(o, "base"); v && v->is<std::string>()) {
+		const std::string& b = v->get<std::string>();
+		if (b == "content") result.placement_base = overlay_base::content;
+		else if (b != "window")
+			em_logf("elements_modal: unknown top-level base \"%s\" "
+			        "(expected window/content)", b.c_str());
+	}
+
 	// "pad_theme": "xbox"|"ps"|"switch"|"keyboard"|"none" — 任意。 指定が
 	// あれば content build 前に global pad theme を切り替え、 build_pad_icon
 	// 内の resolve が新 theme で走る。 指定なしの場合は呼出側 (argv 等) で
