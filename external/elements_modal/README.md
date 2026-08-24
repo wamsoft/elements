@@ -91,6 +91,7 @@ int main()
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
 | `strings` | `{id: {lang: string}}` | i18n 文字列テーブル (StringStore)。 `text_id` / `options_id` の解決元 (後述「i18n」節) |
 | `lang` | `"ja"` 等 | i18n の初期表示言語。 実行中の切替はホストの `set_language()` |
+| `font_languages` | `{lang: {map, fallback}}` | **言語連動フォント置換表** (任意)。 `map` = family (または registerFont の別名) → 置換先 family。 widget の `"font"` 指定と theme 既定チェーンの各 family トークンへ適用され、 `"#tag=val"` 軸サフィックスは温存される (JP/SC/TC の同軸 VF ならウェイトが揃う)。 `fallback` = その言語のときに theme 既定 families チェーンを置き換える並び (任意、 エントリの無い言語では swap 前の並びへ戻る)。 適用言語は widget 明示 `"locale"` > `set_language()` の現在言語。 表はプロセスグローバルに言語単位でマージ登録され、 画面 JSON と `app.jsonc` (マニフェスト) の両方で宣言できる (後読みが言語単位で上書き。 全画面同一表の運用を想定 — 異なる表の画面の同時表示は非対応)。 ⚠ `text_area` はビルド時にフォントを固定するため、 表示中の言語切替には追従しない (開き直しで反映) |
 | `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
 | `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
 | `font_scale` | number | 明示 `size` を持たない button / toggle / radio / check_box / label の既定フォント倍率 (既定 1.0 = 従来一致) |

@@ -9,6 +9,8 @@
 #include <infra/string_view.hpp>
 #include <string>
 #include <cstdint>
+#include <utility>
+#include <vector>
 
 namespace cycfi { namespace elements
 {
@@ -87,6 +89,11 @@ namespace cycfi { namespace elements
       uint8_t              _weight = font_constants::weight_normal;
       uint8_t              _slant = font_constants::slant_normal;
       uint8_t              _stretch = font_constants::stretch_normal;
+      // Per-widget language override for language-aware family
+      // substitution (see set_font_language_table below). Empty = use the
+      // current language (set_font_language). Same lifetime rules as
+      // _families: must outlive the draw call (owner = widget member).
+      string_view          _lang;
    };
 
    class font
@@ -408,6 +415,57 @@ namespace cycfi { namespace elements
    // defaults are the host's job — this function is a no-op there.
    void set_default_variations(std::string const& family,
                                std::string const& axes);
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Language-aware font family substitution (言語連動フォント置換)
+   //
+   // Multilingual UIs that ship one font per script (e.g. Noto Sans JP /
+   // TC / SC) author widgets against a single family ("Noto Sans JP") and
+   // substitute the family per display language, so shared-codepoint CJK
+   // glyphs render with the correct regional forms. The table maps a
+   // language code to { family → family }; "#tag=val" variation suffixes
+   // and alias names both work as map keys/values verbatim — substitution
+   // applies to the FAMILY token of each families-list entry, preserving
+   // any "#..." suffix of the reference.
+   //
+   //    set_font_language_table({
+   //       {"sc", {{{"Noto Sans JP", "Noto Sans SC"},
+   //                {"Noto Sans TC", "Noto Sans SC"}}, ""}},
+   //       ...
+   //    });
+   //    set_font_language("sc");   // アプリ既定 (現在言語)
+   //
+   // The effective language of a font reference is font_descr::_lang when
+   // non-empty (per-widget explicit "locale"), else the current language.
+   // Substitution happens inside font construction, so switching language
+   // and invalidating the view re-resolves everything — widgets need no
+   // rebuilding. Languages without a table entry render unsubstituted.
+   struct font_language_entry
+   {
+      // family (or alias, verbatim) → replacement family
+      std::vector<std::pair<std::string, std::string>> map;
+      // optional families list replacing the theme default chain while
+      // this language is active (empty = leave theme untouched). The
+      // swap itself is the modal/host layer's job (needs theme access);
+      // font_language_fallback() exposes the declared value.
+      std::string fallback;
+   };
+   using font_language_table =
+      std::vector<std::pair<std::string, font_language_entry>>;
+
+   void set_font_language_table(font_language_table table);
+   // Merge one language's entry into the table (declared per screen).
+   void set_font_language_entry(std::string const& lang,
+                                font_language_entry entry);
+   void set_font_language(std::string const& lang);
+   std::string get_font_language();
+   // Substitute the family token of one font reference ("Family" or
+   // "Family#tag=val") for `lang` (empty = current language). Returns the
+   // input unchanged when no mapping applies.
+   std::string substitute_font_family(std::string const& name,
+                                      std::string const& lang = {});
+   // The declared fallback families for `lang` (empty = none declared).
+   std::string font_language_fallback(std::string const& lang);
 }}
 
 #endif

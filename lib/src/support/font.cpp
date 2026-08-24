@@ -484,8 +484,108 @@ namespace cycfi { namespace elements
    ////////////////////////////////////////////////////////////////////////////
    // font
    ////////////////////////////////////////////////////////////////////////////
+   ////////////////////////////////////////////////////////////////////////////
+   // Language-aware font family substitution — state and helpers
+   // (public setters/getters are at the end of this file)
+   ////////////////////////////////////////////////////////////////////////////
+   namespace
+   {
+      struct font_language_state
+      {
+         font_language_table  table;
+         std::string          current;
+         std::mutex           mutex;
+      };
+
+      font_language_state& font_lang_state()
+      {
+         static font_language_state state;
+         return state;
+      }
+
+      font_language_entry const* find_lang_entry_nolock(
+         font_language_table const& table, std::string const& lang)
+      {
+         for (auto const& [key, entry] : table)
+            if (key == lang)
+               return &entry;
+         return nullptr;
+      }
+
+      // One reference token: substitute the family part, keep any "#..."
+      // variation suffix of the reference.
+      std::string substitute_token_nolock(
+         font_language_entry const& entry, std::string const& token)
+      {
+         auto hash = token.find('#');
+         std::string base =
+            (hash == std::string::npos) ? token : token.substr(0, hash);
+         std::string suffix =
+            (hash == std::string::npos) ? std::string{} : token.substr(hash);
+         rtrim(base);
+         for (auto const& [from, to] : entry.map)
+            if (from == base)
+               return suffix.empty() ? to : to + suffix;
+         return token;
+      }
+
+      // Substitute every family token of a comma-separated families list
+      // for the effective language (descr._lang if set, else current).
+      // Returns false when nothing applies (out untouched) so the caller
+      // can keep using the original string_view without a copy.
+      bool substitute_families(string_view families, string_view lang,
+                               std::string& out)
+      {
+         auto& st = font_lang_state();
+         std::lock_guard<std::mutex> lock(st.mutex);
+         std::string const use =
+            !lang.empty() ? std::string{lang} : st.current;
+         if (use.empty() || st.table.empty())
+            return false;
+         auto const* entry = find_lang_entry_nolock(st.table, use);
+         if (!entry || entry->map.empty())
+            return false;
+
+         // Same tokenization as match_ex: split on ',' but re-join axis
+         // tokens that continue a preceding "#tag=val" suffix.
+         std::vector<std::string> tokens;
+         {
+            std::istringstream str(std::string{families});
+            std::string piece;
+            while (std::getline(str, piece, ','))
+            {
+               trim(piece);
+               if (!tokens.empty()
+                   && tokens.back().find('#') != std::string::npos
+                   && is_axis_token(piece))
+                  tokens.back() += "," + piece;
+               else
+                  tokens.push_back(std::move(piece));
+            }
+         }
+         bool changed = false;
+         out.clear();
+         for (auto const& tok : tokens)
+         {
+            auto sub = substitute_token_nolock(*entry, tok);
+            if (sub != tok)
+               changed = true;
+            if (!out.empty())
+               out += ", ";
+            out += sub;
+         }
+         return changed;
+      }
+   }
+
    font::font(font_descr descr)
    {
+      // Language-aware family substitution: rewrite the families list for
+      // the effective language before matching. The substituted string only
+      // needs to outlive match_ex (descr._families is a view into it).
+      std::string substituted;
+      if (substitute_families(descr._families, descr._lang, substituted))
+         descr._families = substituted;
       auto m = match_ex(descr);
       if (m.entry)
       {
@@ -731,5 +831,75 @@ namespace cycfi { namespace elements
       else
          default_variations_map()[family] = axes;
 #endif
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Language-aware font family substitution — public API (state/helpers are
+   // defined earlier, before font::font, which consumes them per draw)
+   ////////////////////////////////////////////////////////////////////////////
+   void set_font_language_table(font_language_table table)
+   {
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      st.table = std::move(table);
+   }
+
+   void set_font_language_entry(std::string const& lang,
+                                font_language_entry entry)
+   {
+      if (lang.empty())
+         return;
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      for (auto& [key, e] : st.table)
+      {
+         if (key == lang)
+         {
+            e = std::move(entry);
+            return;
+         }
+      }
+      st.table.emplace_back(lang, std::move(entry));
+   }
+
+   void set_font_language(std::string const& lang)
+   {
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      st.current = lang;
+   }
+
+   std::string get_font_language()
+   {
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      return st.current;
+   }
+
+   std::string substitute_font_family(std::string const& name,
+                                      std::string const& lang)
+   {
+      if (name.empty())
+         return name;
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      auto const& use = lang.empty() ? st.current : lang;
+      if (use.empty())
+         return name;
+      auto const* entry = find_lang_entry_nolock(st.table, use);
+      if (!entry || entry->map.empty())
+         return name;
+      return substitute_token_nolock(*entry, name);
+   }
+
+   std::string font_language_fallback(std::string const& lang)
+   {
+      auto& st = font_lang_state();
+      std::lock_guard<std::mutex> lock(st.mutex);
+      auto const& use = lang.empty() ? st.current : lang;
+      if (use.empty())
+         return {};
+      auto const* entry = find_lang_entry_nolock(st.table, use);
+      return entry ? entry->fallback : std::string{};
    }
 }}

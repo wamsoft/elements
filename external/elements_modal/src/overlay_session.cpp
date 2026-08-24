@@ -884,12 +884,57 @@ bool overlay_session::activate_by_id(const std::string& id)
 	return handled || true;   // 既知 id へ送れた時点で成功扱い
 }
 
+namespace {
+
+// 言語連動フォント: 現在言語をフォント層へ伝え、 置換表に fallback (既定
+// families チェーンの言語別並び) が宣言されていれば theme のフォント
+// ファミリを差し替える (無い言語では最初の swap 前の並びへ戻す)。
+// 変化があったら true (再描画要)。 theme の _families は string_view なので
+// 実体は関数ローカル static に保持する (プロセス寿命)。
+bool apply_font_language(const std::string& lang)
+{
+	namespace ce = cycfi::elements;
+	static std::string s_saved_families;    // swap 前の既定チェーン (初回捕捉)
+	static std::string s_active_families;   // 現在 theme に貼っている実体
+	static bool s_swapped = false;
+
+	bool changed = (ce::get_font_language() != lang);
+	ce::set_font_language(lang);
+
+	std::string fb = ce::font_language_fallback(lang);
+	if (fb.empty() && !s_swapped)
+		return changed;                      // theme は触っていない
+	auto thm = ce::get_theme();
+	if (s_saved_families.empty())
+		s_saved_families = std::string(thm.label_font._families);
+	const std::string& target = fb.empty() ? s_saved_families : fb;
+	if (s_active_families == target && s_swapped == !fb.empty())
+		return changed;
+	s_active_families = target;
+	s_swapped = !fb.empty();
+	std::string_view fams(s_active_families);   // static の寿命を持つ
+	thm.label_font._families    = fams;
+	thm.heading_font._families  = fams;
+	thm.text_box_font._families = fams;
+	thm.system_font._families   = fams;
+	// icon_font ("elements_basic" 独自グリフ) は対象外
+	ce::set_theme(thm);
+	return true;
+}
+
+} // namespace
+
 void overlay_session::set_language(const std::string& lang)
 {
 	if (!_impl) return;
 	_impl->current_lang = lang;
-	// 実際に言語が変わったときだけ再描画 (set_text 済 label の反映)。
-	if (_impl->set_language_fn && _impl->set_language_fn(lang)) {
+	// フォント置換の現在言語 + fallback チェーンを先に反映 (置換表が無ければ
+	// 実質 no-op)。 変化したら表示文字列が同じでも再描画する。
+	bool font_changed = apply_font_language(lang);
+	// 表示文字列 (set_text 済 label) は実際に言語が変わったときだけ再発火。
+	bool strings_changed =
+		_impl->set_language_fn && _impl->set_language_fn(lang);
+	if (font_changed || strings_changed) {
 		_impl->needs_render_ = true;
 		_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	}

@@ -121,6 +121,7 @@ namespace cycfi::elements
       {
          font_descr fd = get_theme().label_font;
          fd._size = sz;
+         fd._lang = _locale;       // 言語連動フォント置換の明示言語 (空=現在言語)
          return fd;
       }
       font_descr fd{};
@@ -128,6 +129,7 @@ namespace cycfi::elements
       fd._weight = r.weight;
       fd._slant = r.slant;
       fd._size = sz;
+      fd._lang = _locale;
       return fd;
    }
 
@@ -139,6 +141,7 @@ namespace cycfi::elements
       {
          font_descr fd = get_theme().label_font;
          fd._size = sz;
+         fd._lang = _locale;       // 言語連動フォント置換の明示言語 (空=現在言語)
          return fd;
       }
       font_descr fd{};
@@ -146,6 +149,7 @@ namespace cycfi::elements
       fd._weight = _weight;
       fd._slant = _slant;
       fd._size = sz;
+      fd._lang = _locale;
       return fd;
    }
 

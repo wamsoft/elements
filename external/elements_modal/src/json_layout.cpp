@@ -5404,6 +5404,38 @@ void collect_var_refs(const picojson::value& v, const std::string& id,
 }
 
 //---------------------------------------------------------------------------
+// "font_languages": 言語連動フォント置換表 — 言語コード →
+//   { "map": { "<family または別名>": "<置換先 family>", ... },
+//     "fallback": "<その言語のときの既定 families チェーン>" (任意) }
+// map は widget の "font" 指定・theme 既定チェーンの各 family トークンに
+// 適用され、 "#tag=val" サフィックスは温存される。 実適用はフォント層
+// (set_font_language_table) + set_language。 表はプロセスグローバルへ
+// 言語単位でマージ登録する (画面 JSON top-level と app.jsonc の両方で宣言
+// でき、 後から読まれた方が言語単位で上書き。 全画面同一表の運用を想定 —
+// 異なる表を持つ画面の同時表示は非対応)。 エントリの無い言語は置換なし。
+//---------------------------------------------------------------------------
+static void apply_font_languages(const picojson::object& o)
+{
+	auto* v = get_field(o, "font_languages");
+	if (!v || !v->is<picojson::object>())
+		return;
+	for (auto const& [lang, ev] : v->get<picojson::object>()) {
+		if (!ev.is<picojson::object>()) continue;
+		auto const& eo = ev.get<picojson::object>();
+		ce::font_language_entry entry;
+		if (auto* m = get_field(eo, "map"); m && m->is<picojson::object>()) {
+			for (auto const& [from, to] : m->get<picojson::object>()) {
+				if (to.is<std::string>())
+					entry.map.emplace_back(from, to.get<std::string>());
+			}
+		}
+		if (auto* f = get_field(eo, "fallback"); f && f->is<std::string>())
+			entry.fallback = f->get<std::string>();
+		ce::set_font_language_entry(lang, std::move(entry));
+	}
+}
+
+//---------------------------------------------------------------------------
 // Top level parsing
 //---------------------------------------------------------------------------
 parsed_layout build_top_level(const picojson::value& root, event_callback cb,
@@ -5467,6 +5499,9 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	if (auto* v = get_field(o, "locale"); v && v->is<std::string>()) {
 		builder.set_default_locale(v->get<std::string>());
 	}
+
+	// "font_languages": 言語連動フォント置換表 (詳細は apply_font_languages)。
+	apply_font_languages(o);
 
 	// "font_scale" (float, 既定 1.0) — このダイアログのウィジェット既定フォント
 	// 倍率。 明示 size を持たない button/toggle/radio/check_box/label が追従する。
@@ -5851,6 +5886,11 @@ app_manifest parse_app_manifest(const std::string& json_utf8)
 		        m.entry.c_str());
 		return m;
 	}
+
+	// アプリ既定の言語連動フォント置換表 (画面 JSON 側の宣言が言語単位で
+	// 上書きする)。 manifest を読むだけで有効になる。
+	apply_font_languages(o);
+
 	m.ok = true;
 	return m;
 }

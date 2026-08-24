@@ -62,7 +62,10 @@ namespace cycfi::elements
       // text に改行が含まれる場合、 描画側は行ごとに描くので高さも行数ぶん
       // 確保する。 これをしないと親 (vtile 等) が 1 行分しか場所を空けず、
       // 後続のウィジェットが 2 行目以降に重なる。
-      auto m = measure_label(ctx.canvas, get_text(), get_font().size(get_font_size()));
+      auto const locale = get_text_locale();
+      auto fd = get_font().size(get_font_size());
+      fd._lang = locale;      // 言語連動フォント置換の明示言語 (空=現在言語)
+      auto m = measure_label(ctx.canvas, get_text(), fd);
       float height = m.line_height * static_cast<float>(m.lines.size());
       return {{m.width, height}, {m.width, height}};
    }
@@ -82,8 +85,11 @@ namespace cycfi::elements
          text_c = text_c.opacity(text_c.alpha * get_theme().disabled_opacity);
 
       canvas_.fill_style(text_c);
-      canvas_.font(get_font(), get_font_size());
-      canvas_.text_locale(get_text_locale());
+      auto const locale = get_text_locale();
+      auto fd_draw = get_font();
+      fd_draw._lang = locale;    // 言語連動フォント置換の明示言語 (空=現在言語)
+      canvas_.font(fd_draw, get_font_size());
+      canvas_.text_locale(locale);
 
       float cx = ctx.bounds.left + (ctx.bounds.width() / 2);
       switch (align & 0x3)
@@ -121,7 +127,9 @@ namespace cycfi::elements
 
       // 複数行: 行ごとに描く。 バックエンドの fill_text が '\n' をどう扱うかに
       // 依存しないよう、 1 行ずつ明示的に描いて limits と行位置を一致させる。
-      auto m = measure_label(canvas_, text, get_font().size(get_font_size()));
+      auto fd_measure = get_font().size(get_font_size());
+      fd_measure._lang = locale;
+      auto m = measure_label(canvas_, text, fd_measure);
       float block_h = m.line_height * static_cast<float>(m.lines.size());
       float y = ctx.bounds.top;   // ブロック上端 (縦アラインで決める)
       switch (align & 0x1C)
