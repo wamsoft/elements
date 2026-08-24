@@ -125,6 +125,13 @@ struct app_manifest
 //! 失敗時は ok=false のオブジェクトを返す (詳細は SDL_Log)。
 app_manifest parse_app_manifest(const std::string& json_utf8);
 
+//! @brief 言語連動フォント置換表の登録 (ホスト直登録口)。
+//! json_utf8 は {"font_languages": {lang: {map, fallback}}} でも
+//! 表そのもの {lang: {map, fallback}} でも良い (jsonc コメント可)。
+//! 画面 JSON / app.jsonc の宣言と同じ経路で言語単位にマージ登録される。
+//! 解析失敗で false (詳細はログ)。
+bool apply_font_languages_json(const std::string& json_utf8);
+
 //---------------------------------------------------------------------------
 // リソースパスリゾルバ (マルチルート探索などのホスト注入点)
 //---------------------------------------------------------------------------

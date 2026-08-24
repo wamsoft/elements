@@ -5895,4 +5895,30 @@ app_manifest parse_app_manifest(const std::string& json_utf8)
 	return m;
 }
 
+//---------------------------------------------------------------------------
+// 言語連動フォント置換表のホスト直登録口 (modal.h 参照)。
+//---------------------------------------------------------------------------
+bool apply_font_languages_json(const std::string& json_utf8)
+{
+	const std::string pre = preprocess_jsonc(json_utf8);
+	picojson::value v;
+	std::string err;
+	picojson::parse(v, pre.cbegin(), pre.cend(), &err);
+	if (!err.empty() || !v.is<picojson::object>()) {
+		em_logf("elements_modal: font_languages parse error: %s",
+		        err.empty() ? "top-level must be object" : err.c_str());
+		return false;
+	}
+	const auto& o = v.get<picojson::object>();
+	if (get_field(o, "font_languages")) {
+		apply_font_languages(o);
+	} else {
+		// 表そのもの ({lang: {map, fallback}}) を受けた場合はラップして流す
+		picojson::object wrap;
+		wrap["font_languages"] = v;
+		apply_font_languages(wrap);
+	}
+	return true;
+}
+
 } // namespace elements_modal
