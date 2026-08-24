@@ -249,6 +249,67 @@ namespace cycfi { namespace elements
          return {};
       }
 
+      // families リスト内でマッチした「全」エントリのファイルをリスト順に返す
+      // (suffix 付与済み)。 font ctor が先頭を primary (_file)、 残りを
+      // fallback_files に採る。 ロック等の規約は match_ex と同じ。
+      std::vector<std::string> match_all_files(font_descr descr)
+      {
+         std::vector<std::string> files;
+         std::lock_guard<std::mutex> lock(font_map_mutex());
+
+         std::vector<std::string> tokens;
+         {
+            std::istringstream str(std::string{descr._families});
+            std::string piece;
+            while (getline(str, piece, ','))
+            {
+               trim(piece);
+               if (!tokens.empty()
+                   && tokens.back().find('#') != std::string::npos
+                   && is_axis_token(piece))
+                  tokens.back() += "," + piece;
+               else
+                  tokens.push_back(std::move(piece));
+            }
+         }
+
+         for (auto& family : tokens)
+         {
+            std::string suffix;
+            auto base = split_variation_suffix(std::move(family), suffix);
+            if (auto i = font_map().find(base); i != font_map().end())
+            {
+               bool const want_var = !suffix.empty() &&
+                  std::any_of(i->second.begin(), i->second.end(),
+                              [](font_entry const& e) { return e.variable; });
+               int min_diff = 10000;
+               font_entry const* best = nullptr;
+               for (auto const& entry : i->second)
+               {
+                  if (want_var && !entry.variable)
+                     continue;
+                  auto diff =
+                     (std::abs(int(descr._weight) - int(entry.weight)) * 1.0) +
+                     (std::abs(int(descr._slant) - int(entry.slant)) * 3.0) +
+                     (std::abs(int(descr._stretch) - int(entry.stretch)) * 0.25)
+                     ;
+                  if (diff < min_diff)
+                  {
+                     min_diff = diff;
+                     best = &entry;
+                  }
+               }
+               if (best)
+               {
+                  std::string file = best->file + suffix;
+                  if (std::find(files.begin(), files.end(), file) == files.end())
+                     files.push_back(std::move(file));
+               }
+            }
+         }
+         return files;
+      }
+
       font_entry const* match(font_descr descr)
       {
          return match_ex(descr).entry;
@@ -612,6 +673,12 @@ namespace cycfi { namespace elements
          // the instance under a suffix-aware name.
          _file = m.entry->file + m.suffix;
          _family = m.suffix.empty() ? m.family : m.family + m.suffix;
+
+         // 計測フォールバック用: families 残りの解決ファイル (primary を除く)。
+         auto all = match_all_files(descr);
+         for (auto& f_ : all)
+            if (f_ != _file)
+               _fallback_files.push_back(std::move(f_));
       }
       _size = descr._size;
    }
@@ -619,6 +686,7 @@ namespace cycfi { namespace elements
    font::font(font const& rhs)
     : _family(rhs._family)
     , _file(rhs._file)
+    , _fallback_files(rhs._fallback_files)
     , _size(rhs._size)
    {
    }
@@ -629,6 +697,7 @@ namespace cycfi { namespace elements
       {
          _family = rhs._family;
          _file = rhs._file;
+         _fallback_files = rhs._fallback_files;
          _size = rhs._size;
       }
       return *this;
@@ -637,6 +706,7 @@ namespace cycfi { namespace elements
    font::font(font&& rhs) noexcept
     : _family(std::move(rhs._family))
     , _file(std::move(rhs._file))
+    , _fallback_files(std::move(rhs._fallback_files))
     , _size(rhs._size)
    {
    }
@@ -647,6 +717,7 @@ namespace cycfi { namespace elements
       {
          _family = std::move(rhs._family);
          _file = std::move(rhs._file);
+         _fallback_files = std::move(rhs._fallback_files);
          _size = rhs._size;
       }
       return *this;

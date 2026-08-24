@@ -113,11 +113,19 @@ namespace cycfi { namespace elements
       std::string const&   family() const { return _family; }
       std::string const&   file() const   { return _file; }
 
+      // families リストの 2 番目以降にマッチした解決済みファイル (先頭 = _file
+      // の次の候補から、リスト順)。 計測バックエンドのフォールバック用: 描画側
+      // (canvas fill_text) はホストのフォントエンジンが family 列でフォール
+      // バックするが、 計測 (glyph_layout) は face 単位でしかシェイプできない
+      // ため、 グリフの無いコードポイントをこの順で他 face に割り当てる。
+      std::vector<std::string> const& fallback_files() const { return _fallback_files; }
+
    private:
 
       friend class canvas;
       std::string         _family;     // Font family name
       std::string         _file;       // TTF file path
+      std::vector<std::string> _fallback_files;   // families 残りの解決ファイル
       float               _size = 12;
    };
 

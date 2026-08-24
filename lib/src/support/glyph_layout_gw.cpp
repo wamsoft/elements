@@ -191,6 +191,7 @@ namespace cycfi { namespace elements
          }
 
          // Metrics scaled from font units to the requested pixel size
+         // (always from the primary face, matching draw-side line metrics)
          float units_scale = size / float(face->upem);
          out_metrics.ascent = face->ascent * units_scale;
          out_metrics.descent = face->descent * units_scale;
@@ -201,16 +202,43 @@ namespace cycfi { namespace elements
          if (first == last)
             return;
 
-         // Shape via the bridge (single run, same as the ft backend which
-         // shapes with the one selected face). Advances come back in font
-         // units and are scaled to pixels here.
-         shaped_run run;
-         b->shapeRun(b->ctx, face->handle, first, std::uint32_t(last - first),
-                     nullptr, shape_emit, &run);
+         // Fallback face list. The draw side (canvas fill_text) resolves the
+         // whole families list with per-glyph fallback in the host engine,
+         // but shapeRun shapes with ONE face. Shaping everything with the
+         // primary face measured fallback characters (e.g. Japanese behind a
+         // Latin primary) with the .notdef advance, so caret positions were
+         // wrong. Assign codepoints without a glyph in the primary face to
+         // the first fallback face that has one (families order), split into
+         // per-face runs, and concatenate the shaped positions.
+         std::vector<gw_face const*> faces;
+         faces.push_back(face);
+         for (auto const& fb : f.fallback_files())
+         {
+            gw_face const* ff = find_face(fb);
+            if (!ff && open_face_by_key(fb))
+               ff = find_face(fb);
+            if (ff)
+               faces.push_back(ff);
+         }
 
-         // Build per-codepoint positions from the shaped output. Cluster
-         // values are byte offsets in UTF-8 (mirror of glyph_layout_ft.cpp).
-         auto byte_counts = utf8_byte_counts(first, last);
+         // Decode codepoints alongside byte counts
+         std::vector<int> byte_counts;
+         std::vector<std::uint32_t> codepoints;
+         {
+            unsigned state = 0;
+            unsigned cp = 0;
+            int bc = 0;
+            for (auto p = first; p != last; ++p)
+            {
+               ++bc;
+               if (!decode_utf8(state, cp, uint8_t(*p)))
+               {
+                  byte_counts.push_back(bc);
+                  codepoints.push_back(cp);
+                  bc = 0;
+               }
+            }
+         }
          int num_chars = int(byte_counts.size());
 
          positions.resize(num_chars);
@@ -221,56 +249,113 @@ namespace cycfi { namespace elements
             positions[i].num_bytes = byte_counts[i];
          }
 
-         // Build byte-offset → codepoint-index map
-         std::vector<int> byte_to_cp(last - first, -1);
+         // Pick a face per codepoint. Stick with the current face while it
+         // has the glyph (avoids splitting runs on characters present in
+         // several faces, e.g. spaces and ASCII inside Japanese text).
+         std::vector<int> face_of(num_chars, 0);
+         if (faces.size() > 1 && b->glyphIndex)
          {
-            int byte_off = 0;
-            for (int ci = 0; ci < num_chars; ++ci)
+            int cur = 0;
+            for (int i = 0; i < num_chars; ++i)
             {
-               if (byte_off < int(byte_to_cp.size()))
-                  byte_to_cp[byte_off] = ci;
-               byte_off += byte_counts[ci];
+               std::uint32_t cp = codepoints[i];
+               int chosen = -1;
+               if (b->glyphIndex(b->ctx, faces[cur]->handle, cp) != 0)
+                  chosen = cur;
+               else
+               {
+                  for (int fi = 0; fi < int(faces.size()); ++fi)
+                  {
+                     if (fi == cur)
+                        continue;
+                     if (b->glyphIndex(b->ctx, faces[fi]->handle, cp) != 0)
+                     {
+                        chosen = fi;
+                        break;
+                     }
+                  }
+               }
+               if (chosen < 0)
+                  chosen = 0;   // nowhere: primary face renders .notdef
+               face_of[i] = cur = chosen;
             }
          }
 
-         // Map shaped glyphs to codepoint positions
+         // Shape per same-face run and concatenate positions. Cluster
+         // values are byte offsets relative to the run start (UTF-8).
          float cursor_x = x_offset;
-         auto glyph_count = run.glyphs.size();
-         for (std::size_t gi = 0; gi < glyph_count; ++gi)
+         int run_begin = 0;
+         int byte_base = 0;
+         while (run_begin < num_chars)
          {
-            float advance = run.glyphs[gi].xAdvance * units_scale;
-            int cluster = int(run.glyphs[gi].cluster);
+            int run_end = run_begin + 1;
+            while (run_end < num_chars && face_of[run_end] == face_of[run_begin])
+               ++run_end;
 
-            int ci = -1;
-            if (cluster >= 0 && cluster < int(byte_to_cp.size()))
-               ci = byte_to_cp[cluster];
+            gw_face const* rf = faces[face_of[run_begin]];
+            float run_scale = size / float(rf->upem);
 
-            if (ci >= 0 && ci < num_chars)
+            int run_bytes = 0;
+            for (int i = run_begin; i < run_end; ++i)
+               run_bytes += byte_counts[i];
+            char const* run_first = first + byte_base;
+
+            shaped_run run;
+            b->shapeRun(b->ctx, rf->handle, run_first, std::uint32_t(run_bytes),
+                        nullptr, shape_emit, &run);
+
+            // Byte offset (within run) -> codepoint index (global)
+            std::vector<int> byte_to_cp(run_bytes, -1);
             {
-               // Determine span: how many codepoints share this cluster
-               int next_ci = num_chars;
-               if (gi + 1 < glyph_count)
+               int off = 0;
+               for (int ci = run_begin; ci < run_end; ++ci)
                {
-                  int next_cluster = int(run.glyphs[gi + 1].cluster);
-                  if (next_cluster >= 0 && next_cluster < int(byte_to_cp.size()))
-                  {
-                     int nci = byte_to_cp[next_cluster];
-                     if (nci > ci)
-                        next_ci = nci;
-                  }
-               }
-
-               int span = next_ci - ci;
-               float per_char = advance / std::max(1, span);
-
-               for (int k = 0; k < span && (ci + k) < num_chars; ++k)
-               {
-                  positions[ci + k].x = cursor_x + k * per_char;
-                  positions[ci + k].advance = per_char;
+                  if (off < run_bytes)
+                     byte_to_cp[off] = ci;
+                  off += byte_counts[ci];
                }
             }
 
-            cursor_x += advance;
+            auto glyph_count = run.glyphs.size();
+            for (std::size_t gi = 0; gi < glyph_count; ++gi)
+            {
+               float advance = run.glyphs[gi].xAdvance * run_scale;
+               int cluster = int(run.glyphs[gi].cluster);
+
+               int ci = -1;
+               if (cluster >= 0 && cluster < run_bytes)
+                  ci = byte_to_cp[cluster];
+
+               if (ci >= 0 && ci < num_chars)
+               {
+                  // Determine span: how many codepoints share this cluster
+                  int next_ci = run_end;
+                  if (gi + 1 < glyph_count)
+                  {
+                     int next_cluster = int(run.glyphs[gi + 1].cluster);
+                     if (next_cluster >= 0 && next_cluster < run_bytes)
+                     {
+                        int nci = byte_to_cp[next_cluster];
+                        if (nci > ci)
+                           next_ci = nci;
+                     }
+                  }
+
+                  int span = next_ci - ci;
+                  float per_char = advance / std::max(1, span);
+
+                  for (int k = 0; k < span && (ci + k) < num_chars; ++k)
+                  {
+                     positions[ci + k].x = cursor_x + k * per_char;
+                     positions[ci + k].advance = per_char;
+                  }
+               }
+
+               cursor_x += advance;
+            }
+
+            byte_base += run_bytes;
+            run_begin = run_end;
          }
       }
    };
