@@ -95,6 +95,17 @@ namespace cycfi::elements
       void                    arrow_focus_enter_directional(bool on);
       bool                    arrow_focus_enter_directional() const;
 
+      // Explicit focus-navigation override for arrow_focus_navigation.
+      // Called with the currently focused element and the direction
+      // (0=left, 1=right, 2=up, 3=down) before the geometric pick. Return
+      // the element to focus, or nullptr to fall back to the default
+      // geometric navigation. Lets hosts drive navigation from a
+      // declarative per-widget map (e.g. JSON "focus_nav") when the
+      // geometric heuristic does not match the intended layout.
+      using focus_nav_override_function =
+         std::function<element*(element* current, int dir)>;
+      void                    focus_nav_override(focus_nav_override_function f);
+
       // When enabled, moving the mouse over a focusable widget also moves
       // keyboard focus to it, so the hovered widget and the focused widget
       // stay in sync (pointer-driven focus). Defaults to true. Widgets opt
@@ -301,6 +312,7 @@ namespace cycfi::elements
       bool                    _is_focus = false;
       bool                    _arrow_focus_nav = false;
       bool                    _arrow_focus_wrap = false;
+      focus_nav_override_function _focus_nav_override;
       bool                    _focus_skip_disabled = false;
       bool                    _arrow_focus_enter_dir = false;
       bool                    _hover_focus = true;

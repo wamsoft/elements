@@ -578,6 +578,33 @@
          return best;
       }
 
+      // True when 'e' is 'top' itself or lives on top's proxy / indirect
+      // subject chain. collect_focusables stores the outermost wrapper
+      // (hsize / vsize etc.) while hosts registering focus_nav_override
+      // targets typically hold the inner widget (the shared button), so
+      // matching has to look through the chain.
+      bool entry_contains(element* top, element const* e)
+      {
+         element* cur = top;
+         while (cur)
+         {
+            if (cur == e)
+               return true;
+            if (auto* p = dynamic_cast<proxy_base*>(cur))
+            {
+               cur = &p->subject();
+               continue;
+            }
+            if (auto* i = dynamic_cast<indirect_base*>(cur))
+            {
+               cur = &i->get();
+               continue;
+            }
+            break;
+         }
+         return false;
+      }
+
       // Wrap-around fallback for pick_directional: when a move in 'dir'
       // finds no candidate (we are at the edge), pick the candidate
       // nearest the *opposite* edge — i.e. moving Down past the bottom
@@ -635,6 +662,11 @@
    void view::arrow_focus_wrap(bool on)
    {
       _arrow_focus_wrap = on;
+   }
+
+   void view::focus_nav_override(focus_nav_override_function f)
+   {
+      _focus_nav_override = std::move(f);
    }
 
    bool view::arrow_focus_wrap() const
@@ -828,8 +860,10 @@
             bool const wrap = _arrow_focus_wrap;
             bool const skip_disabled = _focus_skip_disabled;
             bool const enter_directional = _arrow_focus_enter_dir;
+            auto const& nav_override = _focus_nav_override;
             with_context_do(
-               [d, wrap, skip_disabled, enter_directional, &handled]
+               [d, wrap, skip_disabled, enter_directional, &nav_override,
+                &handled]
                (auto const& ctx, auto& _main_element)
                {
                   std::vector<focusable_entry> list;
@@ -879,9 +913,50 @@
                   }
                   else
                   {
-                     target = pick_directional(list, cur_collected, cur_bounds, d);
-                     if (!target && wrap)
-                        target = pick_wrapped(list, cur_collected, cur_bounds, d);
+                     // Declarative override first (JSON "focus_nav" etc.).
+                     // The collected entry is the outermost wrapper, while
+                     // the host maps inner widgets — query the override
+                     // down the proxy chain, then resolve the returned
+                     // (possibly inner) element back to a collected entry.
+                     // Falls back to the geometric pick when unmapped.
+                     if (nav_override)
+                     {
+                        element* o = nullptr;
+                        element* c = cur_collected;
+                        while (c)
+                        {
+                           if ((o = nav_override(c, static_cast<int>(d))))
+                              break;
+                           if (auto* p = dynamic_cast<proxy_base*>(c))
+                           {
+                              c = &p->subject();
+                              continue;
+                           }
+                           if (auto* i = dynamic_cast<indirect_base*>(c))
+                           {
+                              c = &i->get();
+                              continue;
+                           }
+                           break;
+                        }
+                        if (o)
+                        {
+                           for (auto const& f : list)
+                              if (entry_contains(f.el, o))
+                              {
+                                 target = f.el;
+                                 break;
+                              }
+                        }
+                     }
+                     if (!target)
+                     {
+                        target = pick_directional(
+                           list, cur_collected, cur_bounds, d);
+                        if (!target && wrap)
+                           target = pick_wrapped(
+                              list, cur_collected, cur_bounds, d);
+                     }
                   }
 
                   if (!target || target == cur_collected)

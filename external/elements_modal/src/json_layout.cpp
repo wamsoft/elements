@@ -15,6 +15,7 @@
 #include <elements_modal/modal.h>                // refresh_mem_image 宣言
 
 #include <algorithm>
+#include <array>     // focus_nav (明示フォーカスナビ) の方向テーブル
 #include <cctype>
 #include <chrono>    // choice_nav_group の pad エッジ検出
 #include <cmath>
@@ -843,6 +844,38 @@ public:
 	std::vector<std::function<void(cycfi::elements::view&)>>
 	take_deferred_view_callbacks()
 	{
+		// "focus_nav" 指定 (register_id で収集) があれば、 build 完了後の
+		// ここで id を element へ解決し、 view::focus_nav_override を配線
+		// するクロージャを積む (SGOCT-133)。
+		if (!_focus_nav_specs.empty()) {
+			auto tbl = std::make_shared<std::map<
+				cycfi::elements::element*,
+				std::array<element_ptr, 4>>>();
+			for (auto& s : _focus_nav_specs) {
+				std::array<element_ptr, 4> t{};
+				for (int i = 0; i < 4; ++i) {
+					if (s.ids[i].empty()) continue;
+					auto it = _id_to_element.find(s.ids[i]);
+					if (it != _id_to_element.end()) t[i] = it->second;
+					else em_logf("elements_modal: focus_nav target not found: %s",
+					             s.ids[i].c_str());
+				}
+				(*tbl)[s.el.get()] = std::move(t);
+			}
+			_focus_nav_specs.clear();
+			_deferred_view_cbs.push_back(
+				[tbl](cycfi::elements::view& vw) {
+					vw.focus_nav_override(
+						[tbl](cycfi::elements::element* cur, int dir)
+							-> cycfi::elements::element* {
+							if (dir < 0 || dir > 3) return nullptr;
+							auto it = tbl->find(cur);
+							if (it == tbl->end()) return nullptr;
+							auto& t = it->second;
+							return t[dir] ? t[dir].get() : nullptr;
+						});
+				});
+		}
 		return std::move(_deferred_view_cbs);
 	}
 
@@ -850,6 +883,15 @@ private:
 	event_callback _cb;
 	std::string _default_locale;
 	std::string _resource_base;
+
+	// "focus_nav" の収集分 (register_id で積み、 take_deferred_view_callbacks
+	// で id 解決 + view 配線に変換する)。 ids は left/right/up/down の順。
+	struct focus_nav_spec {
+		element_ptr el;
+		std::array<std::string, 4> ids;
+	};
+	std::vector<focus_nav_spec> _focus_nav_specs;
+
 	float _font_scale = 1.0f;   // top-level "font_scale" (既定 1.0 = 従来一致)
 	float _tile_gap = 0.0f;     // style.tile_gap (0 = 従来どおり密着)
 	float _row_height = 0.0f;   // style.row_height (0 = 無効)
@@ -1752,6 +1794,23 @@ void LayoutBuilder::register_id(const picojson::object& o,
 	if (!id.empty() && shared) {
 		_id_to_element[id] = shared;
 		_id_types.emplace_back(id, string_or(o, "type"));
+	}
+	// "focus_nav": { "left"/"right"/"up"/"down": "<id>" } — 矢印/D-Pad の
+	// フォーカス移動先をウィジェット単位で明示する (幾何ナビより優先、
+	// 未指定方向は幾何ナビにフォールバック)。 ソフトキーボードのような
+	// 段ずれレイアウトで意図どおりの移動を定義するための機構 (SGOCT-133)。
+	// ターゲット id は build 完了後に解決するので文字列のまま控える。
+	if (auto* fv = get_field(o, "focus_nav"); fv && fv->is<picojson::object>()) {
+		const auto& fo = fv->get<picojson::object>();
+		focus_nav_spec spec;
+		spec.el = shared;
+		spec.ids[0] = string_or(fo, "left");
+		spec.ids[1] = string_or(fo, "right");
+		spec.ids[2] = string_or(fo, "up");
+		spec.ids[3] = string_or(fo, "down");
+		if (shared && (!spec.ids[0].empty() || !spec.ids[1].empty() ||
+		               !spec.ids[2].empty() || !spec.ids[3].empty()))
+			_focus_nav_specs.push_back(std::move(spec));
 	}
 }
 
@@ -5673,6 +5732,12 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		           result.focus_anim);
 	}
 
+	// deferred_view_cbs: build 中に積まれた追加 view-setup (例: tab_view
+	// の PageUp/Down + LB/RB バインド、 "focus_nav" の解決)。 適用は
+	// input_cb の後だが、 生成はこちらを先に行う ("focus_nav" の id 解決が
+	// _id_to_element を参照するため。 直後の take_id_map が move で
+	// 持ち出すので、 それより前でないと解決できない)。
+	auto deferred_cbs = builder.take_deferred_view_callbacks();
 	// "input" ブロック (任意): view に対する arrow_focus_nav / pad mode /
 	// pad bindings / shortcuts を設定するクロージャを作る。
 	// action バインド関連 ("bindings"/"se"/"initial_focus") は data として
@@ -5684,9 +5749,6 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		result.actions = parse_input_actions(input_obj);
 		input_cb = build_input_applier(input_obj, builder.take_id_map());
 	}
-	// deferred_view_cbs: build 中に積まれた追加 view-setup (例: tab_view
-	// の PageUp/Down + LB/RB バインド)。 input_cb の後に順次実行する。
-	auto deferred_cbs = builder.take_deferred_view_callbacks();
 	if (input_cb || !deferred_cbs.empty()) {
 		result.apply_input =
 			[input_cb = std::move(input_cb),
