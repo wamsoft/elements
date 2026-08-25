@@ -245,6 +245,9 @@ struct overlay_session::impl
 	// 一切ない場合は null。
 	std::function<void()> focus_poll;
 
+	// focus_link 装飾の要素 (フォーカス変化時にまとめてダーティにする)。
+	std::vector<std::weak_ptr<ce::element>> focus_link_elements;
+
 	// JSON top-level "transitions" を読んだ辞書。 ランナが get_result の
 	// action と照合して次画面を決める。
 	std::map<std::string, transition_spec> transitions;
@@ -719,6 +722,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->close_button_ids = layout.close_button_ids;
 	_impl->focus_poll = std::move(layout.focus_poll);
 	_impl->hover_poll = std::move(layout.hover_poll);
+	_impl->focus_link_elements = std::move(layout.focus_link_elements);
 	_impl->hovered_id_slot = layout.hovered_id_slot;
 	_impl->focus_anim = layout.focus_anim;
 	_impl->transitions = std::move(layout.transitions);
@@ -1137,6 +1141,15 @@ bool overlay_session::update()
 		_impl->dirty_last_focused = *_impl->focused_id_slot;
 		_impl->needs_render_ = true;
 		if (!ok) _impl->dirty_full_ = true;
+		// focus_link 装飾 (行下地・行ラベル等) はフォーカス変化で
+		// hilite⇔normal が切り替わるが、 フォーカス要素本体とは別要素なので
+		// 上の 2 矩形では覆えない。 数は画面あたり高々十数個 + フォーカス
+		// 変化時のみなので、 まとめて全部ダーティにする。
+		for (auto& w : _impl->focus_link_elements) {
+			if (auto p = w.lock()) {
+				if (!_impl->mark_element_dirty(*p)) _impl->dirty_full_ = true;
+			}
+		}
 	}
 	if (_impl->hovered_id_slot &&
 	    *_impl->hovered_id_slot != _impl->dirty_last_hovered) {

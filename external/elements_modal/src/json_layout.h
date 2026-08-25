@@ -128,6 +128,12 @@ struct parsed_layout
 	//! hover_poll が更新する「現在 hover されている id」スロット。
 	std::shared_ptr<std::string> hovered_id_slot;
 
+	//! focus_link 装飾 (別 id のフォーカスに追従して絵を変える atlas_image 等)。
+	//! フォーカス変化で hilite⇔normal が切り替わるが、 フォーカス要素本体とは
+	//! 別の要素なので、 部分再描画のホストはフォーカス変化時にこれらの矩形も
+	//! ダーティにする必要がある (でないと装飾の切替が消え残る)。
+	std::vector<std::weak_ptr<cycfi::elements::element>> focus_link_elements;
+
 	//! focus トリガ演出を有効にするか (JSON "input":{"focus_anim":false} で無効化)。
 	//! hover_focus 併用時に focus と hover の多重発火を避けるための逃がし。 既定 true。
 	bool focus_anim = true;

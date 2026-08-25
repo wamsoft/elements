@@ -729,6 +729,15 @@ private:
 	element_ptr _subject;
 };
 
+// focus_link 装飾の「ホバー → リンク先フォーカス」配線情報。 build 時は
+// target の id 文字列しか無いので、 take_deferred_view_callbacks で element
+// へ解決して埋める (実体のプロキシは hover_focus_link_element、 後方で定義)。
+struct hover_link_wire
+{
+	std::vector<std::pair<std::string, element_ptr>> resolved;
+	std::shared_ptr<std::string> focused_slot;   // 現在フォーカス中の id
+};
+
 class LayoutBuilder
 {
 public:
@@ -834,6 +843,11 @@ public:
 	// 現在 hover されている id を _hovered_id_slot に書く。 1 回だけ呼ぶ。
 	std::function<void()> take_hover_poll();
 
+	// focus_link 装飾の要素一覧 (parsed_layout::focus_link_elements 用)。
+	// take 系メソッドなので 1 回しか呼ばない。
+	std::vector<std::weak_ptr<ce::element>> take_focus_link_elements()
+	{ return std::move(_focus_link_elements); }
+
 	// build 中に install する「view& を引数に取る」追加 set-up クロージャ。
 	// 主に bind_shortcut を仕掛けたい widget (tab_view など) が使う。
 	// build_top_level でこれらを apply_input にチェーンして公開する。
@@ -875,6 +889,22 @@ public:
 							return t[dir] ? t[dir].get() : nullptr;
 						});
 				});
+		}
+
+		// focus_link 装飾のホバー配線: target id を element へ解決して埋める
+		// (view には触らないが、 id 解決の完了地点がここなので同居させる)。
+		if (!_hover_link_wires.empty()) {
+			for (auto& [wire, ids] : _hover_link_wires) {
+				wire->focused_slot = _focused_id_slot;
+				for (auto& id : ids) {
+					auto it = _id_to_element.find(id);
+					if (it != _id_to_element.end())
+						wire->resolved.push_back({id, it->second});
+					else em_logf("elements_modal: focus_link hover target "
+					             "not found: %s", id.c_str());
+				}
+			}
+			_hover_link_wires.clear();
 		}
 		return std::move(_deferred_view_cbs);
 	}
@@ -937,6 +967,11 @@ private:
 	// "focus_link": フォーカス中の id を受け取って見た目を変える飾り要素。
 	// take_focus_poll がフォーカス変化のたびに現在の id で呼ぶ。
 	std::vector<std::function<void(const std::string&)>> _focus_links;
+	// focus_link 装飾の要素本体 (部分再描画ホストのダーティ登録用)。
+	std::vector<std::weak_ptr<ce::element>> _focus_link_elements;
+	// focus_link 装飾のホバー配線 (target id は deferred で element へ解決)
+	std::vector<std::pair<std::shared_ptr<hover_link_wire>,
+	                      std::vector<std::string>>> _hover_link_wires;
 	std::shared_ptr<std::string> _hovered_id_slot = std::make_shared<std::string>();
 
 	// focusable build site で、 id と「現在 focus されているか」を返す
@@ -1241,6 +1276,57 @@ element_ptr apply_focus_point(const picojson::object& o, element_ptr el)
 }
 
 } // anonymous (focus_point)
+
+//---------------------------------------------------------------------------
+// focus_link 装飾のホバー → リンク先フォーカス
+//
+// 行下地 (IMG 〜行 のパーツ) のように「クリックできる実コントロールより広い
+// 行領域」へマウスオーバーしたとき、 行内のコントロールへフォーカス (オレンジ
+// 枠) を移すためのプロキシ。 実コントロールは z 上位で先に hit するので、
+// コントロール外 (行ラベル部など) のホバーだけがここへ届く。 クリック等の
+// 操作は何もしない (従来どおり)。
+//---------------------------------------------------------------------------
+namespace {
+
+template <typename Subject>
+class hover_focus_link_element : public ce::proxy<Subject>
+{
+public:
+	hover_focus_link_element(Subject subject,
+	                         std::shared_ptr<hover_link_wire> wire)
+	 : ce::proxy<Subject>(std::move(subject)), _wire(std::move(wire))
+	{}
+
+	ce::element* hit_test(ce::context const& ctx, ce::point p,
+	                      bool /*leaf*/, bool /*control*/) override
+	{
+		// 装飾自体はコントロールではないが、 hover 判定 (control=true の
+		// hit_element) に載せるため自分を返す
+		return ctx.bounds.includes(p) ? this : nullptr;
+	}
+	bool wants_control() const override { return true; }
+
+	bool cursor(ce::context const& ctx, ce::point /*p*/,
+	            ce::cursor_tracking status) override
+	{
+		if (status == ce::cursor_tracking::leaving) return false;
+		if (!ctx.view.hover_focus()) return false;
+		if (!_wire || _wire->resolved.empty()) return false;
+		// 行内のどれかが既にフォーカス中なら動かさない (choice 行で選択中の
+		// 項目からフォーカスを引き剥がさないため)
+		if (_wire->focused_slot) {
+			for (auto& kv : _wire->resolved)
+				if (kv.first == *_wire->focused_slot) return false;
+		}
+		ctx.view.focus(_wire->resolved.front().second);
+		return false;
+	}
+
+private:
+	std::shared_ptr<hover_link_wire> _wire;
+};
+
+} // anonymous (hover_focus_link)
 
 //---------------------------------------------------------------------------
 // "opacity" / "opacity_var" — 要素単位の不透明度
@@ -3777,8 +3863,15 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 						p->index(on ? 1 : 0);
 					}
 				});
+			_focus_link_elements.push_back(img);
 			register_id(o, img);
-			return img;
+			// 行領域のどこへマウスオーバーしてもリンク先コントロールへ
+			// フォーカスが移るように、 ホバートリガのプロキシで包んで返す
+			// (SGOCT 系フィードバック: クリック可能領域の上だけだと分かりづらい)
+			auto wire = std::make_shared<hover_link_wire>();
+			_hover_link_wires.push_back({wire, targets});
+			return ce::share(hover_focus_link_element(
+				ce::hold_any(element_ptr(img)), std::move(wire)));
 		}
 	}
 
@@ -5881,6 +5974,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();
 	result.hover_poll = builder.take_hover_poll();
+	result.focus_link_elements = builder.take_focus_link_elements();
 	return result;
 }
 
