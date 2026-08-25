@@ -4456,6 +4456,47 @@ struct em_null_thumb : cycfi::elements::element
 		return {{0, 0}, {0, 0}};
 	}
 };
+
+// fill 形式スライダの base。 thumb (= フォーカスカーソル) の可動域と
+// クリック/ドラッグの値マッピングを、 widget 全幅ではなくゲージ部分
+// (fill_at の範囲) に合わせる。 トラック画像の両端にラベル (0 / 100 等) が
+// 焼き込まれている素材では、 全幅基準だとカーソルが目盛からずれて見える
+// (値 0 でラベル 0 の左、 100 でラベル 100 の上に出る) ため (SGOCT-147)。
+// fx/fw 既定 (0, 1) = 従来どおり全幅。 縦スライダは従来動作のまま。
+struct em_fill_slider_base : cycfi::elements::basic_slider_base
+{
+	using cycfi::elements::basic_slider_base::basic_slider_base;
+	float fx = 0.0f;   // ゲージ左端 (トラック幅比)
+	float fw = 1.0f;   // ゲージ幅 (トラック幅比)
+	bool  fill_vertical = false;
+
+	cycfi::elements::rect
+	thumb_bounds(cycfi::elements::context const& ctx) const override
+	{
+		auto r = cycfi::elements::slider_base::thumb_bounds(ctx);
+		if (fill_vertical || (fx == 0.0f && fw == 1.0f)) return r;
+		auto b = ctx.bounds;
+		float w = r.width();
+		float x = b.left + b.width() * fx
+		        + (b.width() * fw - w) * (float)value();
+		r.left = x;
+		r.right = x + w;
+		return r;
+	}
+	double
+	value_from_point(cycfi::elements::context const& ctx,
+	                 cycfi::elements::point p) override
+	{
+		if (fill_vertical || (fx == 0.0f && fw == 1.0f))
+			return cycfi::elements::slider_base::value_from_point(ctx, p);
+		auto b = ctx.bounds;
+		float x0 = b.left + b.width() * fx;
+		float w  = b.width() * fw;
+		if (w <= 0.0f) return value();
+		double v = (p.x - x0) / w;
+		return v < 0.0 ? 0.0 : (v > 1.0 ? 1.0 : v);
+	}
+};
 } // anonymous
 
 element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
@@ -4511,7 +4552,15 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 			fill_at = parse_xywh(*fa);
 		gauge = std::make_shared<ce::atlas_progress>(
 			pm, track_src, fill_src, initial, vertical, fill_at);
-		auto sl = ce::slider(em_null_thumb{}, ce::hold(gauge), initial);
+		auto sl = ce::basic_slider<em_null_thumb, decltype(ce::hold(gauge)),
+		                           em_fill_slider_base>(
+			em_null_thumb{}, ce::hold(gauge), initial);
+		// thumb 可動域をゲージ部分 (fill_at) に合わせる (SGOCT-147)
+		if (track_src.width() > 0 && fill_at.width() > 0) {
+			sl.fx = fill_at.left / track_src.width();
+			sl.fw = fill_at.width() / track_src.width();
+		}
+		sl.fill_vertical = vertical;
 		auto cb_id = id;
 		auto user_cb = _cb;
 		std::weak_ptr<ce::atlas_progress> wg = gauge;

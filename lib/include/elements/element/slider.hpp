@@ -53,7 +53,9 @@ namespace cycfi::elements
       virtual void            edit_value(double val) { value(val);}
 
       rect                    track_bounds(context const& ctx) const;
-      rect                    thumb_bounds(context const& ctx) const;
+      // Virtual so hosts can remap the thumb travel to a sub-range of the
+      // widget (e.g. gauge-style tracks with labels baked into the ends).
+      virtual rect            thumb_bounds(context const& ctx) const;
       virtual double          value_from_point(context const& ctx, point p);
 
       // Cursor-warp navigation lands on the thumb (not the track
