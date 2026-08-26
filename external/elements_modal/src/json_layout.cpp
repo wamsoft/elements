@@ -802,6 +802,17 @@ public:
 	// "initial_focus": true が指定された要素 (なければ nullptr)。
 	// build() 完了後、 ホストが view.focus(...) に渡すために取得する。
 	element_ptr take_initial_focus() { return std::move(_initial_focus); }
+	std::vector<element_ptr> take_initial_focus_list()
+	{
+		// 優先度 (小さいほど先)、 同値は build 順の stable sort
+		std::stable_sort(_initial_focus_list.begin(), _initial_focus_list.end(),
+			[](auto const& a, auto const& b) { return a.first < b.first; });
+		std::vector<element_ptr> ret;
+		ret.reserve(_initial_focus_list.size());
+		for (auto& p : _initial_focus_list) ret.push_back(std::move(p.second));
+		_initial_focus_list.clear();
+		return ret;
+	}
 
 	// id 付き要素 → element_ptr のマップ。 shortcut の "target": "<id>" 解決
 	// + ホスト側 focus_by_id 用。 ランタイム複数参照ありうるので shared で
@@ -951,6 +962,8 @@ private:
 	// widget で参照されたら同じ pixmap_ptr を共有。
 	std::map<std::string, cycfi::elements::pixmap_ptr> _atlases;
 	element_ptr _initial_focus;
+	// initial_focus 候補: {優先度, 要素} (take 時に優先度順へ整列)
+	std::vector<std::pair<int, element_ptr>> _initial_focus_list;
 	std::map<std::string, element_ptr> _id_to_element;
 	std::vector<std::pair<std::string, std::string>> _id_types;  // 登録順 id+type
 	std::set<std::string> _close_button_ids;
@@ -1867,10 +1880,23 @@ void LayoutBuilder::fire_value(const std::string& id, const value_t& payload)
 void LayoutBuilder::note_initial_focus(const picojson::object& o,
                                        const element_ptr& shared)
 {
-	if (_initial_focus) return;   // 先勝ち
-	if (truthy_field(get_field(o, "initial_focus"))) {
-		_initial_focus = shared;
+	auto* v = get_field(o, "initial_focus");
+	if (!v) return;
+	// true = 優先度 0。 数値なら明示優先度 (小さいほど優先)。 JSON の出現順に
+	// 依存せず「通常は SAVE、 SAVE が無効なら MAP」のような序列を書けるように
+	// する。 同一優先度は build 順。 選択は parsed_layout::pick_initial_focus。
+	int prio;
+	if (v->is<bool>()) {
+		if (!v->get<bool>()) return;
+		prio = 0;
+	} else if (v->is<double>()) {
+		prio = (int)v->get<double>();
+	} else {
+		if (!truthy_field(v)) return;
+		prio = 0;
 	}
+	_initial_focus_list.push_back({prio, shared});
+	if (!_initial_focus && prio == 0) _initial_focus = shared;
 }
 
 void LayoutBuilder::register_id(const picojson::object& o,
@@ -5857,6 +5883,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		result.root = content;
 	}
 	result.initial_focus = builder.take_initial_focus();
+	result.initial_focus_list = builder.take_initial_focus_list();
 	result.close_button_ids = builder.take_close_button_ids();
 	result.animations = builder.take_animations();
 
@@ -6029,6 +6056,18 @@ input_defaults_data parse_input_defaults(const std::string& json_utf8)
 	out.actions = parse_input_actions(o);
 	out.ok = true;
 	return out;
+}
+
+// initial_focus 候補 (優先度順) から最初の有効な要素を選ぶ。
+// enabled_var で無効化された要素はフォーカスを受けられないため、 印の付いた
+// 次の候補へフォールバックする (例: SAVE 無効の場面では MAP へ)。
+// すべて無効 / 候補なしのときは従来の先勝ち要素を返す (nullptr 可)。
+std::shared_ptr<cycfi::elements::element> parsed_layout::pick_initial_focus() const
+{
+	for (auto const& e : initial_focus_list) {
+		if (e && e->is_enabled()) return e;
+	}
+	return initial_focus;
 }
 
 parsed_layout parse_from_string(const std::string& json_utf8,
