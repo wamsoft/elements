@@ -237,6 +237,20 @@ struct overlay_session::impl
 	ce::point last_cursor{0.0f, 0.0f};
 	bool mouse_down = false;
 
+	// 開いた直後の「置きっぱなしポインタ」から初期フォーカスを守るゲート。
+	//
+	// hover_focus が有効だとフォーカスはポインタに追従するが、 画面を開いた
+	// 瞬間はユーザがその項目へポインタを「動かした」わけではなく、 直前の
+	// 操作でたまたまそこに残っているだけ。 そのまま追従させると宣言した
+	// initial_focus が即座に上書きされ、 開くたびに違う項目が選ばれる
+	// (どこでボタンを押したかで決まってしまう)。
+	// そこで start() で hover_focus をいったん切り、 **実際にポインタが
+	// 動いたら** 元の設定へ戻す。 hover の見た目 (hilite) は切らないので
+	// 「ポインタの下が光っているが、 選択は初期フォーカス」の状態になる。
+	bool hover_gate      = false;   // ゲート中か (hover_focus を伏せている)
+	bool hover_gate_seen = false;   // 基準位置を控えたか
+	ce::point hover_gate_pos{0.0f, 0.0f};
+
 	// 任意の外部 callback (ホスト側の event handler ブリッジ用など)
 	event_callback external_cb;
 
@@ -787,6 +801,15 @@ bool overlay_session::start(const std::string& json_utf8,
 	// legacy "shortcuts" / tab_view の登録は action バインドの後に走るので、
 	// 同一入力に対する明示宣言が優先される。
 	if (layout.apply_input) layout.apply_input(*_impl->view);
+
+	// 置きっぱなしのポインタで初期フォーカスが流れないようにゲートを張る
+	// (impl::hover_gate の説明を参照)。 apply_input が hover_focus の
+	// JSON 設定を当てた後でないと、 元の設定を取り違える。
+	if (_impl->view->hover_focus()) {
+		_impl->view->hover_focus(false);
+		_impl->hover_gate      = true;
+		_impl->hover_gate_seen = false;
+	}
 
 	// JSON "initial_focus": true 指定があればフォーカス。 view::focus() は
 	// asio::post で次 idle へデファードされるので順序問題なし。
@@ -1542,6 +1565,20 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	if (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y)
 		_impl->last_nav_source = impl::nav_source::mouse;
 	_impl->last_cursor = p;
+
+	// 開いた直後の置きっぱなしポインタで初期フォーカスが流れないようにする
+	// ゲートを、 実際にポインタが動いた時点で外す (impl::hover_gate 参照)。
+	// 最初に届いた位置を「開いたときの位置」として控え、 そこから動いたら解除。
+	if (_impl->hover_gate) {
+		if (!_impl->hover_gate_seen) {
+			_impl->hover_gate_pos  = p;
+			_impl->hover_gate_seen = true;
+		} else if (p.x != _impl->hover_gate_pos.x ||
+		           p.y != _impl->hover_gate_pos.y) {
+			_impl->hover_gate = false;
+			_impl->view->hover_focus(true);
+		}
+	}
 	if (_impl->mouse_down) {
 		ce::mouse_button btn{
 			.down = true, .num_clicks = 1,
