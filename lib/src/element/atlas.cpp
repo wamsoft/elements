@@ -381,8 +381,7 @@ namespace cycfi::elements
 
       if (num_options())
       {
-         auto font = get_theme().label_font;
-         font = font.size(font._size * font_size());
+         auto font = text_font();
          cnv.font(font);
          cnv.fill_style(_color);
          cnv.text_align(cnv.center | cnv.middle);

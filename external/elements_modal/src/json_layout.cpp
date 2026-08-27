@@ -2855,6 +2855,9 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 
 	// picker は内部で `font._size * _font_size` 計算するので scale を渡す。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
+	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
+	// テーマ既定 (従来どおり)。
+	std::string picker_font = string_or(o, "font");
 
 	auto cb_id = id;
 	auto user_cb = _cb;
@@ -2873,6 +2876,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -2883,6 +2887,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -2891,6 +2896,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -4952,7 +4958,8 @@ element_ptr LayoutBuilder::build_atlas_number(const picojson::object& o)
 //     "right": { "normal": [x,y,w,h], "hilite": [x,y,w,h] },
 //     "left_at": [dx,dy,w,h], "right_at": [dx,dy,w,h], "text_at": [dx,dy,w,h],
 //     "options": [..] / "options_id": [..], "initial": 0,
-//     "font_size": px, "color": [r,g,b,a], "index_var": "machine" }
+//     "font_size": px, "font": "Family[#axes]", "color": [r,g,b,a],
+//     "index_var": "machine" }
 // *_at は widget bounds 左上原点の相対 px (canvas floating "at" と併用)。
 // 選択変更時に event_callback(id, false, int64_t index)。 options_id /
 // index_var の意味は cycle_picker と同じ。
@@ -5025,6 +5032,9 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 		}
 	};
 	p->font_size(fs);
+	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
+	// テーマ既定 (従来どおり)。
+	if (auto pf = string_or(o, "font"); !pf.empty()) p->font_family(pf);
 	if (auto* arr = get_array(o, "color")) p->text_color(parse_color(*arr));
 	note_focusable(id, p);
 	subscribe_picker_options(p, opt_ids);
