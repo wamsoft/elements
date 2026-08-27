@@ -1475,6 +1475,8 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 	if (!active()) return;
 	_impl->needs_render_ = true;   // 入力は押下状態等の見た目を変え得る
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
+	// クリックは明確なマウス操作なのでナビ種別を戻す (on_mouse_move 参照)
+	_impl->last_nav_source = impl::nav_source::mouse;
 	// mouse バインド (既定: 右click→cancel)。 マッチしたら action を発火して
 	// クリック自体は消費する (widget へは流さない)。 "none" は消費のみ。
 	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
@@ -1527,6 +1529,18 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	// 合成 move が毎回無変化の全面再描画になっていた)。 drag 中の見た目変化も
 	// tracker widget が refresh(rect) を発行する契約。
 	auto p = _impl->to_view(sx, sy);
+	// カーソルが実際に動いたらナビ種別を mouse へ戻す。
+	//
+	// ここを更新しないと last_nav_source が key のまま張り付き、 一度でも
+	// キー/パッドで操作した後は **マウスで hover フォーカスが動くたびに
+	// カーソルを warp** してしまう。 warp がまた hover を動かすので、
+	// 隣接する 2 項目の間でフォーカスとポインタが振動し続け、 グリッド状の
+	// UI (ソフトウェアキーボード等) が操作不能になる。 実カーソルまで
+	// 引きずられるためアプリ外のマウス操作にも影響する。
+	// パッドの斜め入力でフォーカスが上下に振動するのも同じ経路
+	// (warp の合成 move → hover → 再 warp)。
+	if (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y)
+		_impl->last_nav_source = impl::nav_source::mouse;
 	_impl->last_cursor = p;
 	if (_impl->mouse_down) {
 		ce::mouse_button btn{
