@@ -4576,6 +4576,21 @@ struct em_null_thumb : cycfi::elements::element
 	}
 };
 
+// thumb 形式 atlas_slider の base。 track 画像は widget 全域 (= "at"/#範囲) を
+// そのまま埋める素材 (角丸ボーダー等の枠込み) を前提にしており、 slider_base
+// 既定の「thumb がはみ出さないよう track を thumb 半分だけ内側にインセット」
+// という挙動は不要 (むしろ枠が切り詰められて見える)。 track_bounds() を
+// widget の全域そのままに上書きする。
+struct em_slider_base : cycfi::elements::basic_slider_base
+{
+	using cycfi::elements::basic_slider_base::basic_slider_base;
+	cycfi::elements::rect
+	track_bounds(cycfi::elements::context const& ctx) const override
+	{
+		return ctx.bounds;
+	}
+};
+
 // fill 形式スライダの base。 thumb (= フォーカスカーソル) の可動域と
 // クリック/ドラッグの値マッピングを、 widget 全幅ではなくゲージ部分
 // (fill_at の範囲) に合わせる。 トラック画像の両端にラベル (0 / 100 等) が
@@ -4702,7 +4717,16 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
 		                                          /*stretch_h=*/false,
 		                                          /*stretch_v=*/false));
-		auto sl = ce::slider(ce::hold(thumb_img), ce::hold(track_img), initial);
+		// track 画像は "at"(#範囲) と同じ矩形で書き出されており、 枠の角丸
+		// ボーダーまで込みで widget 全域を表現する素材。 slider_base の既定
+		// track_bounds() は thumb がはみ出さないよう thumb 半分だけ内側に
+		// インセットするが、 このインセットのまま track を描画するとフレーム
+		// の端 (上下/左右) が切り詰められて見える。 track は widget の全域に
+		// そのまま描画する (thumb の可動域は thumb_bounds 側で別途 widget
+		// 全域基準に計算されるため、 ここを変えても操作感は変わらない)。
+		auto sl = ce::basic_slider<
+			decltype(ce::hold(thumb_img)), decltype(ce::hold(track_img)),
+			em_slider_base>(ce::hold(thumb_img), ce::hold(track_img), initial);
 		if (!id.empty()) {
 			auto cb_id = id;
 			auto user_cb = _cb;

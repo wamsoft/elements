@@ -126,11 +126,15 @@ namespace cycfi::elements
       if (_is_horiz)
       {
          bounds.width(tmb_w);
+         bounds.height(tmb_h);
+         bounds = center_v(bounds, ctx.bounds);
          return bounds.move((w - tmb_w) * value(), 0);
       }
       else
       {
          bounds.height(tmb_h);
+         bounds.width(tmb_w);
+         bounds = center_h(bounds, ctx.bounds);
          return bounds.move(0, (h - tmb_h) * (1.0 - value()));
          // Note: for vertical sliders, 0.0 is at the bottom, hence 1.0-value()
       }

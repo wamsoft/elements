@@ -52,7 +52,10 @@ namespace cycfi::elements
       void                    edit(view& view_, double val) override;
       virtual void            edit_value(double val) { value(val);}
 
-      rect                    track_bounds(context const& ctx) const;
+      // Virtual so hosts can draw the track image over the full widget
+      // bounds instead of the default thumb-overhang inset (e.g. atlas
+      // track art that already bakes in its own frame/border).
+      virtual rect            track_bounds(context const& ctx) const;
       // Virtual so hosts can remap the thumb travel to a sub-range of the
       // widget (e.g. gauge-style tracks with labels baked into the ends).
       virtual rect            thumb_bounds(context const& ctx) const;
