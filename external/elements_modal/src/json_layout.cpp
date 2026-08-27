@@ -3856,17 +3856,25 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	// 行の下地のように「自分はフォーカスを取らないが、 行内のコントロールが
 	// フォーカスされていることを示したい」飾りのためのもの。 focus_link に
 	// 指定した id がフォーカスを持っている間だけ hilite を描く。
+	//
+	// "normal" は省略可 (= 非フォーカス中は何も描かない)。 素材が 1 枚しか
+	// 無いフォーカスインジケータ (「ぽっち」を当たっている項目にだけ出す) は
+	// これで組める。 省略時は空矩形を frame 0 に置き、 atlas_sprite が空
+	// frame を描画スキップする。 "hilite" は必須。
 	if (auto* fv = get_field(o, "frames");
 	    fv && fv->is<picojson::object>() && get_field(o, "focus_link")) {
 		const auto& fr = fv->get<picojson::object>();
 		auto* n_arr = get_array(fr, "normal");
 		auto* h_arr = get_array(fr, "hilite");
-		if (!n_arr || n_arr->size() < 4 || !h_arr || h_arr->size() < 4) {
+		if (n_arr && n_arr->size() < 4) n_arr = nullptr;   // 壊れた normal は無指定扱い
+		if (!h_arr || h_arr->size() < 4) {
 			em_logf("elements_modal: atlas_image \"%s\" focus_link needs "
-			        "frames.normal / frames.hilite as [x,y,w,h]",
+			        "frames.hilite as [x,y,w,h] (frames.normal is optional; "
+			        "omitting it draws nothing while unfocused)",
 			        atlas_name.c_str());
 		} else {
-			const ce::rect r_normal = parse_xywh(*n_arr);
+			// normal 無指定 = 空矩形 (描画スキップ)。
+			const ce::rect r_normal = n_arr ? parse_xywh(*n_arr) : ce::rect{};
 			const ce::rect r_hilite = parse_xywh(*h_arr);
 			// "focus_link" は id 文字列、 または id の配列 (1 行に複数の
 			// コントロールがある場合は、 そのどれかが focus されていれば hilite)。
@@ -3900,6 +3908,18 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 			// 行領域のどこへマウスオーバーしてもリンク先コントロールへ
 			// フォーカスが移るように、 ホバートリガのプロキシで包んで返す
 			// (SGOCT 系フィードバック: クリック可能領域の上だけだと分かりづらい)
+			//
+			// ただしこのプロキシは wants_control() = true なので、 «飾りが
+			// コントロールに重なっている» 配置 (項目の角に載せるフォーカス
+			// インジケータ等) では飾りがクリックを先に受け取ってしまい、
+			// 下のボタンが押せない死角になる。 そういう飾りは
+			// "hover_focus_link": false でプロキシを外し、 従来の
+			// «クリックを一切取らない飾り» のままにする
+			// (行の下地のように重なりが無い飾りは既定の true でよい)。
+			bool hover_link = true;
+			bool_field(get_field(o, "hover_focus_link"), hover_link);
+			if (!hover_link)
+				return img;
 			auto wire = std::make_shared<hover_link_wire>();
 			_hover_link_wires.push_back({wire, targets});
 			return ce::share(hover_focus_link_element(

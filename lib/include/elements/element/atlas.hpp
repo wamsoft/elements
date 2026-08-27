@@ -82,6 +82,8 @@ namespace cycfi::elements
       rect                    source_rect(context const& ctx) const override;
       // native モード時は各 frame を実寸のまま bounds 中央に描く (frame 間で
       // サイズが違っても伸縮しない)。 既定 (false) は従来どおり bounds へ伸縮。
+      // native モードの空 frame (幅/高さ 0) は «この状態は何も描かない» 扱い
+      // (フォーカス時だけ出る 1 枚絵インジケータ等)。
       void                    draw(context const& ctx) override;
 
       std::size_t             num_frames() const override { return _frames.size(); }
