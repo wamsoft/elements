@@ -1587,7 +1587,7 @@ public:
 	}
 
 	// リソースフォルダのテキストファイルを丸ごと読む (UTF-8)。 BOM を落とし、
-	// CRLF を LF に均す (折返しは  を独立した空白として数えるため、 残すと
+	// CRLF を LF に均す (折返しは CR を独立した空白として数えるため、 残すと
 	// 行末に幅ゼロの空白が付いて右端の折返し位置がずれる)。 読めなければ空。
 	std::string read_text_resource(const std::string& rel) const
 	{
@@ -1601,7 +1601,7 @@ public:
 		    && static_cast<unsigned char>(body[1]) == 0xBB
 		    && static_cast<unsigned char>(body[2]) == 0xBF)
 			body.erase(0, 3);
-		body.erase(std::remove(body.begin(), body.end(), ''), body.end());
+		body.erase(std::remove(body.begin(), body.end(), '\r'), body.end());
 		return body;
 	}
 
