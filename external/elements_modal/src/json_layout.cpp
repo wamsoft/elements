@@ -462,6 +462,34 @@ ce::color theme_color_or(const char* name, ce::color dflt)
 	return (it == g_named_colors.end()) ? dflt : it->second;
 }
 
+// 変数の値 (文字列) を色として読む。 "@名前" / "#rrggbb" のほか、
+// ホストが数値で作れるように "r,g,b" / "r,g,b,a" (0-255) も受ける。
+bool parse_color_string(const std::string& t, ce::color& out)
+{
+	if (t.empty()) return false;
+	if (t[0] == '@' || t[0] == '#') {
+		picojson::value v(t);
+		return parse_color_value(v, out);
+	}
+	if (t.find(',') != std::string::npos) {
+		picojson::array arr;
+		std::size_t pos = 0;
+		while (pos <= t.size()) {
+			auto c = t.find(',', pos);
+			auto piece = t.substr(pos, c == std::string::npos ? std::string::npos
+			                                                  : c - pos);
+			try { arr.push_back(picojson::value(std::stod(piece))); }
+			catch (...) { return false; }
+			if (c == std::string::npos) break;
+			pos = c + 1;
+		}
+		if (arr.size() < 3) return false;
+		out = parse_color(arr);
+		return true;
+	}
+	return false;
+}
+
 // オブジェクトの key を色として読む。 無い/読めないときは out を変えない。
 bool parse_color_field(const picojson::object& o, const char* key, ce::color& out)
 {
@@ -2105,6 +2133,106 @@ private:
 	float _ax, _ay;
 };
 
+//---------------------------------------------------------------------------
+// "vars_on_hover" — カーソルが乗っている間だけ変数を書き換える。
+//
+//   vars_on_focus (フォーカス連動) の hover 版。 «今カーソルがどこに乗って
+//   いるか» はキー/パッドのフォーカスとは別物なので、 一覧の行をマウスで
+//   なぞって説明を出す / 色を変える、 といった用途はこちらが要る。
+//
+//   { "type": "label", "id": "row1", "text": "...",
+//     "vars_on_hover": { "row_color": "@accent_hi", "help": "説明文" } }
+//
+//   離れたら **乗る直前の値へ戻す** ので、 「乗っている間だけ」が素直に書ける。
+//
+//   注意: 当たりを持たない要素 (label / 画像) は hover を受け取れないので、
+//   この proxy が当たりを引き受ける。 そのため «下に重なっているコントロール»
+//   があると、そちらが押せなくなる (hover_focus_link と同じ事情)。
+//   コントロール自身に付ける場合は中身の当たりが優先されるので影響しない。
+//---------------------------------------------------------------------------
+namespace {
+
+using hover_pairs = std::vector<std::pair<std::string, std::string>>;
+
+template <typename Subject>
+class hover_vars_element : public ce::proxy<Subject>
+{
+public:
+
+	using pairs = hover_pairs;
+
+	hover_vars_element(Subject subject, std::shared_ptr<VariableStore> vars,
+	                   pairs on_hover)
+	 : ce::proxy<Subject>(std::move(subject))
+	 , _vars(std::move(vars))
+	 , _on_hover(std::move(on_hover))
+	{}
+
+	ce::element* hit_test(ce::context const& ctx, ce::point p,
+	                      bool leaf, bool control) override
+	{
+		// 中身がコントロールならそちらを優先 (ボタン等の当たりは変えない)。
+		if (auto* e = ce::proxy<Subject>::hit_test(ctx, p, leaf, control))
+			return e;
+		// label / 画像は当たりを持たないので、 hover を受けるため自分を返す。
+		return ctx.bounds.includes(p) ? this : nullptr;
+	}
+
+	bool wants_control() const override { return true; }
+
+	bool cursor(ce::context const& ctx, ce::point p,
+	            ce::cursor_tracking status) override
+	{
+		bool r = ce::proxy<Subject>::cursor(ctx, p, status);
+		if (status == ce::cursor_tracking::leaving) { restore(); return r; }
+		if (!_inside) {
+			_inside = true;
+			_saved.clear();
+			for (auto const& kv : _on_hover) {
+				auto const* cur = _vars->get(kv.first);
+				_saved.emplace_back(kv.first, cur ? *cur : std::string{});
+				_vars->set(kv.first, kv.second);
+			}
+		}
+		return r;
+	}
+
+private:
+
+	void restore()
+	{
+		if (!_inside) return;
+		_inside = false;
+		for (auto const& kv : _saved)
+			_vars->set(kv.first, kv.second);
+		_saved.clear();
+	}
+
+	std::shared_ptr<VariableStore> _vars;
+	pairs                          _on_hover;
+	pairs                          _saved;
+	bool                           _inside = false;
+};
+
+} // anonymous (vars_on_hover)
+
+element_ptr apply_hover_vars(const picojson::object& o, element_ptr el,
+                             std::shared_ptr<VariableStore> vars)
+{
+	auto* v = get_field(o, "vars_on_hover");
+	if (!v || !v->is<picojson::object>() || !el || !vars) return el;
+	hover_pairs pairs;
+	for (auto const& kv : v->get<picojson::object>()) {
+		if (kv.second.is<std::string>())
+			pairs.emplace_back(kv.first, kv.second.get<std::string>());
+		else
+			pairs.emplace_back(kv.first, kv.second.to_str());
+	}
+	if (pairs.empty()) return el;
+	return ce::share(hover_vars_element(
+		ce::hold_any(std::move(el)), std::move(vars), std::move(pairs)));
+}
+
 element_ptr apply_focus_point(const picojson::object& o, element_ptr el)
 {
 	auto* v = get_field(o, "focus_point");
@@ -2380,6 +2508,8 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_animation(o, std::move(el));
 	// "focus_point" 指定があれば focus hot point 上書き proxy で包む。
 	if (el) el = apply_focus_point(o, std::move(el));
+	// "vars_on_hover" 指定があれば hover 連動の変数書換 proxy で包む。
+	if (el) el = apply_hover_vars(o, std::move(el), _vars);
 	// "enabled_var" 指定がボタン以外に付いていたら、 無効時フェード proxy で包む。
 	// (ボタンは basic_button::enable で自前にフェードするので対象外)
 	if (el) el = apply_enabled_fade(o, std::move(el));
@@ -2916,6 +3046,18 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	ce::color col;
 	if (parse_color_field(o, "color", col))
 		has_color = true;
+	// "color_var": 文字色を変数で差し替える。 一覧の行で «選択中だけ色を変える»
+	// といった用途 (色違いの label を重ねて visible_var で出し分ける必要がない)。
+	// 値の書き方は "@名前" / "#rrggbb" / "r,g,b[,a]"。
+	// 色スタイラが無いと後から差し替えられないので、 "color" 未指定でも
+	// テーマ既定の色で «色を持った» label として組む。
+	std::string color_var = string_or(o, "color_var");
+	if (!color_var.empty()) {
+		if (!has_color) col = ce::get_theme().label_font_color;
+		if (auto* init = _vars->get(color_var))
+			parse_color_string(*init, col);
+		has_color = true;
+	}
 
 	element_ptr out;
 
@@ -3045,6 +3187,21 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			        "text_writer 未継承で set_text 仕掛け失敗",
 			        text_id.c_str(), text_var.c_str());
 		}
+	}
+	// "color_var": 変数で文字色を差し替える。 text_anchor 経路 (anchored_text)
+	// と通常の label 経路 (色スタイラ) で設定先が違うので、 両方を試す。
+	if (!color_var.empty() && out) {
+		std::weak_ptr<ce::element> w = out;
+		_vars->subscribe(color_var, [w](const std::string& v) {
+			ce::color c;
+			if (!parse_color_string(v, c)) return;
+			auto p = w.lock();
+			if (!p) return;
+			if (auto* at = dynamic_cast<ce::anchored_text*>(p.get()))
+				at->set_color(c);
+			else if (auto* lb = dynamic_cast<ce::default_label_styler*>(p.get()))
+				lb->set_font_color(c);
+		}, out);
 	}
 	// index_var + text_list(_id): index 変化でリストから引いて set_text
 	// (指定番号表示ラベル)。 text_list_id なら言語切替でも同じ index を引き直す。
@@ -3346,6 +3503,32 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 		};
 		sp->on_scroll = [publish](ce::point) { publish(); };
 		sp->on_extent = [publish](ce::point) { publish(); };
+
+		// pos_var は **双方向**。 変数へ書けば本文がその位置へ送られる。
+		// これで「つまみ (slider / atlas_slider) と本文が同じ変数を共有する」
+		// だけで画像スクロールバーが成立する — ホスト実装も drag API も要らない。
+		//
+		// 自分が publish した値を読み戻して再設定すると往復し続けるので、
+		// 現在位置と同じなら何もしない (publish は小数 4 桁で書くため、
+		// 往復しても同じ文字列になる)。
+		if (!pos_var.empty()) {
+			_vars->subscribe(pos_var,
+				[w, horizontal, publish](const std::string& v) {
+					auto p = w.lock();
+					if (!p) return;
+					double n = 0.0;
+					try { n = std::stod(v); } catch (...) { return; }
+					if (n < 0.0) n = 0.0;
+					if (n > 1.0) n = 1.0;
+					double cur = horizontal ? p->halign() : p->valign();
+					if (std::abs(cur - n) < 1e-4) return;
+					if (horizontal) p->halign(n); else p->valign(n);
+					// 位置を «外から» 動かしたときは on_scroll が飛ばないので、
+					// 割合と表示文字列を自分で書き直す (進行 % が止まって
+					// 見えるのを防ぐ)。 pos_var は同じ値になるため往復しない。
+					publish();
+				}, sp);
+		}
 	}
 
 	element_ptr out = sp;
@@ -4881,6 +5064,14 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	bool stretch_h = false, stretch_v = false;
 	bool_field(get_field(o, "stretch_h"), stretch_h);
 	bool_field(get_field(o, "stretch_v"), stretch_v);
+	// "native": true — 矩形を bounds へ伸縮せず、 実寸のまま bounds 中央へ描く。
+	// 大きさの違う絵を "rect_list" で差し替えるとき (長さの違うメッセージ画像
+	// など) に歪ませないためのもの。 atlas_button 等の "native_frames" と同じ考え方。
+	// (テーマの skins が "native": true を書くと "native_frames" に落ちるので、
+	//  そちらも受ける — skin から atlas_image の native を指定できるように)
+	bool native = false;
+	bool_field(get_field(o, "native"), native);
+	bool_field(get_field(o, "native_frames"), native);
 
 	// "frames" + "focus_link": 別ウィジェットのフォーカスに追従して絵を変える飾り。
 	//   { "type": "atlas_image", "atlas": "ui",
@@ -4990,7 +5181,7 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 			}
 		}
 		auto img = std::make_shared<ce::atlas_image>(
-			pm, rects[idx], stretch_h, stretch_v);
+			pm, rects[idx], stretch_h, stretch_v, native);
 		if (!index_var.empty()) {
 			std::weak_ptr<ce::atlas_image> w = img;
 			_vars->subscribe(index_var,
@@ -5017,7 +5208,7 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	}
 	ce::rect src = parse_xywh(*arr);
 
-	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v));
+	return ce::share(ce::atlas_image(pm, src, stretch_h, stretch_v, native));
 }
 
 //---------------------------------------------------------------------------
