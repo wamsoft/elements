@@ -2093,6 +2093,7 @@ private:
 	element_ptr build_atlas_toggle(const picojson::object& o);
 	element_ptr build_atlas_choice(const picojson::object& o);
 	element_ptr build_atlas_slider(const picojson::object& o);
+	element_ptr build_atlas_scrollbar(const picojson::object& o);
 	element_ptr build_atlas_progress(const picojson::object& o);
 	element_ptr build_atlas_number(const picojson::object& o);
 	element_ptr build_radio_button (const picojson::object& o);
@@ -2866,6 +2867,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 	if (type == "atlas_choice")   return build_atlas_choice(o);
 	if (type == "atlas_radio")    return build_atlas_choice(o);  // alias
 	if (type == "atlas_slider")   return build_atlas_slider(o);
+	if (type == "atlas_scrollbar") return build_atlas_scrollbar(o);
 	if (type == "atlas_progress") return build_atlas_progress(o);
 	if (type == "atlas_number")   return build_atlas_number(o);
 	if (type == "radio_button")   return build_radio_button(o);
@@ -6122,6 +6124,56 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// つまみ資材 ("thumb") のパース。 2 形式を受ける:
+//   [x, y, w, h]                                     … 単一矩形をそのまま貼る
+//   { "rect": [...], "insets": [l,t,r,b], "size": [w,h] } … 9-slice
+// 9-slice はキャップ (四辺 insets) を潰さずに size のつまみへ伸ばす。
+// atlas_slider (固定長つまみ) と atlas_scrollbar (可変長つまみ) で共有する。
+//---------------------------------------------------------------------------
+namespace {
+struct thumb_spec
+{
+	ce::rect                 src{};
+	ce::atlas_nine::insets   ins{};
+	bool                     nine = false;   // insets 指定あり = 9-slice
+	float                    w = 0, h = 0;   // 表示サイズ (既定 = src 原寸)
+	bool                     valid = false;
+};
+
+thumb_spec parse_thumb_spec(const picojson::object& o, const char* key)
+{
+	thumb_spec t;
+	if (auto* arr = get_array(o, key); arr && arr->size() >= 4) {
+		t.src = parse_xywh(*arr);
+		t.w = t.src.width();
+		t.h = t.src.height();
+		t.valid = (t.w > 0 && t.h > 0);
+		return t;
+	}
+	auto* v = get_field(o, key);
+	if (!v || !v->is<picojson::object>()) return t;
+	const auto& to = v->get<picojson::object>();
+	if (auto* r = get_array(to, "rect"); r && r->size() >= 4) t.src = parse_xywh(*r);
+	if (auto* iv = get_array(to, "insets"); iv && iv->size() >= 4) {
+		t.ins.left   = static_cast<float>(int_at(*iv, 0, 0));
+		t.ins.top    = static_cast<float>(int_at(*iv, 1, 0));
+		t.ins.right  = static_cast<float>(int_at(*iv, 2, 0));
+		t.ins.bottom = static_cast<float>(int_at(*iv, 3, 0));
+	}
+	t.w = t.src.width();
+	t.h = t.src.height();
+	if (auto* sz = get_array(to, "size"); sz && sz->size() >= 2) {
+		t.w = static_cast<float>(int_at(*sz, 0, 0));
+		t.h = static_cast<float>(int_at(*sz, 1, 0));
+	}
+	// insets が全て 0 なら 9-slice にする意味がない (単一矩形と同じ)
+	t.nine = !t.ins.empty();
+	t.valid = (t.src.width() > 0 && t.src.height() > 0);
+	return t;
+}
+} // anonymous (thumb_spec)
+
+//---------------------------------------------------------------------------
 // atlas_slider — track + thumb (または fill) をアトラスの sub-rect で構築する
 // 0..1 スライダ。
 //   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
@@ -6307,37 +6359,17 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	} else {
 		// つまみ資材: 配列形式 = そのまま貼る単一矩形、
 		// オブジェクト形式 = 9-slice (キャップ付きつまみ)。
-		ce::rect thumb_src{};
-		ce::atlas_nine::insets thumb_ins;
-		bool thumb_nine = false;
-		float thumb_w = 0, thumb_h = 0;
-		if (th_obj) {
-			if (auto* r = get_array(*th_obj, "rect"); r && r->size() >= 4)
-				thumb_src = parse_xywh(*r);
-			if (auto* iv = get_array(*th_obj, "insets"); iv && iv->size() >= 4) {
-				thumb_ins.left   = static_cast<float>(int_at(*iv, 0, 0));
-				thumb_ins.top    = static_cast<float>(int_at(*iv, 1, 0));
-				thumb_ins.right  = static_cast<float>(int_at(*iv, 2, 0));
-				thumb_ins.bottom = static_cast<float>(int_at(*iv, 3, 0));
-			}
-			thumb_w = thumb_src.width();
-			thumb_h = thumb_src.height();
-			if (auto* sz = get_array(*th_obj, "size"); sz && sz->size() >= 2) {
-				thumb_w = static_cast<float>(int_at(*sz, 0, 0));
-				thumb_h = static_cast<float>(int_at(*sz, 1, 0));
-			}
-			if (thumb_src.width() <= 0 || thumb_src.height() <= 0) {
-				em_logf("elements_modal: atlas_slider \"%s\" thumb object "
-				        "needs 'rect' [x, y, w, h]", atlas_name.c_str());
-				return nullptr;
-			}
-			// insets が無ければ 9-slice にする意味がない (単一矩形と同じ)。
-			thumb_nine = !thumb_ins.empty();
-		} else {
-			thumb_src = parse_xywh(*th);
-			thumb_w = thumb_src.width();
-			thumb_h = thumb_src.height();
+		const thumb_spec ts = parse_thumb_spec(o, "thumb");
+		if (!ts.valid) {
+			em_logf("elements_modal: atlas_slider \"%s\" thumb needs "
+			        "[x, y, w, h] or { \"rect\": [x, y, w, h] }",
+			        atlas_name.c_str());
+			return nullptr;
 		}
+		const ce::rect thumb_src = ts.src;
+		const ce::atlas_nine::insets thumb_ins = ts.ins;
+		const bool thumb_nine = ts.nine;
+		const float thumb_w = ts.w, thumb_h = ts.h;
 		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
 		// track 省略時 (溝が背景側に描いてある素材) は見えない stretchable 要素を
 		// 敷く (widget の box いっぱいが可動域になる)。
@@ -6403,6 +6435,327 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return shared;
+}
+
+//---------------------------------------------------------------------------
+// atlas_scrollbar — 溝 + つまみのスクロールバー (PSD 資材そのまま用)。
+//
+//   { "at": [x, y, w, h], "type": "atlas_scrollbar", "atlas": "ui", "id": "sb",
+//     "vertical": true,
+//     "track": [x, y, w, h],                    // 溝 (省略可 = 背景側に描画済)
+//     "thumb": { "rect": [x, y, w, h],          // つまみ (9-slice 可)
+//                "insets": [l, t, r, b] },
+//     "index_offset_var": "top",                // 一覧の先頭 index へ直結
+//     "count_var": "n", "visible": 8 }          // 総件数 / 見えている行数
+//
+// 一覧の «窓» (index + index_offset_var) と組にすると、 行を自前で並べる一覧に
+// «溝・つまみ・ページ送り・ホイール・ドラッグ» をホスト実装なしで足せる。
+// 値のつなぎ方は 2 通り:
+//
+//   - **index モード** ("index_offset_var"): つまみは先頭 index を指す。
+//     つまみの長さは «見えている行数 / 総件数» に比例する (可変長)。
+//     count / visible は数値直書き ("count" / "visible") でも変数
+//     ("count_var" / "visible_var") でもよい。 変数なら件数が変わると
+//     つまみの長さも追従する。
+//   - **value モード** ("value_var"): 0..1 の位置。 本文が scroller に載って
+//     いる画面では scroller の "pos_var" と同じ変数を挿すと連動する。
+//     count / visible があればつまみは可変長、 無ければ素材の原寸。
+//
+// 操作: つまみドラッグ / 溝クリックでページ送り ("page"、 既定 = visible) /
+// ホイール ("wheel_step" 行、 既定 1)。 変化は変数へ書かれ、 id があれば
+// onAction にも流れる (index モードは行 index の整数、 value モードは 0..1)。
+//---------------------------------------------------------------------------
+namespace {
+class atlas_scrollbar_element : public ce::element
+{
+public:
+
+	struct spec
+	{
+		std::string id;
+		bool        vertical = true;
+		bool        has_track = false;
+		ce::rect    track_src{};
+		thumb_spec  thumb{};
+		float       thumb_min = 16.0f;
+		std::string value_var;    // 0..1 直結 (value モード)
+		std::string offset_var;   // 先頭 index 直結 (index モード)
+		std::string count_var;
+		std::string visible_var;
+		int         count = 0;
+		int         visible = 0;
+		int         page = 0;        // 溝クリックの送り量 (0 = visible)
+		int         wheel_step = 1;  // ホイール 1 ノッチの送り量
+	};
+
+	atlas_scrollbar_element(ce::pixmap_ptr pm, spec sp,
+	                        std::shared_ptr<VariableStore> vars,
+	                        event_callback cb)
+	 : _spec(std::move(sp)), _vars(std::move(vars)), _cb(std::move(cb))
+	{
+		if (_spec.has_track) {
+			_track = ce::share(ce::atlas_image(pm, _spec.track_src,
+			                                   !_spec.vertical, _spec.vertical));
+		}
+		if (_spec.thumb.nine) {
+			_thumb = ce::share(ce::atlas_nine(pm, _spec.thumb.src,
+			                                  _spec.thumb.ins));
+		} else {
+			_thumb = ce::share(ce::atlas_image(pm, _spec.thumb.src,
+			                                   /*stretch_h=*/true,
+			                                   /*stretch_v=*/true));
+		}
+	}
+
+	ce::view_limits limits(ce::basic_context const&) const override
+	{
+		// 太さは素材どおり、 軸方向は伸びる (canvas 配置なら "at" が効く)。
+		const float cross = _spec.vertical ? _spec.thumb.w : _spec.thumb.h;
+		const float c = (cross > 0) ? cross : 8.0f;
+		if (_spec.vertical) return {{c, c}, {c, ce::full_extent}};
+		return {{c, c}, {ce::full_extent, c}};
+	}
+
+	void draw(ce::context const& ctx) override
+	{
+		if (_track) {
+			ce::context tctx{ctx, _track.get(), ctx.bounds};
+			_track->draw(tctx);
+		}
+		if (_thumb) {
+			ce::context hctx{ctx, _thumb.get(), thumb_bounds(ctx.bounds)};
+			_thumb->draw(hctx);
+		}
+	}
+
+	bool wants_control() const override { return true; }
+
+	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		if (!btn.down) { _dragging = false; return true; }
+		if (btn.state != ce::mouse_button::left) return false;
+		const ce::rect tb = thumb_bounds(ctx.bounds);
+		const float p  = _spec.vertical ? btn.pos.y : btn.pos.x;
+		const float t0 = _spec.vertical ? tb.top    : tb.left;
+		const float t1 = _spec.vertical ? tb.bottom : tb.right;
+		if (p >= t0 && p <= t1) {
+			_dragging = true;
+			_grab = p - t0;          // 掴んだ位置をつまみ内で保つ
+			return true;
+		}
+		move_by_page(p < t0 ? -1 : +1);
+		ctx.view.refresh(ctx);
+		return true;
+	}
+
+	void drag(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		if (!_dragging) return;
+		const ce::rect b = ctx.bounds;
+		const float tl = axis_len(b);
+		const float len = thumb_len(b);
+		if (tl - len <= 0.0f) return;
+		const float p    = _spec.vertical ? btn.pos.y : btn.pos.x;
+		const float base = _spec.vertical ? b.top     : b.left;
+		set_pos01((p - _grab - base) / (tl - len));
+		ctx.view.refresh(ctx);
+	}
+
+	bool scroll(ce::context const& ctx, ce::point dir, ce::point) override
+	{
+		const float d = _spec.vertical ? dir.y : dir.x;
+		if (d == 0.0f) return false;
+		move_by_step(d > 0.0f ? -1 : +1);   // ホイール上 = 前へ
+		ctx.view.refresh(ctx);
+		return true;
+	}
+
+	bool cursor(ce::context const&, ce::point, ce::cursor_tracking) override
+	{
+		return true;   // カーソルが乗っている間はこの要素が受け持つ
+	}
+
+private:
+
+	float axis_len(ce::rect b) const
+	{
+		return _spec.vertical ? b.height() : b.width();
+	}
+
+	int var_int(const std::string& name, int dflt) const
+	{
+		if (name.empty() || !_vars) return dflt;
+		if (auto* v = _vars->get(name)) {
+			try { return std::stoi(*v); } catch (...) { return dflt; }
+		}
+		return dflt;
+	}
+
+	int count_of()   const { return var_int(_spec.count_var,   _spec.count); }
+	int visible_of() const { return var_int(_spec.visible_var, _spec.visible); }
+	int max_offset() const
+	{
+		const int m = count_of() - visible_of();
+		return m > 0 ? m : 0;
+	}
+	bool index_mode() const { return !_spec.offset_var.empty(); }
+
+	double pos01() const
+	{
+		if (index_mode()) {
+			const int mo = max_offset();
+			return mo > 0 ? double(var_int(_spec.offset_var, 0)) / mo : 0.0;
+		}
+		if (_spec.value_var.empty() || !_vars) return 0.0;
+		if (auto* v = _vars->get(_spec.value_var)) {
+			try {
+				double d = std::stod(*v);
+				return d < 0.0 ? 0.0 : (d > 1.0 ? 1.0 : d);
+			} catch (...) { return 0.0; }
+		}
+		return 0.0;
+	}
+
+	float thumb_len(ce::rect b) const
+	{
+		const float tl = axis_len(b);
+		const int c = count_of(), v = visible_of();
+		float len;
+		if (c > 0 && v > 0) {
+			len = (v < c) ? tl * float(v) / float(c) : tl;
+		} else {
+			// 件数が分からなければ素材の原寸 (固定長つまみ)
+			len = _spec.vertical ? _spec.thumb.h : _spec.thumb.w;
+			if (len <= 0.0f) len = _spec.thumb_min;
+		}
+		if (len < _spec.thumb_min) len = _spec.thumb_min;
+		if (len > tl) len = tl;
+		return len;
+	}
+
+	ce::rect thumb_bounds(ce::rect b) const
+	{
+		const float tl = axis_len(b);
+		const float len = thumb_len(b);
+		const float off = static_cast<float>(pos01()) * (tl - len);
+		if (_spec.vertical)
+			return ce::rect{b.left, b.top + off, b.right, b.top + off + len};
+		return ce::rect{b.left + off, b.top, b.left + off + len, b.bottom};
+	}
+
+	void notify(const value_t& v) const
+	{
+		if (_cb && !_spec.id.empty()) _cb(_spec.id, /*is_button_click=*/false, v);
+	}
+
+	void set_offset(int off)
+	{
+		const int mo = max_offset();
+		if (off < 0) off = 0;
+		if (off > mo) off = mo;
+		if (!_vars) return;
+		if (_vars->set(_spec.offset_var, std::to_string(off)))
+			notify(value_t{static_cast<std::int64_t>(off)});
+	}
+
+	void set_pos01(double p)
+	{
+		if (p < 0.0) p = 0.0;
+		if (p > 1.0) p = 1.0;
+		if (index_mode()) {
+			set_offset(static_cast<int>(std::lround(p * max_offset())));
+			return;
+		}
+		if (_spec.value_var.empty() || !_vars) return;
+		if (_vars->set(_spec.value_var, fmt_slider_raw(p)))
+			notify(value_t{p});
+	}
+
+	void move_by_page(int dir)
+	{
+		if (index_mode()) {
+			int p = _spec.page > 0 ? _spec.page : visible_of();
+			if (p <= 0) p = 1;
+			set_offset(var_int(_spec.offset_var, 0) + dir * p);
+			return;
+		}
+		set_pos01(pos01() + dir * 0.1);
+	}
+
+	void move_by_step(int dir)
+	{
+		if (index_mode()) {
+			const int st = _spec.wheel_step > 0 ? _spec.wheel_step : 1;
+			set_offset(var_int(_spec.offset_var, 0) + dir * st);
+			return;
+		}
+		set_pos01(pos01() + dir * 0.05);
+	}
+
+	spec                           _spec;
+	std::shared_ptr<VariableStore> _vars;
+	event_callback                 _cb;
+	element_ptr                    _track;
+	element_ptr                    _thumb;
+	bool                           _dragging = false;
+	float                          _grab = 0.0f;
+};
+} // anonymous (atlas_scrollbar)
+
+element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		em_logf("elements_modal: atlas_scrollbar without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	atlas_scrollbar_element::spec sp;
+	sp.id = string_or(o, "id");
+	sp.vertical = true;
+	bool_field(get_field(o, "vertical"), sp.vertical);
+	if (auto* tr = get_array(o, "track"); tr && tr->size() >= 4) {
+		sp.track_src = parse_xywh(*tr);
+		sp.has_track = true;
+	}
+	sp.thumb = parse_thumb_spec(o, "thumb");
+	if (!sp.thumb.valid) {
+		em_logf("elements_modal: atlas_scrollbar \"%s\" needs 'thumb' as "
+		        "[x, y, w, h] or an object with 'rect'", atlas_name.c_str());
+		return nullptr;
+	}
+	sp.value_var   = string_or(o, "value_var");
+	sp.offset_var  = string_or(o, "index_offset_var");
+	sp.count_var   = string_or(o, "count_var");
+	sp.visible_var = string_or(o, "visible_var");
+	sp.count       = static_cast<int>(number_or(o, "count", 0));
+	sp.visible     = static_cast<int>(number_or(o, "visible", 0));
+	sp.page        = static_cast<int>(number_or(o, "page", 0));
+	sp.wheel_step  = static_cast<int>(number_or(o, "wheel_step", 1));
+	sp.thumb_min   = static_cast<float>(number_or(o, "thumb_min", 16.0));
+	if (sp.value_var.empty() && sp.offset_var.empty()) {
+		em_logf("elements_modal: atlas_scrollbar \"%s\": no 'value_var' / "
+		        "'index_offset_var' (つなぎ先が無いと動かせない)",
+		        atlas_name.c_str());
+	}
+
+	element_ptr el = ce::share(atlas_scrollbar_element(pm, sp, _vars, _cb));
+
+	// ホストや他 widget が変数を書き換えたときに描き直す。 コールバックは
+	// 空でよい (値は draw 時に読む)。 owner を渡すのは部分再描画の
+	// ダーティ範囲を «このスクロールバーの矩形» に絞るため。
+	if (_vars) {
+		for (const auto* n : { &sp.value_var, &sp.offset_var,
+		                       &sp.count_var, &sp.visible_var }) {
+			if (n->empty()) continue;
+			_vars->subscribe(*n, [](const std::string&) {}, el);
+		}
+	}
+
+	register_id(o, el);
+	return el;
 }
 
 //---------------------------------------------------------------------------

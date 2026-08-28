@@ -349,6 +349,11 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - 各グリフは縦中央に、 左から `spacing` 間隔で並ぶ。 `align` は widget bounds 内の水平寄せ。
   - `set_text()` を持つ (`text_writer`) ので、 ホストから直接書き換えることもできる。
 
+- `atlas_scrollbar` — **溝 + つまみのスクロールバー**。 `"atlas": name` + `"thumb"` (atlas_slider と同じ 2 形式。 9-slice でキャップ付き資材も可) + `"track": [x,y,w,h]` (省略可 = 溝が背景側に描いてある素材) + `"vertical": bool` (既定 true) + `"id"`。 **行を自前で並べる一覧** (下記「一覧の «窓»」) に、 溝・つまみ・ページ送り・ホイール・ドラッグをホスト実装なしで足すためのもの (本文が `scroller` に載っているなら `scroller` の `pos_var` で足りる)。 つなぎ方は 2 通り:
+  - **index モード** (`"index_offset_var": "top"`): つまみが «一覧の先頭 index» を指す。 総件数 `"count"` / `"count_var"`、 見えている行数 `"visible"` / `"visible_var"` を渡すと、 **つまみの長さが «見えている行数 ÷ 総件数» に比例**する (件数が変われば長さも追従)。 «窓» の行と同じ `index_offset_var` を挿すだけで一覧が動く。
+  - **value モード** (`"value_var": "pos"`): 0..1 の位置。 `scroller` の `pos_var` と同じ変数を挿せば本文と連動する。 count / visible があればつまみは可変長、 無ければ素材の原寸で固定長。
+  - 操作: つまみドラッグ / **溝クリックでページ送り** (`"page"` 行、 既定 = visible) / **ホイール** (`"wheel_step"` 行、 既定 1)。 `"thumb_min"` (既定 16) でつまみの最小長 px。
+  - 値が変わると変数へ書かれ、 `id` があれば `onAction` にも流れる (index モードは行 index の整数、 value モードは 0..1 の double)。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
 
@@ -611,6 +616,8 @@ bool on = elements_modal::focus_ring_enabled();
 | `fraction_var` / `display_var` | scroller | 書き (見えている割合 / 整形済み文字列) | 10 進小数 / 表示文字列 |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
 | `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
+| `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
+| `count_var` / `visible_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
 | `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
 | `opacity_var` | 全 widget 共通 | 読み | 不透明度 0..1 の 10 進小数 (`"0.6"`) |
 | `visible_var` | 全 widget 共通 | 読み | `"0"` / `"false"` / 空文字 = 非表示、 それ以外 = 表示 |
@@ -675,6 +682,19 @@ sess.set_var("list_top",   "3");   // → 窓が D..H + 空行 1 行になる
 | 窓モード (`index_offset_var` **あり**) | **空文字** (何も表示しない) | データ末尾より後ろの行は «何も出ない» のが正しい。 clamp すると最後の項目が並んで見えてしまう |
 
 行 N 個そのものは uitool の `copies` が生成できるので、 画面 JSON を手で N 回コピペする必要はない。
+
+**スクロールバーを付ける**なら `atlas_scrollbar` に同じ `index_offset_var` を挿す。
+総件数 (`count_var`) と行数 (`visible`) を渡せば、 つまみの長さと位置・ホイール・
+ページ送り・ドラッグまで含めてホスト実装なしで動く。 ホスト側は一覧データ
+(`text_list_var`) と件数 (`count_var`) を書くだけになる。
+
+```jsonc
+{ "at": [836, 192, 16, 240], "type": "atlas_scrollbar", "atlas": "ui", "id": "sb",
+  "track": [16, 0, 8, 64],
+  "thumb": { "rect": [0, 0, 16, 32], "insets": [0, 6, 0, 6] },
+  "index_offset_var": "list_top",   // 窓の行と同じ変数
+  "count_var": "list_n", "visible": 6 }
+```
 
 ### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
 
