@@ -1684,7 +1684,7 @@ public:
 	{
 		// "focus_nav" 指定 (register_id で収集) があれば、 build 完了後の
 		// ここで id を element へ解決し、 view::focus_nav_override を配線
-		// するクロージャを積む (SGOCT-133)。
+		// するクロージャを積む。
 		if (!_focus_nav_specs.empty()) {
 			auto tbl = std::make_shared<std::map<
 				cycfi::elements::element*,
@@ -2755,7 +2755,7 @@ void LayoutBuilder::register_id(const picojson::object& o,
 	// "focus_nav": { "left"/"right"/"up"/"down": "<id>" } — 矢印/D-Pad の
 	// フォーカス移動先をウィジェット単位で明示する (幾何ナビより優先、
 	// 未指定方向は幾何ナビにフォールバック)。 ソフトキーボードのような
-	// 段ずれレイアウトで意図どおりの移動を定義するための機構 (SGOCT-133)。
+	// 段ずれレイアウトで意図どおりの移動を定義するための機構。
 	// ターゲット id は build 完了後に解決するので文字列のまま控える。
 	if (auto* fv = get_field(o, "focus_nav"); fv && fv->is<picojson::object>()) {
 		const auto& fo = fv->get<picojson::object>();
@@ -4940,7 +4940,8 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 			register_id(o, img);
 			// 行領域のどこへマウスオーバーしてもリンク先コントロールへ
 			// フォーカスが移るように、 ホバートリガのプロキシで包んで返す
-			// (SGOCT 系フィードバック: クリック可能領域の上だけだと分かりづらい)
+			// (クリック可能領域の上だけだと «どこに乗れば反応するか» が分かりづらい、
+			//  という実機フィードバックによる)
 			//
 			// ただしこのプロキシは wants_control() = true なので、 «飾りが
 			// コントロールに重なっている» 配置 (項目の角に載せるフォーカス
@@ -5655,7 +5656,7 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 // クリック/ドラッグの値マッピングを、 widget 全幅ではなくゲージ部分
 // (fill_at の範囲) に合わせる。 トラック画像の両端にラベル (0 / 100 等) が
 // 焼き込まれている素材では、 全幅基準だとカーソルが目盛からずれて見える
-// (値 0 でラベル 0 の左、 100 でラベル 100 の上に出る) ため (SGOCT-147)。
+// (値 0 でラベル 0 の左、 100 でラベル 100 の上に出る) ため。
 // fx/fw 既定 (0, 1) = 従来どおり全幅。 縦スライダは従来動作のまま。
 struct em_fill_slider_base : cycfi::elements::basic_slider_base
 {
@@ -5749,7 +5750,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		auto sl = ce::basic_slider<em_null_thumb, decltype(ce::hold(gauge)),
 		                           em_fill_slider_base>(
 			em_null_thumb{}, ce::hold(gauge), initial);
-		// thumb 可動域をゲージ部分 (fill_at) に合わせる (SGOCT-147)
+		// thumb 可動域をゲージ部分 (fill_at) に合わせる
 		if (track_src.width() > 0 && fill_at.width() > 0) {
 			sl.fx = fill_at.left / track_src.width();
 			sl.fw = fill_at.width() / track_src.width();
