@@ -215,7 +215,7 @@ int main()
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `atlas_cycle_picker` — 画像矢印ボタン式の cycle_picker (アトラス素材、 「アトラス共有」節参照)。
-- `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 thumb / track はホワイト固定。 `"value_var"` / `"display_var"` / `"display"` は下記「スライダの数値表示」。
+- `slider` — 0..1 範囲の素のスライダ。 `"id"` + `"initial": double` (default 0.5)。 値変化で `value_t{double pos}` を発火。 `"vertical": true` で縦向き。 つまみと溝の色は `"thumb_color"` / `"track_color"` (既定はテーマの予約色 `@slider_thumb` = 白 / `@slider_track` = 黒。 溝の上に乗る細いハイライトは 色指定の影響を受けず白のまま)。 `"value_var"` / `"display_var"` / `"display"` は下記「スライダの数値表示」。
 - `slider_with_range` — `[min] [track] [max]` のラベル付きスライダ。 `"id"` + `"min": int` + `"max": int` + `"initial": double` (min..max スケール、 default 中央) + `"font_size": double` (**px 絶対**、 min/max ラベル) または `"font_size_scale"` (倍率)。 値変化で `value_t{double (min + (max-min)*pos)}` を発火。 `"display_var"` を付けると `"display"` 省略時の整形は自動的にこの `min`..`max` スケールになる (下記)。
 
 #### スライダの数値表示 (`display_var` / `display`)
