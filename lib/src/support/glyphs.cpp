@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/support/glyphs.hpp>
+#include <elements/support/text_utils.hpp>
 
 #include <string>
 #include <algorithm>
@@ -227,6 +228,11 @@ namespace cycfi { namespace elements
       int      pos_index = 0;
       unsigned codepoint;
       unsigned state = 0;
+      unsigned prev_cp = 0;
+      // decode_utf8 completes on the *last* byte of a code point, so `i` is
+      // not where the character begins. Line starts must point at the first
+      // byte or the next line begins mid-character and the glyph is lost.
+      char const* cp_start = _first;
 
       for (auto i = _first; i != _last; ++i)
       {
@@ -243,20 +249,32 @@ namespace cycfi { namespace elements
                   {
                      // Hard break
                      space_pos_index = pos_index;
-                     space_pos = i;
+                     space_pos = cp_start;
                   }
                   add_line();
                }
                else if (is_space(codepoint))
                {
                   space_pos_index = pos_index;
-                  space_pos = i;
+                  space_pos = cp_start;
 
                   if ((space_pos_index != start_pos_index) && is_newline(codepoint))
                      add_line();
                }
+               else if (can_break_between(prev_cp, codepoint))
+               {
+                  // Scripts written without spaces (CJK) break between
+                  // characters, subject to 禁則: a closing mark never starts a
+                  // line and an opening bracket never ends one. Without this a
+                  // Japanese paragraph is one enormous "word" and only ever
+                  // breaks through the hard-break path above, mid-phrase.
+                  space_pos_index = pos_index;
+                  space_pos = cp_start;
+               }
             }
+            prev_cp = codepoint;
             ++pos_index;
+            cp_start = i + 1;      // next code point starts after this byte
          }
       }
 

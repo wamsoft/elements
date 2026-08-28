@@ -70,6 +70,9 @@ namespace cycfi::elements
       color                   get_color() const          { return _color; }
       point                   current_size() const       { return _current_size; };
 
+      // Number of wrapped lines (valid after layout()).
+      std::size_t             num_rows() const           { return _rows.size(); }
+
    private:
 
       void                    sync() const;
@@ -81,6 +84,14 @@ namespace cycfi::elements
       std::vector<glyphs>     _rows;
       color                   _color;
       point                   _current_size = {-1, -1};
+
+      // Line breaking is O(text length) and allocates one `glyphs` per line,
+      // so it must not run per frame. A scroller calls layout() on every
+      // draw (scroller_base::prepare_subject), which for a long body (a
+      // license or credits file) would otherwise re-wrap tens of thousands
+      // of code points every frame. Re-wrap only when the text changed or
+      // the width changed.
+      mutable bool            _needs_wrap = true;
    };
 
    ////////////////////////////////////////////////////////////////////////////

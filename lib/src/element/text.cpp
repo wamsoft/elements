@@ -51,9 +51,17 @@ namespace cycfi::elements
    {
       sync();
 
-      _rows.clear();
       auto  new_x = ctx.bounds.width();
+
+      // Nothing to redo: same text, same width. A scroller re-lays out its
+      // subject on every draw, so without this a long body would re-wrap
+      // (a full pass over the text plus one allocation per line) per frame.
+      if (!_needs_wrap && _current_size.x == new_x)
+         return;
+
+      _rows.clear();
       _layout.break_lines(new_x, _rows);
+      _needs_wrap = false;
       auto  size = _layout.metrics();
       auto  new_y = _rows.size() * (size.ascent + size.descent + size.leading);
 
@@ -98,7 +106,10 @@ namespace cycfi::elements
       auto f = _text.data();
       auto l = _text.data() + _text.size();
       if (_current_size.x != -1 && (f != _layout.begin() || l != _layout.end()))
+      {
          _layout.text(f, l);
+         _needs_wrap = true;
+      }
    }
 
    void static_text_box::set_text(string_view text)
@@ -106,7 +117,17 @@ namespace cycfi::elements
       _text = std::string(text);
       _rows.clear();
       _layout.text(_text.data(), _text.data() + _text.size());
-      _layout.break_lines(_current_size.x, _rows);
+      if (_current_size.x > 0)
+      {
+         // Already laid out once: re-wrap now so callers that read _rows
+         // before the next layout() (the editable subclass does) stay right.
+         _layout.break_lines(_current_size.x, _rows);
+         _needs_wrap = false;
+      }
+      else
+      {
+         _needs_wrap = true;
+      }
    }
 
    void static_text_box::value(string_view val)
@@ -304,6 +325,7 @@ namespace cycfi::elements
       }
 
       _layout.text(_text.data(), _text.data() + _text.size());
+      _needs_wrap = true;
       layout(ctx);
 
       if (replace)
@@ -568,6 +590,7 @@ namespace cycfi::elements
       else if (handled)
       {
          _layout.text(_text.data(), _text.data() + _text.size());
+         _needs_wrap = true;
          layout(ctx);
          auto bounds = ctx.bounds;
          auto size = current_size();
