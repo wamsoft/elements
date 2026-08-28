@@ -2065,8 +2065,9 @@ private:
 	// "index_var" + text_list(_id) を text_writer な widget へ結線する
 	// (label / text_area 共用)。 index 変化と言語切替の両方で set_text する。
 	// index_var 未指定 / リスト空 / text_writer 非派生なら no-op。
-	void bind_text_list(const std::string& index_var, const TextListSpec& list,
-	                    int initial_index, const element_ptr& out);
+	void bind_text_list(const picojson::object& o, const std::string& index_var,
+	                    const TextListSpec& list, int initial_index,
+	                    const element_ptr& out);
 	element_ptr build_slider      (const picojson::object& o);
 	element_ptr build_slider_with_range(const picojson::object& o);
 	element_ptr build_labeled_row (const picojson::object& o);
@@ -3125,36 +3126,159 @@ std::function<void()> LayoutBuilder::take_hover_poll()
 //---------------------------------------------------------------------------
 // 各 element 種別
 //---------------------------------------------------------------------------
-void LayoutBuilder::bind_text_list(const std::string& index_var,
+std::vector<std::string> split_lines(const std::string& s);   // 後方で定義
+
+// "text_list_var" の値を項目列へ分解する。 2 通り受ける:
+//   - **改行区切り** … ホストが素直に組み立てられる形 ("A\nB\nC")
+//   - **JSON 配列**   … 先頭が '[' ならこちら (["A","B","C"])。 項目に改行を
+//                       含めたい / 既に配列を持っているホスト向け。
+//                       文字列以外の要素は文字列化して入れる。
+std::vector<std::string> split_list_value(const std::string& s)
+{
+	std::size_t b = s.find_first_not_of(" \t\r\n");
+	if (b != std::string::npos && s[b] == '[') {
+		picojson::value v;
+		std::string err;
+		picojson::parse(v, s.cbegin() + b, s.cend(), &err);
+		if (err.empty() && v.is<picojson::array>()) {
+			std::vector<std::string> out;
+			for (auto& e : v.get<picojson::array>())
+				out.push_back(e.is<std::string>() ? e.get<std::string>()
+				                                  : e.to_str());
+			return out;
+		}
+		// 壊れた JSON はそのまま改行区切りとして扱う (黙って空にしない)
+	}
+	return split_lines(s);
+}
+
+// 改行区切りの 1 行 1 項目へ分解 (末尾 CR は落とす)。
+std::vector<std::string> split_lines(const std::string& s)
+{
+	std::vector<std::string> out;
+	std::size_t pos = 0;
+	while (pos <= s.size()) {
+		auto nl = s.find('\n', pos);
+		std::string line = (nl == std::string::npos)
+			? s.substr(pos) : s.substr(pos, nl - pos);
+		if (!line.empty() && line.back() == '\r') line.pop_back();
+		out.push_back(std::move(line));
+		if (nl == std::string::npos) break;
+		pos = nl + 1;
+	}
+	return out;
+}
+
+// "index_var" / "index" / "index_offset_var" / "text_list_var" を
+// text_writer な widget (label / text_area) へ結線する。
+//
+//   引く位置 = base + offset
+//     base   … "index" (行ごとの固定値) または "index_var" (変数で動かす)
+//     offset … "index_offset_var" (**行で共有**する先頭位置)
+//
+//   一覧の «窓» はこれで作る: 行 N 個に "index": 0..N-1 を書き、 全行へ
+//   同じ "index_offset_var" を挿す。 先頭位置の変数を書き換えるだけで
+//   一覧が送られる (行ごとに変数を用意しなくてよい)。
+//   一覧データ自体を実行時に差し替えるなら "text_list_var" (改行区切り)。
+//
+//   ⚠ 範囲外の扱いが 2 通りある:
+//     - 従来 (offset 無し) … clamp。 picker と index_var で番号を選ぶ用途は
+//       端で止まるのが自然なので、 既存の挙動を変えない。
+//     - 窓モード (offset あり) … **空文字**。 データ末尾より後ろの行は
+//       «何も出ない» のが正しい。
+void LayoutBuilder::bind_text_list(const picojson::object& o,
+                                   const std::string& index_var,
                                    const TextListSpec& list, int initial_index,
                                    const element_ptr& out)
 {
-	if (index_var.empty() || list.empty()) return;
+	const std::string offset_var = string_or(o, "index_offset_var");
+	const std::string list_var   = string_or(o, "text_list_var");
+	const bool window = !offset_var.empty();
+
+	if (index_var.empty() && offset_var.empty() && list_var.empty()) return;
+	if (list.empty() && list_var.empty()) return;   // 引くものが無い
 	auto sp = std::dynamic_pointer_cast<ce::text_writer>(out);
 	if (!sp) return;
 	std::weak_ptr<ce::text_writer> w = sp;
-	// 現在 index。 index_var 側と言語切替側の両方から参照する。
-	auto idx_slot = std::make_shared<int>(initial_index);
-	// VariableStore に入る closure なので StringStore は shared_ptr 捕捉で
-	// よい (VariableStore → StringStore の一方向参照、 サイクルなし)。
-	// owner (out) は部分再描画のダーティ矩形用。
-	_vars->subscribe(index_var,
-		[w, idx_slot, ss = _strings, list](const std::string& v) {
-			if (auto p = w.lock()) {
-				*idx_slot = std::atoi(v.c_str());
-				p->set_text(list.at(ss.get(), *idx_slot));
-			}
-		}, out);
-	// i18n: 言語が変わったら現在 index を新言語で引き直す。 closure は
-	// StringStore 自身が持つので raw ポインタ捕捉 (options_id と同じ)。
-	if (!list.ids.empty()) {
-		StringStore* ssp = _strings.get();
-		_strings->subscribe_language(
-			[w, idx_slot, ssp, list](const std::string&) {
-				if (auto p = w.lock())
-					p->set_text(list.at(ssp, *idx_slot));
-			});
+
+	struct list_state
+	{
+		int  base = 0;
+		int  offset = 0;
+		std::vector<std::string> dyn;
+		bool use_dyn = false;
+	};
+	auto st = std::make_shared<list_state>();
+	// base の初期値: index_var があればその現在値、 無ければ "index" (行番号)。
+	st->base = index_var.empty()
+		? static_cast<int>(number_or(o, "index", 0.0)) : initial_index;
+	if (!offset_var.empty()) {
+		if (auto* init = _vars->get(offset_var))
+			st->offset = std::atoi(init->c_str());
 	}
+	if (!list_var.empty()) {
+		if (auto* init = _vars->get(list_var)) {
+			st->dyn = split_list_value(*init);
+			st->use_dyn = true;
+		}
+	}
+
+	// 現在の状態から表示文字列を決めて set_text する。
+	// StringStore は raw ポインタで捕捉する (この closure は StringStore 自身に
+	// 入ることがあり、 shared_ptr だと自己参照サイクルになる)。
+	StringStore* ssp = _strings.get();
+	auto apply = [w, st, ssp, list, window]() {
+		auto p = w.lock();
+		if (!p) return;
+		const int idx = st->base + st->offset;
+		if (st->use_dyn) {
+			const int n = static_cast<int>(st->dyn.size());
+			if (n == 0) { p->set_text(std::string{}); return; }
+			int i = idx;
+			if (i < 0 || i >= n) {
+				if (window) { p->set_text(std::string{}); return; }
+				i = (i < 0) ? 0 : n - 1;      // 従来と同じ clamp
+			}
+			p->set_text(st->dyn[i]);
+			return;
+		}
+		if (window) {
+			const std::size_t n = list.ids.empty() ? list.statics.size()
+			                                       : list.ids.size();
+			if (idx < 0 || idx >= static_cast<int>(n)) {
+				p->set_text(std::string{});
+				return;
+			}
+		}
+		p->set_text(list.at(ssp, idx));
+	};
+
+	// owner (out) は部分再描画のダーティ矩形用。
+	if (!index_var.empty()) {
+		_vars->subscribe(index_var, [st, apply](const std::string& v) {
+			st->base = std::atoi(v.c_str());
+			apply();
+		}, out);
+	}
+	if (!offset_var.empty()) {
+		_vars->subscribe(offset_var, [st, apply](const std::string& v) {
+			st->offset = std::atoi(v.c_str());
+			apply();
+		}, out);
+	}
+	if (!list_var.empty()) {
+		_vars->subscribe(list_var, [st, apply](const std::string& v) {
+			st->dyn = split_list_value(v);
+			st->use_dyn = true;
+			apply();
+		}, out);
+	}
+	// i18n: 言語が変わったら現在位置を新言語で引き直す。
+	if (!list.ids.empty()) {
+		_strings->subscribe_language([apply](const std::string&) { apply(); });
+	}
+	// 初期表示 (窓モードや text_list_var では呼出側が text を決められない)。
+	apply();
 }
 
 element_ptr LayoutBuilder::build_label(const picojson::object& o)
@@ -3362,7 +3486,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	}
 	// index_var + text_list(_id): index 変化でリストから引いて set_text
 	// (指定番号表示ラベル)。 text_list_id なら言語切替でも同じ index を引き直す。
-	bind_text_list(index_var, text_list, list_idx, out);
+	bind_text_list(o, index_var, text_list, list_idx, out);
 	// "id" があれば id→element に登録し、 ホストから label を参照可能にする
 	// (label は focus 対象ではないので note_initial_focus は不要)。
 	register_id(o, out);
@@ -3863,7 +3987,7 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 
 	// index_var + text_list(_id): index 変化でリストから引いて set_text
 	// (指定番号表示。 text_list_id なら言語切替でも同じ index を引き直す)。
-	bind_text_list(index_var, text_list, list_idx, out);
+	bind_text_list(o, index_var, text_list, list_idx, out);
 
 	// 文字送り: 変数 store の整数値をそのまま count に流す。
 	std::string count_var = string_or(o, "count_var");
