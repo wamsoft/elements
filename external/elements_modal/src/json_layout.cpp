@@ -2094,6 +2094,7 @@ private:
 	element_ptr build_atlas_choice(const picojson::object& o);
 	element_ptr build_atlas_slider(const picojson::object& o);
 	element_ptr build_atlas_scrollbar(const picojson::object& o);
+	element_ptr build_list(const picojson::object& o);
 	element_ptr build_atlas_progress(const picojson::object& o);
 	element_ptr build_atlas_number(const picojson::object& o);
 	element_ptr build_radio_button (const picojson::object& o);
@@ -2868,6 +2869,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 	if (type == "atlas_radio")    return build_atlas_choice(o);  // alias
 	if (type == "atlas_slider")   return build_atlas_slider(o);
 	if (type == "atlas_scrollbar") return build_atlas_scrollbar(o);
+	if (type == "list" || type == "row_list") return build_list(o);
 	if (type == "atlas_progress") return build_atlas_progress(o);
 	if (type == "atlas_number")   return build_atlas_number(o);
 	if (type == "radio_button")   return build_radio_button(o);
@@ -6435,6 +6437,399 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return shared;
+}
+
+//---------------------------------------------------------------------------
+// list — 行テンプレートを行数ぶん複製する一覧。
+//
+//   { "at": [x, y, w, h], "type": "list", "id": "files",
+//     "rows": 8, "pitch": [0, 40], "row_size": [676, 36],
+//     "index_offset_var": "top", "count_var": "n",
+//     "hover_var": "hov", "select_var": "sel",
+//     "row_hover_var": "rhov#index", "row_select_var": "rsel#index",
+//     "row": { …任意のウィジェット木… } }
+//
+// «窓» (index + index_offset_var) は «文字» までは面倒を見るが、 行の当たり判定・
+// hover・選択色は画面 JSON 側で行ごとに手で組むことになっていた。 この widget は
+// **行テンプレートを rows 個に複製**して、 位置・当たり・hover・選択・件数不足行の
+// 後始末までまとめて持つ。 ホストは «データを流し込むだけ» になる。
+//
+// テンプレートの展開規則:
+//   - 文字列値の中の `#index` を行番号 (0..rows-1) へ置換する。
+//     `"text_var": "name#index"` → `"name0"` / `"name1"` …、
+//     `"id": "row#index"` → `"row0"` … (Agent.dialogClick で行を指せる)
+//   - 一覧を引く指定 ("text_list_var" / "text_list" / "text_list_id" /
+//     "rect_list" / "rect_list_var") を持つ要素には、 "index" (行番号) と
+//     "index_offset_var" を**自動で挿す** (既に書いてあればそのまま)。
+//     行テンプレートに `"text_list_var": "items"` と書くだけで «窓» になる。
+//
+// 行の当たり:
+//   - 行の中の widget (button 等) が先にクリックを受ける。 誰も受けなければ
+//     **行そのもののクリック**として `onAction(id, データ index)` を発火する
+//     (透明な当たり判定ボタンを敷く必要がない)。
+//   - 件数 ("count" / "count_var") を渡すと、 **データが無い行は描画も当たりも
+//     消える** (画面外へ逃がす後始末が要らない)。
+//
+// hover / 選択の色:
+//   - "hover_var" / "select_var" … いま乗っている / 選ばれている **データ index**
+//     (hover 無しは "-1")。 ホスト側で «絵はホストのレイヤ» な一覧を作るならこれ。
+//   - "row_hover_var" / "row_select_var" … `#index` 付きで書くと**行ごと**の
+//     フラグ変数 ("1" / "") になる。 行テンプレート側で
+//     `"visible_var": "rhov#index"` を書けば、 ハイライト素材の出し分けが
+//     ホスト実装なしで済む。
+//---------------------------------------------------------------------------
+namespace {
+
+// 文字列中の "#index" を行番号へ置換する。
+std::string subst_index(const std::string& in, int row)
+{
+	static const std::string tok = "#index";
+	if (in.find(tok) == std::string::npos) return in;
+	const std::string num = std::to_string(row);
+	std::string out;
+	out.reserve(in.size() + 4);
+	std::size_t pos = 0;
+	for (;;) {
+		const std::size_t hit = in.find(tok, pos);
+		if (hit == std::string::npos) { out.append(in, pos, std::string::npos); break; }
+		out.append(in, pos, hit - pos);
+		out += num;
+		pos = hit + tok.size();
+	}
+	return out;
+}
+
+bool refers_to_list(const picojson::object& o)
+{
+	static const char* keys[] = { "text_list_var", "text_list", "text_list_id",
+	                              "rect_list", "rect_list_var" };
+	for (const char* k : keys) if (get_field(o, k)) return true;
+	return false;
+}
+
+// 行テンプレートを 1 行ぶんへ展開する (再帰)。
+picojson::value expand_row(const picojson::value& v, int row,
+                           const std::string& offset_var)
+{
+	if (v.is<std::string>())
+		return picojson::value(subst_index(v.get<std::string>(), row));
+	if (v.is<picojson::array>()) {
+		picojson::array out;
+		out.reserve(v.get<picojson::array>().size());
+		for (const auto& e : v.get<picojson::array>())
+			out.push_back(expand_row(e, row, offset_var));
+		return picojson::value(out);
+	}
+	if (!v.is<picojson::object>()) return v;
+
+	picojson::object out;
+	for (const auto& kv : v.get<picojson::object>())
+		out[kv.first] = expand_row(kv.second, row, offset_var);
+	// 一覧を引く要素には «窓» の指定を自動で挿す (明示があれば触らない)。
+	if (refers_to_list(out) && !get_field(out, "index")
+	    && !get_field(out, "index_var")) {
+		out["index"] = picojson::value(static_cast<double>(row));
+		if (!offset_var.empty() && !get_field(out, "index_offset_var"))
+			out["index_offset_var"] = picojson::value(offset_var);
+	}
+	return picojson::value(out);
+}
+
+class list_rows_element : public ce::composite_base
+{
+public:
+
+	struct spec
+	{
+		std::string id;
+		int         rows = 0;
+		float       pitch_x = 0, pitch_y = 0;
+		float       row_w = 0, row_h = 0;
+		std::string offset_var;
+		std::string count_var;
+		int         count = 0;
+		std::string hover_var;
+		std::string select_var;
+		std::vector<std::string> row_hover;    // 行ごと (展開済み)
+		std::vector<std::string> row_select;   // 行ごと (展開済み)
+	};
+
+	list_rows_element(spec sp, std::vector<element_ptr> rows,
+	                  std::shared_ptr<VariableStore> vars, event_callback cb)
+	 : _spec(std::move(sp)), _rows(std::move(rows))
+	 , _vars(std::move(vars)), _cb(std::move(cb))
+	{}
+
+	std::size_t size() const override { return _rows.size(); }
+	ce::element& at(std::size_t ix) const override { return *_rows[ix]; }
+
+	ce::view_limits limits(ce::basic_context const& ctx) const override
+	{
+		for (auto const& r : _rows) (void)r->limits(ctx);   // 副作用のある widget 用
+		const float w = (_spec.row_w > 0) ? _spec.row_w : 1.0f;
+		const float h = (_spec.rows > 0)
+			? std::abs(_spec.pitch_y) * _spec.rows + _spec.row_h : 1.0f;
+		return {{w, h}, {ce::full_extent, ce::full_extent}};
+	}
+
+	ce::rect bounds_of(ce::context const& ctx, std::size_t ix) const override
+	{
+		const float w = (_spec.row_w > 0) ? _spec.row_w : ctx.bounds.width();
+		const float h = (_spec.row_h > 0) ? _spec.row_h
+		                                  : std::abs(_spec.pitch_y);
+		const float x = ctx.bounds.left + _spec.pitch_x * float(ix);
+		const float y = ctx.bounds.top  + _spec.pitch_y * float(ix);
+		return ce::rect{x, y, x + w, y + h};
+	}
+
+	void layout(ce::context const& ctx) override
+	{
+		for (std::size_t i = 0; i < size(); ++i) {
+			auto& e = at(i);
+			e.layout(ce::context{ctx, &e, bounds_of(ctx, i)});
+		}
+	}
+
+	void draw(ce::context const& ctx) override
+	{
+		const auto width = ctx.bounds.width();
+		const auto height = ctx.bounds.height();
+		if (_prev_size.x != width || _prev_size.y != height) {
+			_prev_size = {width, height};
+			layout(ctx);
+		}
+		for (std::size_t i = 0; i < size(); ++i) {
+			if (!row_has_data(int(i))) continue;   // 件数不足の行は描かない
+			auto& e = at(i);
+			ce::context ectx{ctx, &e, bounds_of(ctx, i)};
+			e.draw(ectx);
+		}
+	}
+
+	hit_info hit_element(ce::context const& ctx, ce::point p,
+	                     bool control) const override
+	{
+		for (int i = int(size()) - 1; i >= 0; --i) {
+			if (!row_has_data(i)) continue;        // 件数不足の行は当たらない
+			auto& e = at(std::size_t(i));
+			if (control && !e.wants_control()) continue;
+			auto bounds = bounds_of(ctx, std::size_t(i));
+			if (!bounds.includes(p)) continue;
+			ce::context ectx{ctx, &e, bounds};
+			if (auto leaf = e.hit_test(ectx, p, true, control))
+				return hit_info{&e, leaf, bounds, i};
+		}
+		return hit_info{nullptr, nullptr, ce::rect{}, -1};
+	}
+
+	bool wants_control() const override { return true; }
+
+	// 行の中身が «ただの絵と文字» でも行そのものが当たるようにする。
+	// composite の既定は «子の誰かが当たったら» なので、 非インタラクティブな
+	// 行テンプレート (label / atlas_image だけ) だと一覧全体が素通しになる。
+	ce::element* hit_test(ce::context const& ctx, ce::point p,
+	                      bool leaf, bool control) override
+	{
+		if (auto* hit = ce::composite_base::hit_test(ctx, p, leaf, control))
+			return hit;
+		return (row_at(ctx, p) >= 0) ? this : nullptr;
+	}
+
+	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		// 行の中の widget を先に。 誰かが受けたら行クリックにはしない。
+		if (ce::composite_base::click(ctx, btn)) return true;
+		if (btn.state != ce::mouse_button::left) return false;
+		const int row = row_at(ctx, btn.pos);
+		if (btn.down) { _pressed_row = row; return row >= 0; }
+		const int pressed = _pressed_row;
+		_pressed_row = -1;
+		if (row < 0 || row != pressed) return false;
+		select_row(row);
+		ctx.view.refresh(ctx);
+		return true;
+	}
+
+	bool cursor(ce::context const& ctx, ce::point p,
+	            ce::cursor_tracking status) override
+	{
+		const int row = (status == ce::cursor_tracking::leaving)
+			? -1 : row_at(ctx, p);
+		if (row != _hover_row) {
+			_hover_row = row;
+			sync_hover();
+			ctx.view.refresh(ctx);
+		}
+		ce::composite_base::cursor(ctx, p, status);
+		return true;
+	}
+
+	// 先頭位置 / 件数が変わったときに行ごとのフラグを引き直す。
+	void sync_flags()
+	{
+		sync_hover();
+		sync_select();
+	}
+
+private:
+
+	int offset() const { return var_int(_spec.offset_var, 0); }
+	int count_of() const { return var_int(_spec.count_var, _spec.count); }
+
+	int var_int(const std::string& name, int dflt) const
+	{
+		if (name.empty() || !_vars) return dflt;
+		if (auto* v = _vars->get(name)) {
+			try { return std::stoi(*v); } catch (...) { return dflt; }
+		}
+		return dflt;
+	}
+
+	// 行 ix に対応するデータ index。
+	int data_index(int ix) const { return offset() + ix; }
+
+	bool row_has_data(int ix) const
+	{
+		const int c = count_of();
+		if (c <= 0) return true;          // 件数未指定なら全行出す
+		const int di = data_index(ix);
+		return di >= 0 && di < c;
+	}
+
+	int row_at(ce::context const& ctx, ce::point p) const
+	{
+		for (std::size_t i = 0; i < size(); ++i) {
+			if (!row_has_data(int(i))) continue;
+			if (bounds_of(ctx, i).includes(p)) return int(i);
+		}
+		return -1;
+	}
+
+	void set_var(const std::string& name, const std::string& value)
+	{
+		if (name.empty() || !_vars) return;
+		_vars->set(name, value);
+	}
+
+	void sync_hover()
+	{
+		set_var(_spec.hover_var,
+		        _hover_row < 0 ? std::string("-1")
+		                       : std::to_string(data_index(_hover_row)));
+		for (std::size_t i = 0; i < _spec.row_hover.size(); ++i) {
+			const bool on = (int(i) == _hover_row) && row_has_data(int(i));
+			set_var(_spec.row_hover[i], on ? "1" : "");
+		}
+	}
+
+	void sync_select()
+	{
+		const int sel = _spec.select_var.empty()
+			? _selected : var_int(_spec.select_var, _selected);
+		for (std::size_t i = 0; i < _spec.row_select.size(); ++i) {
+			const bool on = row_has_data(int(i)) && data_index(int(i)) == sel;
+			set_var(_spec.row_select[i], on ? "1" : "");
+		}
+	}
+
+	void select_row(int row)
+	{
+		_selected = data_index(row);
+		set_var(_spec.select_var, std::to_string(_selected));
+		sync_select();
+		// 行 index を payload で渡したいので «値変化» として発火する
+		// (button click 扱いにするとホスト橋渡しが payload を捨てる)。
+		// modal の result.values にも id → 行 index が載る。
+		if (_cb && !_spec.id.empty())
+			_cb(_spec.id, /*is_button_click=*/false,
+			    value_t{static_cast<std::int64_t>(_selected)});
+	}
+
+	spec                           _spec;
+	std::vector<element_ptr>       _rows;
+	std::shared_ptr<VariableStore> _vars;
+	event_callback                 _cb;
+	ce::point                      _prev_size{};
+	int                            _hover_row = -1;
+	int                            _pressed_row = -1;
+	int                            _selected = -1;
+};
+} // anonymous (list)
+
+element_ptr LayoutBuilder::build_list(const picojson::object& o)
+{
+	auto* tpl = get_field(o, "row");
+	if (!tpl || !tpl->is<picojson::object>()) {
+		em_logf("elements_modal: list without 'row' (行テンプレート)");
+		return nullptr;
+	}
+	list_rows_element::spec sp;
+	sp.id    = string_or(o, "id");
+	sp.rows  = static_cast<int>(number_or(o, "rows", 0));
+	if (sp.rows <= 0) {
+		em_logf("elements_modal: list \"%s\" needs 'rows' >= 1", sp.id.c_str());
+		return nullptr;
+	}
+	if (auto* rs = get_array(o, "row_size"); rs && rs->size() >= 2) {
+		sp.row_w = static_cast<float>(int_at(*rs, 0, 0));
+		sp.row_h = static_cast<float>(int_at(*rs, 1, 0));
+	}
+	if (auto* pt = get_array(o, "pitch"); pt && pt->size() >= 2) {
+		sp.pitch_x = static_cast<float>(int_at(*pt, 0, 0));
+		sp.pitch_y = static_cast<float>(int_at(*pt, 1, 0));
+	} else {
+		sp.pitch_y = (sp.row_h > 0) ? sp.row_h : 0.0f;   // 既定 = 行の高さ
+	}
+	sp.offset_var = string_or(o, "index_offset_var");
+	sp.count_var  = string_or(o, "count_var");
+	sp.count      = static_cast<int>(number_or(o, "count", 0));
+	sp.hover_var  = string_or(o, "hover_var");
+	sp.select_var = string_or(o, "select_var");
+
+	const std::string row_hover  = string_or(o, "row_hover_var");
+	const std::string row_select = string_or(o, "row_select_var");
+	// 行ごとのフラグ変数は **行を作る前に** 空文字で種まきする。 visible_var は
+	// «変数が無ければ表示» が既定なので、 先に用意しておかないとハイライトが
+	// 初期状態で全行に出てしまう (空文字 = 非表示)。
+	for (int i = 0; i < sp.rows; ++i) {
+		if (!row_hover.empty()) {
+			sp.row_hover.push_back(subst_index(row_hover, i));
+			if (_vars) _vars->set_initial(sp.row_hover.back(), "");
+		}
+		if (!row_select.empty()) {
+			sp.row_select.push_back(subst_index(row_select, i));
+			if (_vars) _vars->set_initial(sp.row_select.back(), "");
+		}
+	}
+
+	std::vector<element_ptr> rows;
+	rows.reserve(sp.rows);
+	for (int i = 0; i < sp.rows; ++i) {
+		auto expanded = expand_row(*tpl, i, sp.offset_var);
+		if (auto e = build(expanded)) rows.push_back(std::move(e));
+		else {
+			em_logf("elements_modal: list \"%s\": row %d を作れなかった",
+			        sp.id.c_str(), i);
+			return nullptr;
+		}
+	}
+
+	auto el = std::make_shared<list_rows_element>(sp, std::move(rows),
+	                                              _vars, _cb);
+	element_ptr out = el;
+	// 先頭位置 / 件数が変わったら行ごとのフラグを引き直す (+ 再描画)。
+	if (_vars) {
+		std::weak_ptr<list_rows_element> wl = el;
+		auto resync = [wl](const std::string&) {
+			if (auto p = wl.lock()) p->sync_flags();
+		};
+		if (!sp.offset_var.empty()) _vars->subscribe(sp.offset_var, resync, out);
+		if (!sp.count_var.empty())  _vars->subscribe(sp.count_var,  resync, out);
+		if (!sp.select_var.empty()) _vars->subscribe(sp.select_var, resync, out);
+	}
+	el->sync_flags();   // 初期状態 (行ごとフラグの種まき)
+	register_id(o, out);
+	return out;
 }
 
 //---------------------------------------------------------------------------

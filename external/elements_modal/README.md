@@ -149,6 +149,7 @@ int main()
 - `box` — 単色塗り。 `"color": [r, g, b, a]`。
 - `band` — 単色背景帯 + child の重ね合わせ (= `layer` のショートカット)。 `"color": [r, g, b, a]` + 任意 `"child"`。 child 省略時は `box` 相当。 footer 帯やタイトルバーなど、 背景を引きつつ中身を上に乗せたい局所要素に使う。 将来 `gradient` / `image` フィールドを追加予定。
 - `layer` — 重ね順。 `"children"`: 先頭が最前面。
+- `list` (別名 `row_list`) — **行テンプレートを行数ぶん複製する一覧**。 `"rows": N` + `"row": { …ウィジェット木… }` + `"row_size": [w,h]` / `"pitch": [dx,dy]`。 «窓» (`index` + `index_offset_var`) が «文字» までしか面倒を見ないのに対し、 こちらは**位置・当たり判定・hover・選択・件数不足行の後始末**まで持つ (下記「行テンプレートの一覧」)。
 - `group` — タイトル付きフレーム。 `"title"` + `"label_size"` + `"child"`。
 - `scroller` — スクロール領域。 `"child"` + `"id"` + `"horizontal"` (真で横) +
   `"no_scrollbars"` + `"focusable"`。 スクロール状態を変数へ出せる:
@@ -618,6 +619,8 @@ bool on = elements_modal::focus_ring_enabled();
 | `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
 | `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
 | `count_var` / `visible_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
+| `hover_var` / `select_var` | list | 書き (行に乗った / 行を選んだ) | 10 進整数のデータ index (hover 無しは `"-1"`) |
+| `row_hover_var` / `row_select_var` | list | 書き (行ごと) | `"1"` / `""` (`#index` で行番号へ展開) |
 | `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
 | `opacity_var` | 全 widget 共通 | 読み | 不透明度 0..1 の 10 進小数 (`"0.6"`) |
 | `visible_var` | 全 widget 共通 | 読み | `"0"` / `"false"` / 空文字 = 非表示、 それ以外 = 表示 |
@@ -695,6 +698,64 @@ sess.set_var("list_top",   "3");   // → 窓が D..H + 空行 1 行になる
   "index_offset_var": "list_top",   // 窓の行と同じ変数
   "count_var": "list_n", "visible": 6 }
 ```
+
+#### 行テンプレートの一覧 (`list`)
+
+«窓» は «文字» までは面倒を見るが、 行の当たり判定・hover・選択の色は行ごとに手で
+組むことになる (行あたり label 1 + 当たり用ボタン 1、 変数は文字・色・当たりの位置の
+3 本、 さらに «件数が足りない行を画面外へ逃がす» 後始末)。 `list` は **1 行分の
+テンプレートを行数ぶん複製**して、 そこまでまとめて持つ。 ホストは «データを流し込む
+だけ» になる。
+
+```jsonc
+{ "at": [148, 192, 676, 240], "type": "list", "id": "files",
+  "rows": 6,                       // 窓の行数
+  "row_size": [676, 36],           // 行の矩形 (当たり判定もこれ)
+  "pitch": [0, 40],                // 行ごとの送り (既定 = row_size の高さ)
+  "index_offset_var": "top",       // 先頭 index (スクロールバーと共有できる)
+  "count_var": "n",                // 総件数 (足りない行は消える)
+  "hover_var": "hov",              // いま乗っている «データ index» ("-1" = 無し)
+  "select_var": "sel",             // 選ばれている «データ index»
+  "row_hover_var":  "rhov#index",  // 行ごとのフラグ ("1" / "")
+  "row_select_var": "rsel#index",
+  "row": {
+    "type": "layer",               // 先頭が最前面
+    "children": [
+      { "type": "label", "id": "row#index", "text_list_var": "items" },
+      { "type": "atlas_image", "atlas": "ui", "rect": [0, 96, 676, 36],
+        "visible_var": "rsel#index" },      // 選択の下地
+      { "type": "atlas_image", "atlas": "ui", "rect": [0, 60, 676, 36],
+        "visible_var": "rhov#index" }       // hover の下地
+    ]
+  } }
+```
+
+テンプレートの展開規則:
+
+- 文字列値の中の **`#index` が行番号 (0..rows-1) へ置換**される。
+  `"id": "row#index"` → `"row0"` / `"row1"` … (`Agent.dialogClick` で行を指せる)、
+  `"visible_var": "rhov#index"` → 行ごとのフラグ変数。
+- 一覧を引く指定 (`text_list_var` / `text_list` / `text_list_id` / `rect_list` /
+  `rect_list_var`) を持つ要素には **`"index"` (行番号) と `"index_offset_var"` が
+  自動で挿される** (明示してあればそのまま)。 行テンプレートに
+  `"text_list_var": "items"` と書くだけで «窓» になる。
+
+行の当たり:
+
+- 行の中の widget (button 等) が**先に**クリックを受ける。 誰も受けなければ
+  **行そのもののクリック**として `onAction(id, 行の «データ index»)` が発火する
+  (透明な当たり判定ボタンを敷かなくてよい)。 モーダルなら `result.values[id]` にも
+  選択された index が載る。
+- `count` / `count_var` を渡すと、 **データが無い行は描画も当たりも消える**
+  (画面外へ逃がす後始末が要らない)。
+
+hover / 選択の色は 2 通りの受け方がある。 画面 JSON の中で閉じるなら
+`row_hover_var` / `row_select_var` (行ごとのフラグを `visible_var` /
+`color_var` で受ける)、 **絵がホスト側のレイヤ**にあるなら `hover_var` /
+`select_var` を `Dialog.onVar` で拾ってホストが差し替える。
+
+スクロールは `atlas_scrollbar` に同じ `index_offset_var` / `count_var` を挿すだけ
+(上記)。 一覧側にホイールを付けたい場合もスクロールバーが受ける。
 
 ### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
 
