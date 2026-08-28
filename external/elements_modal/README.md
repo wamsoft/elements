@@ -195,6 +195,7 @@ int main()
 - `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"` (px) / `"size_scale"` (倍率)。 同じく `initial_focus` / `close_on_click` をサポート。
 - `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。 picker 系共通の追加フィールド:
   - `"options_id": [...]` — i18n。 各要素を StringStore の textID として現在言語で解決 (`options` より優先)。 言語切替で選択 index を維持したまま表示文字列だけ差し替わる (後述「i18n」節)。
+  - `"font": "Family[#axes]"` — 表示テキストのフォント指定 (`label` と同じ書式。 可変フォントの軸指定込み)。 省略時・未登録 family のときはテーマ既定へフォールバック。 `cycle_picker` / `framed_cycle_picker` / `segmented_picker` / `atlas_cycle_picker` 共通で、 PSD 由来のウェイト指定を持つ UI でピッカーの選択テキストだけ既定フォントに残るのを防ぐ。
   - `"index_var": "varname"` — 選択 index を変数 store と**双方向**連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。 さらに**変数→picker の追従** (ホストの set_var 一発で表示と依存 widget が揃って切り替わる。 quiet = on_change 非発火なのでエコーバックしない)。 範囲外/パース不能な値は無視。
   - `"enabled_var": "varname"` (cycle_picker / atlas_cycle_picker のみ) — 選択肢の有効/無効 mask を変数連動にする。 値は index 順の `'0'`/`'1'` 文字列 (例 `"10111011"` = index 1 と 4 を無効)。 mask より後ろの index は有効扱い。 step / click / pad は無効 index をスキップ (wrap 継続)、 現在選択が無効化されたら最寄りの有効 index へ進めて on_change 発火 (依存 widget が追従)。 隠し要素 (未開放の機種など) の動的出し分けに使う。
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
@@ -300,13 +301,15 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 
 - `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。 追加バリエーション:
   - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。
+  - `"focus_link": "id"` / `["id", ...]` + `"frames": { "normal": [x,y,w,h], "hilite": [x,y,w,h] }` — **自分はフォーカスを取らない飾り**が、 リンク先 id のフォーカス状態で frame を切り替える。 行の下地や「当たっている項目にぽっちを出す」インジケータ用。 配列で複数 id を書くと、 そのいずれかがフォーカス中なら hilite。 `hilite` は必須で、 **`normal` は省略可** (省略時は非フォーカス中に何も描かない = 素材 1 枚でフォーカスインジケータが組める)。
+  - `"hover_focus_link": false` (既定 true) — 上の飾りは既定で「飾りの上へ hover するとリンク先へフォーカスを移す」プロキシに包まれる (行のどこへマウスを乗せても選択が動く)。 プロキシはクリックも先に受け取るので、 **飾りがコントロールに重なる配置** (項目の角に載せるインジケータ等) では下のボタンが押せない死角になる。 その場合は `false` を指定して「クリックを一切取らない飾り」へ戻す (重なりの無い行の下地は既定のままでよい)。
 - `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 pixmap は build 時に一度読むので、 実行時差し替えは画像を再登録して画面を開き直す。 セーブサムネイル等の動的画像に使う (ホスト側は自前で PNG 等にエンコードして注入する)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
   - `"enabled_var": "varname"` — ボタンの有効/無効を変数 store と連動 (`button` / `invert_button` / `ring_button` も同様)。 値 `"0"` で無効、 それ以外 (既定) で有効。 無効中はクリック/キー決定が効かず、 描画は `disabled` frame があればそれ、 無ければ半透明フォールバック。 ホストの `set_var` 一発で切り替わるので、 進行状況で開放されるメニュー項目 (未クリアなら「おまけ」を灰色にする等) に使う。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。 `"value_var": "name"` (任意) で変数 store と連動: 変数に既存値があれば初期状態を上書き (`"0"`/`"false"`/空 = off)、 クリックで `"0"`/`"1"` を書き戻し、 変数変更は状態へ反映のみ (イベント非発火)。
 - `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 `"selected_var"` / `"selected_value"` (任意) で変数 store と双方向連動 (下記「変数連動ファミリ一覧」参照)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
-  - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 **`track` は省略可** — 溝 (バー) が背景画像側に描いてある素材向けで、 見えない stretchable 要素が敷かれて thumb だけ描画される (可動域は widget の bounds いっぱい)。
+  - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 track 画像は **widget の全域** (= canvas 配置なら `at` の矩形そのまま) に描かれる — 角丸ボーダー込みで書き出した枠素材の端が切り詰められないようにするため、 「thumb 半分だけ内側へインセット」という一般 slider の既定は使わない。 thumb は直交軸も素材本来のサイズでレール中央に置かれる (canvas 配置でつまみがレール高さに押し潰されない)。 **`track` は省略可** — 溝 (バー) が背景画像側に描いてある素材向けで、 見えない stretchable 要素が敷かれて thumb だけ描画される (可動域は widget の bounds いっぱい)。
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
@@ -342,6 +345,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
     "text_at":  [dx,dy,w,h],   // 選択テキスト表示領域 (中央寄せ描画)
     "options": ["A", "B"],     // または "options_id" (i18n、 options より優先)
     "initial": 0, "font_size": 30, "color": [r,g,b,a],
+    "font": "Noto Sans JP#wght=500",   // 任意: 表示テキストの family[#axes]
     "index_var": "machine" }   // 任意: 選択 index を変数 store と連動
   ```
 
@@ -452,7 +456,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 | キー | 型 | 説明 |
 |---|---|---|
 | `id` | string | event_callback / result.values のキー、 shortcut の `target` 参照先 |
-| `initial_focus` | bool | true なら起動時にこの要素にフォーカス (複数あれば build 順で先勝ち) |
+| `initial_focus` | bool / number | 起動時フォーカスの候補。 **複数の要素に指定でき**、 先頭候補が無効 (`enabled_var` で disabled) なら次の有効な候補へ落ちる。 数値を書くと明示優先度 (小さいほど優先。 `true` = 0)、 同値は build 順。 候補の確定は表示直後の idle まで遅延するので、 ホストが `set_var` で有効/無効を流し込んでから判定される |
 | `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / `Dialog.onAction`) を発火するだけ |
 | `vars_on_focus` | `{name: string, ...}` | この要素が focus を得たときに変数 store に書き込む値の dict。 同じ変数を `text_var` で見ている label に自動反映 (focus 連動ヘルプテキスト等) |
 
@@ -782,7 +786,10 @@ view 全体のナビゲーション設定。 全フィールドが任意:
     "arrow_focus_nav": true,
 
     // マウスが乗った focusable にキーボードフォーカスも移す (既定 true)。
-    // false でマウス hover とフォーカスを独立させる。
+    // false でマウス hover とフォーカスを独立させる。 画面を開いた直後だけは
+    // ポインタが実際に動くまでこの追従を止める (前の操作でたまたま項目の上に
+    // 残っていただけのポインタが、 宣言した initial_focus を即座に上書き
+    // してしまうのを防ぐ。 hover の見た目は切らない)。
     "hover_focus": true,
 
     // 軸モード: disabled / focus / value / both
@@ -824,7 +831,8 @@ view 全体のナビゲーション設定。 全フィールドが任意:
     "repeat_rate_ms": 80,
 
     // 画面を開いた時の初期フォーカス (id 指定)。 要素側 "initial_focus": true
-    // と併存した場合はこちらが勝つ
+    // と併存した場合はこちらが勝つ (要素側は複数候補を優先度順に持て、
+    // 無効な候補は飛ばして次の候補が選ばれる)
     "initial_focus": "BTN_START",
 
     // 入力 → named action のバインド (組込デフォルトへの差分)。
@@ -858,6 +866,13 @@ widget 側の `"focus_point": [ax, ay]` (0..1 アンカー比、 既定 [0.5,0.5
 で warp の飛び先を個別調整できる。 widget 既定: slider = thumb 中心 (トラック
 クリックの値ジャンプ防止)、 choice_nav グループ = 選択中メンバー中心、 他 =
 bounds 中心。
+
+warp が起きるのは **直近の操作がキー / パッドだったとき**だけで、 実マウスが動く
+(カーソル位置が実際に変わる) か、 マウスボタンが押された時点でナビ種別は mouse へ
+戻る。 ここが戻らないと、 一度キー操作した後はマウス hover でフォーカスが動くたびに
+warp が走り、 warp の合成 move がまた hover を動かして、 隣接する 2 項目の間で
+フォーカスと実カーソルが振動し続ける (グリッド状 UI = ソフトウェアキーボード等が
+操作不能になる)。 パッドの斜め入力でフォーカスが上下に振動するのも同じ経路。
 
 #### named-action と組込デフォルト標準バインド (overlay_session)
 
