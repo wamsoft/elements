@@ -22,6 +22,13 @@ SDL3 を使う任意のアプリから単体で利用できる。
   (`"pos_var"` / `"fraction_var"` / `"display_var"`)。 `"pos_var"` は**双方向**で、
   スライダと同じ変数を挿すだけで «つまみを掴んで本文を送る» が組める。 日本語は
   行頭行末禁則つきで文字単位に折り返す
+- **一覧の «窓»** — N 行の `label` に固定の `"index"` を振り、 全行で
+  `"index_offset_var"` (先頭位置) を共有すると、 **変数 1 個を書き換えるだけで
+  一覧が送れる**。 一覧データ自体も `"text_list_var"` で差し替えられる
+  (改行区切り / JSON 配列)。 行ごとの変数も `visible_var` の回し込みも要らない
+- **掴んで動かす (`"drag_at_var"` / `"drag_bounds"` / `"drag_events"`)** — 型を
+  問わず書ける。 ドラッグ位置を書いた変数を `at_var` に挿せば **ホスト実装なしで
+  絵がついてくる** (C++ 内で完結)。 判断が要るときだけ `drag_callback` を受ける
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -591,6 +598,8 @@ bool on = elements_modal::focus_ring_enabled();
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
 | `vars_on_hover` | 全 widget 共通 | 書き (hover 中。 離れたら直前の値へ復帰) | 任意 string |
 | `text_list` / `text_list_id` + `index_var` | label / text_area | 読み | 10 進 index (`"2"`) |
+| `text_list_var` | label / text_area | 読み (一覧データそのもの) | **改行区切り** (`"A\nB\nC"`) か、 先頭が `[` なら **JSON 配列** (`["A","B","C"]`) |
+| `index` / `index_offset_var` | label / text_area | 読み (引く位置 = `index` + offset) | 10 進 index。 `index` は行ごとの固定値、 `index_offset_var` は**行で共有する先頭位置** |
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
 | `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
@@ -627,6 +636,43 @@ bool on = elements_modal::focus_ring_enabled();
   ```
 
 - **picker → text_list / rect_list の選択連動**: picker に `index_var` を付け、 表示側 (label の text_list / atlas_image の rect_list) に同名の `index_var` を付けるだけで、 選択変更が表示に即時反映される (build 時に picker が初期 index を書き込むので初期表示も揃う)。 機種選択 → スクリーンショット / SPEC 表示のような連動 UI が JSON だけで組める。
+
+#### 一覧の «窓» (`index` / `index_offset_var` / `text_list_var`)
+
+`label` / `text_area` の「一覧から 1 個引いて表示する」機構 (`text_list` + `index_var`) の拡張。 **新しい型は増えていない**。 引く位置は
+
+    引く位置 = base + offset
+      base   … `"index"` (行ごとの固定値) または `"index_var"` (変数で動かす)
+      offset … `"index_offset_var"` (**行で共有**する先頭位置)
+
+で決まる。 行 N 個に `"index": 0..N-1` を書き、 全行へ同じ `"index_offset_var"` を挿すと **«N 行の窓»** になる。 ホストは**先頭位置の変数を 1 個書き換えるだけ**で一覧を送れる (行ごとに変数を用意して `text_var` / `visible_var` を回す必要がない)。
+
+```jsonc
+// 6 行の窓。 行ごとに違うのは "index" だけ
+{ "at": [148, 192, 676, 40], "type": "label",
+  "index": 0,                     // 窓の中の位置 (0..5)
+  "index_offset_var": "list_top", // 先頭位置 (6 行で共有)
+  "text_list_var":    "list_items" },
+...
+// ホスト側
+sess.set_var("list_items", "A\nB\nC\nD\nE\nF\nG\nH");
+sess.set_var("list_top",   "3");   // → 窓が D..H + 空行 1 行になる
+```
+
+- `"text_list_var"` — 一覧データ自体を変数から取る。 **2 形式**を受ける:
+  - **改行区切り** (`"A\nB\nC"`) — ホストが素直に組み立てられる形。 末尾の CR は落とす
+  - **JSON 配列** (`["A","B","C"]`) — **先頭の非空白文字が `[`** ならこちら。 項目に改行を含めたい / ホストが既に配列を持っている場合向け。 文字列以外の要素は文字列化して入れる。 JSON として壊れていたら改行区切りとして扱う (黙って空にはしない)
+- 静的な `"text_list"` / `"text_list_id"` にも `"index_offset_var"` は効く。 多言語の一覧を窓で送るなら `text_list_id` + `index_offset_var` の組合せになる (言語切替でも現在位置を引き直す)。
+- `"text_list_var"` を書いた場合、 静的な `text_list` / `text_list_id` は無くてよい。
+
+⚠ **範囲外 (0 未満 / データ末尾より後ろ) の扱いが 2 通りある**。 `"index_offset_var"` の有無で切り替わる:
+
+| モード | 範囲外 | 理由 |
+|---|---|---|
+| 従来 (`index_offset_var` **無し**) | **clamp** (端の項目で止まる) | picker や `index_var` で «番号を選ぶ» 用途は端で止まるのが自然。 **既存の挙動は変えていない** |
+| 窓モード (`index_offset_var` **あり**) | **空文字** (何も表示しない) | データ末尾より後ろの行は «何も出ない» のが正しい。 clamp すると最後の項目が並んで見えてしまう |
+
+行 N 個そのものは uitool の `copies` が生成できるので、 画面 JSON を手で N 回コピペする必要はない。
 
 ### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
 
@@ -1012,6 +1058,14 @@ sess.set_drag_callback([](elements_modal::drag_event const& ev) {
 receiver は shared_ptr のスロット越しに持つので、 **`start()` の前後どちらでも
 設定・差し替えできる** (空を渡せば解除)。 見た目の追従は `drag_at_var` に任せ、
 こちらは «どこで離したか» の判断に使う (→「掴んで動かす」)。
+
+receiver は 1 個で、 `"drag_events": true` を書いた要素すべての通知がここに来る。
+どの要素かは `ev.id` で見分けるので、 通知が要る要素には `"id"` を付けておくこと。
+
+⚠ **実測メモ**: `end` の `x` / `y` と `dx` / `dy` は **直前の `move` と同じ値**になる
+(離した時点では追跡位置を更新しないため)。 実マウスでは離す直前に必ず移動イベントが
+来るので普段は問題にならないが、 入力を合成して検証するときは `up` の前に `move` を
+入れておくこと (elements_console なら REPL の `.mouse move` → `down` → `move` → `up`)。
 
 ## 使い方 (overlay_session)
 
