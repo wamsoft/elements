@@ -22,6 +22,7 @@
 #include <cstdio>    // std::sscanf (at_var)
 #include <cstdlib>   // std::atof (pj_num)
 #include <cstring>
+#include <fstream>  // text_box / text_area の "text_file"
 #include <map>       // mem:// image widget レジストリ
 #include <memory>    // weak_ptr / shared_ptr
 #include <mutex>
@@ -395,6 +396,758 @@ ce::color parse_color(const picojson::array& arr)
 	int b = int_at(arr, 2, 0);
 	int a = (arr.size() >= 4) ? int_at(arr, 3, 255) : 255;
 	return ce::rgba(r, g, b, a);
+}
+
+//---------------------------------------------------------------------------
+// 名前付き色 — テーマの "colors" 表。 色を書けるところなら
+// [r,g,b,a] の代わりに "@名前" / "#rrggbb" / "#rrggbbaa" / "#rgb" が書ける。
+//
+// elements のテーマがプロセス全体で 1 つなのに合わせ、 この表もグローバルに
+// 持つ (テーマを変えるときは画面を組み直す前提。 docs/theming.md の制限)。
+//---------------------------------------------------------------------------
+std::map<std::string, ce::color> g_named_colors;
+
+bool parse_hex_color(const std::string& t, ce::color& out)
+{
+	if (t.size() < 2 || t[0] != '#') return false;
+	std::string h = t.substr(1);
+	auto hex = [](char c) -> int {
+		if (c >= '0' && c <= '9') return c - '0';
+		if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+		if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+		return -1;
+	};
+	for (char c : h) if (hex(c) < 0) return false;
+	int v[8] = {0};
+	for (std::size_t i = 0; i < h.size() && i < 8; ++i) v[i] = hex(h[i]);
+	if (h.size() == 3 || h.size() == 4) {          // #rgb / #rgba
+		int a = (h.size() == 4) ? v[3] * 17 : 255;
+		out = ce::rgba(v[0] * 17, v[1] * 17, v[2] * 17, a);
+		return true;
+	}
+	if (h.size() == 6 || h.size() == 8) {          // #rrggbb / #rrggbbaa
+		int a = (h.size() == 8) ? (v[6] * 16 + v[7]) : 255;
+		out = ce::rgba(v[0] * 16 + v[1], v[2] * 16 + v[3], v[4] * 16 + v[5], a);
+		return true;
+	}
+	return false;
+}
+
+// 1 個の JSON 値を色として解釈する。 解釈できなければ out は触らず false。
+bool parse_color_value(const picojson::value& v, ce::color& out)
+{
+	if (v.is<picojson::array>()) {
+		out = parse_color(v.get<picojson::array>());
+		return true;
+	}
+	if (v.is<std::string>()) {
+		const std::string& t = v.get<std::string>();
+		if (!t.empty() && t[0] == '@') {
+			auto it = g_named_colors.find(t.substr(1));
+			if (it != g_named_colors.end()) { out = it->second; return true; }
+			em_logf("elements_modal: 未定義の色トークン \"%s\"", t.c_str());
+			return false;
+		}
+		return parse_hex_color(t, out);
+	}
+	return false;
+}
+
+// テーマの "colors" に name があればその色を返す (無ければ dflt)。
+// スタイラが内部に持っている色を、 テーマ側から «決め打ちの名前» で
+// 差し替えるための口。 名前は docs/theming.md の「予約色名」を参照。
+ce::color theme_color_or(const char* name, ce::color dflt)
+{
+	auto it = g_named_colors.find(name);
+	return (it == g_named_colors.end()) ? dflt : it->second;
+}
+
+// オブジェクトの key を色として読む。 無い/読めないときは out を変えない。
+bool parse_color_field(const picojson::object& o, const char* key, ce::color& out)
+{
+	auto* v = get_field(o, key);
+	return v && parse_color_value(*v, out);
+}
+
+//---------------------------------------------------------------------------
+// テーマ (theme / skins / widget_skins) — 見た目の一括差し替え。
+//
+//   仕様と書き方: docs/theming.md
+//
+//   3 段構え:
+//     (1) colors + elements のテーマ構造体      … ベクタ widget の色と寸法
+//     (2) skins  = 名前付きフレーム表           … 画像 widget の矩形の集約先
+//     (3) widget_skins = 型 → 画像実装の差し替え … 画面 JSON を変えずに絵にする
+//
+//   elements のテーマも、 スタイラが構築時に焼き込む色も、 プロセス全体で
+//   1 つなので、 ここの表もグローバルに持つ。 テーマを変えたら画面を組み直す
+//   (main.cpp の reload と同じ経路)。
+//---------------------------------------------------------------------------
+// 定義はずっと下 (画面 top-level の解釈と同居)。 テーマからも同じ経路で
+// 言語連動フォント置換表を登録したいので前方宣言する。
+static void apply_font_languages(const picojson::object& o);
+
+ce::rect rect_from_xywh(const picojson::array& arr)
+{
+	if (arr.size() < 4) return ce::rect{};
+	float x = static_cast<float>(int_at(arr, 0, 0));
+	float y = static_cast<float>(int_at(arr, 1, 0));
+	float w = static_cast<float>(int_at(arr, 2, 0));
+	float h = static_cast<float>(int_at(arr, 3, 0));
+	return ce::rect{x, y, x + w, y + h};
+}
+
+// 名前付きフレーム表の 1 エントリ。 画像 widget の "frames" / "rect" を
+// ここへ追い出すと、 画面 JSON からアトラス座標が消えてテーマで差し替えられる。
+struct SkinSpec
+{
+	std::string                     atlas;
+	bool                            has_rect = false;
+	ce::rect                        rect{};
+	std::map<std::string, ce::rect> frames;
+	ce::atlas_nine::insets          insets;
+	bool                            native = false;
+	bool                            has_padding = false;
+	float                           padding[4] = {0, 0, 0, 0};   // l, t, r, b
+};
+
+// ベクタ型 → 画像実装の差し替え指定。
+struct WidgetSkin
+{
+	std::string impl;    // atlas_button / atlas_toggle / atlas_choice /
+	                     // atlas_slider / atlas_nine / atlas_image
+	std::string skin;    // 使う skin 名 (frames / rect 側)
+	std::string track;   // atlas_slider 用
+	std::string thumb;
+	std::string fill;
+};
+
+// テーマが "colors" で明示した名前。 明示された色はテーマ構造体の変更で
+// 上書きしない (予約名の自動追随から除外する)。
+std::set<std::string>             g_explicit_colors;
+std::map<std::string, SkinSpec>   g_skins;
+std::map<std::string, WidgetSkin> g_widget_skins;
+picojson::object                  g_theme_atlases;   // テーマが宣言した atlases
+picojson::value                   g_app_theme;       // app.jsonc の "theme"
+std::string                       g_theme_override;  // --theme / "theme:名前"
+
+const SkinSpec* find_skin(const std::string& name)
+{
+	if (name.empty()) return nullptr;
+	auto it = g_skins.find(name);
+	return (it == g_skins.end()) ? nullptr : &it->second;
+}
+
+const WidgetSkin* find_widget_skin(const std::string& type)
+{
+	if (g_widget_skins.empty()) return nullptr;
+	auto it = g_widget_skins.find(type);
+	return (it == g_widget_skins.end()) ? nullptr : &it->second;
+}
+
+// テーマ適用前の «素の» elements テーマ。 画面ごとに積み上がらないよう、
+// 毎回ここへ戻してからテーマを当てる。
+//
+// ライブラリ既定 (theme{}) ではなく **最初にここを通ったときの現在値** を
+// 基準にする。 ホストが起動時に set_focus_ring_enabled 等でテーマを触って
+// いることがあり、 それを毎画面で踏み潰さないため。
+const ce::theme& baseline_theme()
+{
+	static ce::theme t = ce::get_theme();
+	return t;
+}
+
+// 予約色名を «現在の elements テーマ» から埋める。 テーマが明示した名前
+// (g_explicit_colors) には触らない。 テーマを当てなくても "@accent" 等が
+// 引けるようにしておかないと、 トークンで書いた画面が素のベクタで壊れる
+// (docs/theming.md の「予約色名」)。
+void seed_reserved_colors()
+{
+	const ce::theme& t = ce::get_theme();
+	auto put = [&](const char* name, ce::color c) {
+		if (!g_explicit_colors.count(name)) g_named_colors[name] = c;
+	};
+	put("ink",        t.label_font_color);
+	put("ink_dim",    t.inactive_font_color);
+	put("accent",     t.indicator_color);
+	put("accent_hi",  t.indicator_bright_color);
+	put("accent_dim", t.controls_color);
+	put("panel",      t.panel_color);
+	put("panel_line", t.frame_color);
+	put("disabled",   t.inactive_font_color);
+	// 画面背景。 elements のテーマには対応するフィールドが無いので
+	// パネル色を暗くしたものを既定にする (テーマ側で上書きする前提)。
+	put("bg",         t.panel_color.level(0.45f));
+}
+
+void reset_theme_state()
+{
+	ce::set_theme(baseline_theme());
+	g_named_colors.clear();
+	g_explicit_colors.clear();
+	g_skins.clear();
+	g_widget_skins.clear();
+	g_theme_atlases.clear();
+	seed_reserved_colors();
+}
+
+void parse_skin_table(const picojson::object& skins)
+{
+	for (const auto& kv : skins) {
+		const std::string& name = kv.first;
+		if (!kv.second.is<picojson::object>()) continue;
+		const auto& so = kv.second.get<picojson::object>();
+		SkinSpec sk;
+		sk.atlas = string_or(so, "atlas");
+		if (auto* r = get_array(so, "rect")) {
+			sk.rect = rect_from_xywh(*r);
+			sk.has_rect = true;
+		}
+		if (auto* fv = get_field(so, "frames")) {
+			if (fv->is<picojson::object>()) {
+				for (const auto& f : fv->get<picojson::object>())
+					if (f.second.is<picojson::array>())
+						sk.frames[f.first] =
+							rect_from_xywh(f.second.get<picojson::array>());
+			}
+		}
+		if (auto* iv = get_array(so, "insets")) {
+			if (iv->size() >= 4) {
+				sk.insets.left   = static_cast<float>(int_at(*iv, 0, 0));
+				sk.insets.top    = static_cast<float>(int_at(*iv, 1, 0));
+				sk.insets.right  = static_cast<float>(int_at(*iv, 2, 0));
+				sk.insets.bottom = static_cast<float>(int_at(*iv, 3, 0));
+			}
+		}
+		if (auto* pv = get_array(so, "padding")) {
+			if (pv->size() >= 4) {
+				sk.has_padding = true;
+				for (int i = 0; i < 4; ++i)
+					sk.padding[i] = static_cast<float>(int_at(*pv, i, 0));
+			}
+		}
+		sk.native = truthy_field(get_field(so, "native"));
+		g_skins[name] = sk;
+	}
+}
+
+void parse_widget_skin_table(const picojson::object& ws)
+{
+	for (const auto& kv : ws) {
+		const std::string& type = kv.first;
+		if (!kv.second.is<picojson::object>()) continue;
+		const auto& wo = kv.second.get<picojson::object>();
+		WidgetSkin w;
+		w.impl  = string_or(wo, "impl");
+		w.skin  = string_or(wo, "skin");
+		w.track = string_or(wo, "track");
+		w.thumb = string_or(wo, "thumb");
+		w.fill  = string_or(wo, "fill");
+		if (w.impl.empty()) {
+			em_logf("elements_modal: widget_skins[\"%s\"] に impl が無い", type.c_str());
+			continue;
+		}
+		g_widget_skins[type] = w;
+	}
+}
+
+// フォント指定: { "family": "...", "size": 24 } / "Family" / ["Family", 24]。
+//
+// font_descr は families を **string_view** で持つ (所有しない)。 label の
+// styler やテーマ構造体はその descr を widget / プロセスの寿命だけ持ち続ける
+// ので、 families の実体は「一度置いたら二度と動かない」場所に要る。
+// ここは node ベースの std::map をプールにしてキー文字列を intern する
+// (std::vector だと push_back の再確保で既存要素が move され、 SSO 文字列の
+//  バッファ位置が変わって既存の string_view が全部ぶら下がる — テーマに
+//  label_font.family を書くと UI から文字が消える不具合の原因だった)。
+const std::string& intern_family(const std::string& s)
+{
+	static std::map<std::string, int> pool;
+	return pool.emplace(s, 0).first->first;
+}
+
+// "wght=700" 形状 (1..4 文字の軸タグ + '=' + 数値) か。 families のカンマ
+// 分割で multi-axis サフィックス ("F#wght=700,wdth=75") が千切れたときの
+// 復元判定に使う (elements 側 font.cpp と同じ規則)。
+bool is_font_axis_token(const std::string& s)
+{
+	auto eq = s.find('=');
+	if (eq == std::string::npos || eq < 1 || eq > 4) return false;
+	char* end = nullptr;
+	std::strtod(s.c_str() + eq + 1, &end);
+	return end && *end == '\0' && end != s.c_str() + eq + 1;
+}
+
+// comma 区切り families を family トークンへ割る (軸の続きは再結合)。
+std::vector<std::string> split_font_families(const std::string& s)
+{
+	std::vector<std::string> toks;
+	std::size_t i = 0;
+	for (;;) {
+		auto c = s.find(',', i);
+		std::string piece = s.substr(i, (c == std::string::npos ? s.size() : c) - i);
+		auto b = piece.find_first_not_of(" \t\"");
+		auto e = piece.find_last_not_of(" \t\"");
+		piece = (b == std::string::npos) ? std::string{} : piece.substr(b, e - b + 1);
+		if (!toks.empty() && toks.back().find('#') != std::string::npos
+		    && is_font_axis_token(piece))
+			toks.back() += "," + piece;
+		else if (!piece.empty())
+			toks.push_back(std::move(piece));
+		if (c == std::string::npos) break;
+		i = c + 1;
+	}
+	return toks;
+}
+
+// families の **各** トークンへ可変フォント軸 ("wght=700" 等) を足す。
+// 軸はファミリ名のサフィックスとして運ばれ、 解決先ファイルへ付いたまま
+// 計測 (glyph_layout) と描画 (ThorVG) の両方へ届く。
+//   replace=false … 同じタグを既に持つトークンは触らない (その場で書かれた
+//                   より具体的な指定を残す)
+//   replace=true  … 同じタグの既存値を置き換える (テーマ既定から引き継いだ
+//                   軸を widget の "weight" で上書きする経路)
+std::string add_font_axis(const std::string& families, const std::string& axis,
+                          bool replace)
+{
+	auto eq = axis.find('=');
+	if (eq == std::string::npos || eq == 0) return families;
+	const std::string needle = axis.substr(0, eq) + "=";
+	auto toks = split_font_families(families);
+	std::string out;
+	for (auto& t : toks) {
+		auto hash = t.find('#');
+		std::size_t at = std::string::npos, at_end = 0;
+		if (hash != std::string::npos) {
+			for (std::size_t p = hash;
+			     (p = t.find(needle, p)) != std::string::npos; ++p) {
+				if (p > 0 && (t[p - 1] == '#' || t[p - 1] == ',')) {
+					at = p;
+					at_end = t.find(',', p);
+					if (at_end == std::string::npos) at_end = t.size();
+					break;
+				}
+			}
+		}
+		if (at == std::string::npos)
+			t += (hash == std::string::npos ? "#" : ",") + axis;
+		else if (replace)
+			t = t.substr(0, at) + axis + t.substr(at_end);
+		if (!out.empty()) out += ", ";
+		out += t;
+	}
+	return out.empty() ? families : out;
+}
+
+// 太さの名前 → CSS 相当の数値 (可変フォントの wght 軸値)。
+int font_weight_value(const std::string& w)
+{
+	static const std::map<std::string, int> tbl = {
+		{"thin", 100}, {"extra_light", 200}, {"extralight", 200},
+		{"light", 300}, {"normal", 400}, {"regular", 400},
+		{"medium", 500}, {"semi_bold", 600}, {"semibold", 600},
+		{"bold", 700}, {"extra_bold", 800}, {"extrabold", 800},
+		{"black", 900}, {"extra_black", 950},
+	};
+	auto it = tbl.find(w);
+	if (it != tbl.end()) return it->second;
+	int n = std::atoi(w.c_str());
+	return (n >= 1 && n <= 1000) ? n : -1;
+}
+
+// weight を font_descr へ載せる。 同梱フォントは可変フォント (Noto Sans JP-VF
+// 等) なので、 **ファミリ名の "#wght=NNN" 軸サフィックス** が実際に効く経路。
+// 静的フェイスを複数登録している場合のために descr の _weight も立てる。
+void apply_font_weight(ce::font_descr& d, int wght, bool replace)
+{
+	if (wght <= 0) return;
+	d._families = intern_family(add_font_axis(
+		std::string(d._families), "wght=" + std::to_string(wght), replace));
+	// 10 段階の weight_enum へ丸める (thin=10 .. extra_black=95)。
+	int step = wght / 100;
+	static const ce::font_constants::weight_enum steps[] = {
+		ce::font_constants::thin, ce::font_constants::thin,
+		ce::font_constants::extra_light, ce::font_constants::light,
+		ce::font_constants::weight_normal, ce::font_constants::medium,
+		ce::font_constants::semi_bold, ce::font_constants::bold,
+		ce::font_constants::extra_bold, ce::font_constants::black,
+		ce::font_constants::extra_black,
+	};
+	if (step < 0) step = 0;
+	if (step > 10) step = 10;
+	d = d.weight(steps[step]);
+}
+
+// families 文字列を「登録済みのファミリだけ」へ解決する。 PSD 由来の名前
+// ("NotoSansJP-Medium" / "NotoSansJP") は human family + weight/slant へ分解
+// され ("Noto Sans JP" + medium)、 "#tag=val" 軸サフィックスは温存される。
+// 未登録のトークンは (elements 側 resolve_font_name が一度だけ警告して) 捨てる。
+// 1 つも残らなければ false — 呼び手は descr (= テーマ既定) をそのまま使う。
+// 未登録フォントを descr に載せてしまうと解決に失敗して **文字が 1 つも
+// 描かれない** ので、 タイプミスで UI が消えるより既定へ落とす方を採る。
+bool resolve_font_families(const std::string& families, ce::font_descr& descr)
+{
+	std::string joined;
+	bool first = true;
+	for (const auto& tok : split_font_families(families)) {
+		auto rf = ce::resolve_font_name(tok);
+		if (!rf.ok) continue;
+		if (!joined.empty()) joined += ", ";
+		joined += rf.family;
+		if (first) {
+			descr._weight = rf.weight;
+			descr._slant  = rf.slant;
+			first = false;
+		}
+	}
+	if (joined.empty()) return false;
+	descr._families = intern_family(joined);
+	return true;
+}
+
+bool parse_font_descr(const picojson::value& v, ce::font_descr& out)
+{
+	std::string family;
+	double size = 0;
+	int wght = -1;
+	if (v.is<std::string>()) {
+		family = v.get<std::string>();
+	} else if (v.is<picojson::object>()) {
+		const auto& o = v.get<picojson::object>();
+		family = string_or(o, "family");
+		size = number_or(o, "size", 0);
+		if (auto* wv = get_field(o, "weight")) {
+			if (wv->is<std::string>()) wght = font_weight_value(wv->get<std::string>());
+			else if (pj_is_num(*wv))   wght = static_cast<int>(pj_num(*wv));
+		}
+	} else if (v.is<picojson::array>()) {
+		const auto& a = v.get<picojson::array>();
+		if (!a.empty() && a[0].is<std::string>()) family = a[0].get<std::string>();
+		if (a.size() > 1 && pj_is_num(a[1])) size = pj_num(a[1]);
+	} else {
+		return false;
+	}
+	if (!family.empty())
+		resolve_font_families(family, out);
+	if (size > 0) out._size = static_cast<float>(size);
+	// family 無しで "weight" だけでも効く (既存 families に軸を足す)。 同じ
+	// 宣言の "family" が "#wght=" を持つならそちらが具体的なので残す。
+	if (wght > 0)
+		apply_font_weight(out, wght,
+			family.find("wght=") == std::string::npos);
+	return true;
+}
+
+// widget の "font" / "weight" を font_descr へ載せる (label / text_area /
+// text_box 共通)。
+//   "font"   … comma 区切り families。 "Family#wght=700" の可変フォント軸
+//              サフィックス可。 空なら descr の既存 families (= テーマ既定) を保つ
+//   "weight" … "bold" / "semi_bold" 等の名前か 1..1000 の数値。 families の
+//              各トークンへ "#wght=NNN" として足す
+// 戻り値 true = どちらかの指定があった。 descr._families は intern された
+// 永続文字列を指すので、 label styler のように font_descr を持ち続ける
+// widget に載せても安全 (font_descr は families を所有しない)。
+bool apply_widget_font(const picojson::object& o, ce::font_descr& descr)
+{
+	std::string family = string_or(o, "font");
+	int wght = -1;
+	if (auto* wv = get_field(o, "weight")) {
+		if (wv->is<std::string>()) wght = font_weight_value(wv->get<std::string>());
+		else if (pj_is_num(*wv))   wght = static_cast<int>(pj_num(*wv));
+	}
+	if (family.empty() && wght <= 0) return false;
+	bool changed = false;
+	if (!family.empty()) changed = resolve_font_families(family, descr);
+	// widget 自身の "font" が既に wght 軸を持つならそれが最も具体的な指定なの
+	// で残す。 テーマ既定から引き継いだ軸は "weight" で置き換える。
+	if (wght > 0) {
+		apply_font_weight(descr, wght,
+			family.find("wght=") == std::string::npos);
+		changed = true;
+	}
+	return changed;
+}
+
+picojson::value rect_value(const ce::rect& r)
+{
+	picojson::array a;
+	a.emplace_back(static_cast<double>(r.left));
+	a.emplace_back(static_cast<double>(r.top));
+	a.emplace_back(static_cast<double>(r.width()));
+	a.emplace_back(static_cast<double>(r.height()));
+	return picojson::value(a);
+}
+
+// "skin" と widget_skins を «JSON の書き換え» として解決する。
+//
+// 各 atlas_* ビルダに手を入れる代わりに、 dispatch の入口で
+// atlas / frames / rect / insets を埋めたオブジェクトを作って渡す。 これで
+// 「スキンを引く」ロジックが 1 箇所に閉じ、 画面が明示した値は常に勝つ
+// (スキンはあくまで既定値)。 戻り値 true = type / o を書き換えた。
+bool expand_skin(std::string& type, picojson::object& o)
+{
+	bool changed = false;
+
+	// (1) widget_skins: ベクタ型を画像実装へ回す。 画面が自分で "skin" を
+	//     書いている場合は型変換しない (その型のまま skin を使う)。
+	std::string skin_name = string_or(o, "skin");
+	const WidgetSkin* ws = skin_name.empty() ? find_widget_skin(type) : nullptr;
+	if (ws) {
+		// ベクタの check_box / radio_button は「絵 + 右にラベル」。 差し替え先の
+		// atlas_toggle / atlas_choice は「絵の中央にテキストを重ねる」ので、
+		// キャプション付きのまま差し替えると文字がチェックマークに重なる。
+		// «左に正方形の絵 + 右にラベル» の canvas へ組み替えて渡す。
+		if ((type == "checkbox" || type == "check_box" || type == "radio_button")
+		    && !string_or(o, "text").empty() && o.count("at")) {
+			if (auto* at = get_array(o, "at"); at && at->size() >= 4) {
+				const float ax = static_cast<float>(int_at(*at, 0, 0));
+				const float ay = static_cast<float>(int_at(*at, 1, 0));
+				const float aw = static_cast<float>(int_at(*at, 2, 0));
+				const float ah = static_cast<float>(int_at(*at, 3, 0));
+				const float box = ah;              // 絵は行の高さの正方形
+				const float gap = ah * 0.25f;
+
+				picojson::object ctrl = o;         // 型 / id / value / 演出はこちら
+				ctrl.erase("text");                // 文字は隣の label が描く
+				ctrl.erase("color");
+				ctrl["at"] = rect_value(ce::rect{0, 0, box, box});   // l,t,r,b
+				std::string t2 = type;
+				expand_skin(t2, ctrl);             // 通常の展開 (再入は 1 段だけ)
+
+				picojson::object lab;
+				lab["type"] = picojson::value(std::string("label"));
+				lab["text"] = *get_field(o, "text");
+				if (auto* ti = get_field(o, "text_id")) lab["text_id"] = *ti;
+				if (auto* c = get_field(o, "color"))    lab["color"] = *c;
+				if (auto* sz = get_field(o, "size"))    lab["size"] = *sz;
+				// ce::rect は (left, top, right, bottom)。 ラベルは絵の右から
+				// 行の右端まで。
+				lab["at"] = rect_value(ce::rect{box + gap, 0.0f, aw, ah});
+				lab["text_anchor"] = picojson::value(picojson::array{
+					picojson::value(0.0), picojson::value(double(ah * 0.7))});
+
+				picojson::array kids;
+				kids.emplace_back(ctrl);
+				kids.emplace_back(lab);
+				picojson::object wrap;
+				wrap["type"] = picojson::value(std::string("canvas"));
+				wrap["at"] = rect_value(ce::rect{ax, ay, ax + aw, ay + ah});
+				wrap["children"] = picojson::value(kids);
+				o = wrap;
+				type = "canvas";
+				return true;
+			}
+		}
+		type = ws->impl;
+		skin_name = ws->skin;
+		o["type"] = picojson::value(ws->impl);
+		changed = true;
+		// atlas_slider / atlas_progress のパーツはスキン名で指す。
+		auto part = [&](const char* key, const std::string& name) {
+			if (name.empty() || o.count(key)) return;
+			if (const SkinSpec* p = find_skin(name)) {
+				if (p->has_rect) o[key] = rect_value(p->rect);
+			}
+		};
+		part("track", ws->track);
+		part("thumb", ws->thumb);
+		part("fill",  ws->fill);
+		if (o.count("track") || o.count("thumb") || o.count("fill")) {
+			if (!o.count("atlas")) {
+				const SkinSpec* p = find_skin(!ws->track.empty() ? ws->track
+				                    : !ws->thumb.empty() ? ws->thumb : ws->fill);
+				if (p && !p->atlas.empty()) o["atlas"] = picojson::value(p->atlas);
+			}
+		}
+	}
+
+	// (2) skin: 名前付きフレーム表から atlas / frames / rect / insets を埋める。
+	const SkinSpec* sk = find_skin(skin_name);
+	if (!sk) {
+		if (!skin_name.empty())
+			em_logf("elements_modal: skin \"%s\" がテーマに無い", skin_name.c_str());
+		return changed;
+	}
+	if (!sk->atlas.empty() && !o.count("atlas")) {
+		o["atlas"] = picojson::value(sk->atlas);
+		changed = true;
+	}
+	if (!sk->frames.empty() && !o.count("frames")) {
+		picojson::object fr;
+		for (const auto& f : sk->frames) fr[f.first] = rect_value(f.second);
+		o["frames"] = picojson::value(fr);
+		changed = true;
+	}
+	if (sk->has_rect && !o.count("rect")) {
+		o["rect"] = rect_value(sk->rect);
+		changed = true;
+	}
+	if (!sk->insets.empty() && !o.count("insets")) {
+		picojson::array ins;
+		ins.emplace_back(static_cast<double>(sk->insets.left));
+		ins.emplace_back(static_cast<double>(sk->insets.top));
+		ins.emplace_back(static_cast<double>(sk->insets.right));
+		ins.emplace_back(static_cast<double>(sk->insets.bottom));
+		o["insets"] = picojson::value(ins);
+		changed = true;
+	}
+	if (sk->native && !o.count("native_frames")) {
+		o["native_frames"] = picojson::value(true);
+		changed = true;
+	}
+	return changed;
+}
+
+// テーマオブジェクトを «現在のテーマの上に» 当てる (アプリ既定 → 画面上書き)。
+void apply_theme_object(const picojson::object& t)
+{
+	// (a) 名前付き色を先に。 以降のフィールドが "@名前" を引ける。
+	if (auto* cv = get_field(t, "colors")) {
+		if (cv->is<picojson::object>()) {
+			for (const auto& c : cv->get<picojson::object>()) {
+				ce::color col;
+				if (parse_color_value(c.second, col)) {
+					g_named_colors[c.first] = col;
+					g_explicit_colors.insert(c.first);
+				}
+			}
+		}
+	}
+
+	// (b) elements のテーマ構造体
+	ce::theme th = ce::get_theme();
+	auto col = [&](const char* k, ce::color& dst) { parse_color_field(t, k, dst); };
+	auto flt = [&](const char* k, float& dst) {
+		if (auto* v = get_field(t, k)) if (pj_is_num(*v))
+			dst = static_cast<float>(pj_num(*v));
+	};
+	auto num_i = [&](const char* k, int& dst) {
+		if (auto* v = get_field(t, k)) if (pj_is_num(*v))
+			dst = static_cast<int>(pj_num(*v));
+	};
+	auto fnt = [&](const char* k, ce::font_descr& dst) {
+		if (auto* v = get_field(t, k)) parse_font_descr(*v, dst);
+	};
+	auto boolean = [&](const char* k, bool& dst) {
+		if (auto* v = get_field(t, k)) dst = truthy_field(v);
+	};
+
+	col("panel_color", th.panel_color);
+	col("frame_color", th.frame_color);
+	col("frame_hilite_color", th.frame_hilite_color);
+	flt("frame_corner_radius", th.frame_corner_radius);
+	flt("frame_stroke_width", th.frame_stroke_width);
+	col("scrollbar_color", th.scrollbar_color);
+	flt("scrollbar_width", th.scrollbar_width);
+	col("default_button_color", th.default_button_color);
+	flt("button_corner_radius", th.button_corner_radius);
+	flt("button_text_icon_space", th.button_text_icon_space);
+	col("slide_button_on_color", th.slide_button_on_color);
+	col("slide_button_base_color", th.slide_button_base_color);
+	col("slide_button_thumb_color", th.slide_button_thumb_color);
+	col("active_tab_color", th.active_tab_color);
+	col("picker_bg_color", th.picker_bg_color);
+	col("picker_fg_color", th.picker_fg_color);
+	col("controls_color", th.controls_color);
+	flt("controls_frame_stroke_width", th.controls_frame_stroke_width);
+	col("indicator_color", th.indicator_color);
+	col("indicator_bright_color", th.indicator_bright_color);
+	col("indicator_hilite_color", th.indicator_hilite_color);
+	col("basic_font_color", th.basic_font_color);
+	flt("disabled_opacity", th.disabled_opacity);
+	flt("element_background_opacity", th.element_background_opacity);
+	col("heading_font_color", th.heading_font_color);
+	num_i("heading_text_align", th.heading_text_align);
+	col("label_font_color", th.label_font_color);
+	num_i("label_text_align", th.label_text_align);
+	col("icon_color", th.icon_color);
+	col("icon_button_color", th.icon_button_color);
+	col("text_box_font_color", th.text_box_font_color);
+	col("text_box_hilite_color", th.text_box_hilite_color);
+	col("text_box_caret_color", th.text_box_caret_color);
+	flt("text_box_caret_width", th.text_box_caret_width);
+	col("inactive_font_color", th.inactive_font_color);
+	col("ticks_color", th.ticks_color);
+	flt("major_ticks_level", th.major_ticks_level);
+	flt("major_ticks_width", th.major_ticks_width);
+	flt("minor_ticks_level", th.minor_ticks_level);
+	flt("minor_ticks_width", th.minor_ticks_width);
+	col("major_grid_color", th.major_grid_color);
+	flt("major_grid_width", th.major_grid_width);
+	col("minor_grid_color", th.minor_grid_color);
+	flt("minor_grid_width", th.minor_grid_width);
+	flt("dialog_button_size", th.dialog_button_size);
+	flt("child_window_title_size", th.child_window_title_size);
+	flt("child_window_opacity", th.child_window_opacity);
+	boolean("focus_ring_enabled", th.focus_ring_enabled);
+	col("focus_ring_color", th.focus_ring_color);
+	flt("focus_ring_width", th.focus_ring_width);
+	fnt("system_font", th.system_font);
+	fnt("heading_font", th.heading_font);
+	fnt("label_font", th.label_font);
+	fnt("icon_font", th.icon_font);
+	fnt("text_box_font", th.text_box_font);
+	fnt("mono_spaced_font", th.mono_spaced_font);
+	if (auto* v = get_array(t, "slide_button_size")) {
+		if (v->size() >= 2)
+			th.slide_button_size = ce::point{static_cast<float>(int_at(*v, 0, 0)),
+			                                static_cast<float>(int_at(*v, 1, 0))};
+	}
+	if (auto* v = get_array(t, "button_margin")) {
+		if (v->size() >= 4)
+			th.button_margin = ce::rect{static_cast<float>(int_at(*v, 0, 0)),
+			                            static_cast<float>(int_at(*v, 1, 0)),
+			                            static_cast<float>(int_at(*v, 2, 0)),
+			                            static_cast<float>(int_at(*v, 3, 0))};
+	}
+	if (auto* v = get_array(t, "message_textbox_size")) {
+		if (v->size() >= 2)
+			th.message_textbox_size =
+				ce::extent{static_cast<float>(int_at(*v, 0, 0)),
+				           static_cast<float>(int_at(*v, 1, 0))};
+	}
+	ce::set_theme(th);
+
+	// テーマ構造体を変えたので、 明示されていない予約色名を新しい値へ追随
+	// させる (label_font_color だけ書いたテーマでも "@ink" がその色になる)。
+	seed_reserved_colors();
+
+	// 既定の可変フォント軸。 {ファミリ名: "wght=500,wdth=100"}。 そのファミリを
+	// 軸指定なしで参照したとき (= widget の大半) の既定になるので、 「UI 全体を
+	// 一回り太く」がこれ 1 つで効く。 個別に太さを変えたい役割は label_font 等の
+	// "weight" で上書きする。
+	if (auto* fv = get_field(t, "font_variations")) {
+		if (fv->is<picojson::object>()) {
+			for (const auto& kv : fv->get<picojson::object>()) {
+				if (!kv.second.is<std::string>()) continue;
+				ce::set_default_variations(kv.first, kv.second.get<std::string>());
+			}
+		}
+	}
+
+	// (b2) 言語連動フォント置換表。 テーマがフォントを持ち込むとき、 CJK の
+	// フォールバックまで含めて 1 ファイルで完結させたいのでここでも受ける
+	// (画面 / app.jsonc の宣言と同じ経路・同じ書式)。
+	apply_font_languages(t);
+
+	// (c) 絵の出どころ (画面の "atlases" と同じ書式)
+	if (auto* av = get_field(t, "atlases")) {
+		if (av->is<picojson::object>())
+			for (const auto& a : av->get<picojson::object>())
+				g_theme_atlases[a.first] = a.second;
+	}
+
+	// (d) 名前付きフレーム表
+	if (auto* sv = get_field(t, "skins")) {
+		if (sv->is<picojson::object>())
+			parse_skin_table(sv->get<picojson::object>());
+	}
+
+	// (e) ベクタ型 → 画像実装
+	if (auto* wv = get_field(t, "widget_skins")) {
+		if (wv->is<picojson::object>())
+			parse_widget_skin_table(wv->get<picojson::object>());
+	}
 }
 
 //---------------------------------------------------------------------------
@@ -799,6 +1552,66 @@ public:
 		return cycfi::fs::path(_resource_base + path);
 	}
 
+	// リソースフォルダのテキストファイルを丸ごと読む (UTF-8)。 BOM を落とし、
+	// CRLF を LF に均す (折返しは  を独立した空白として数えるため、 残すと
+	// 行末に幅ゼロの空白が付いて右端の折返し位置がずれる)。 読めなければ空。
+	std::string read_text_resource(const std::string& rel) const
+	{
+		auto path = resolve_resource(rel);
+		if (path.empty()) return {};
+		std::ifstream in(path, std::ios::binary);
+		if (!in) return {};
+		std::string body((std::istreambuf_iterator<char>(in)),
+		                 std::istreambuf_iterator<char>());
+		if (body.size() >= 3 && static_cast<unsigned char>(body[0]) == 0xEF
+		    && static_cast<unsigned char>(body[1]) == 0xBB
+		    && static_cast<unsigned char>(body[2]) == 0xBF)
+			body.erase(0, 3);
+		body.erase(std::remove(body.begin(), body.end(), ''), body.end());
+		return body;
+	}
+
+	// "theme" の値を適用する。 オブジェクトならそのまま、 文字列なら
+	// json/theme/<名前>.jsonc を読んで適用する。
+	void apply_theme_spec(const picojson::value& spec)
+	{
+		if (spec.is<picojson::object>()) {
+			apply_theme_object(spec.get<picojson::object>());
+			return;
+		}
+		if (!spec.is<std::string>()) return;
+		const std::string& name = spec.get<std::string>();
+		if (name.empty()) return;
+		// 置き場所の候補。 <runtime>/json/theme/ を本命とし、 <runtime>/theme/
+		// でも見つかるようにしておく (リソース解決の origin が画面の
+		// ディレクトリになるかはホスト次第なので、 両方から引けると事故が減る)。
+		const std::string cands[] = {
+			"json/theme/" + name + ".jsonc",
+			"theme/" + name + ".jsonc",
+			"json/theme/" + name + ".json",
+			"theme/" + name + ".json",
+		};
+		std::string body;
+		for (const auto& rel : cands) {
+			body = read_text_resource(rel);
+			if (!body.empty()) break;
+		}
+		if (body.empty()) {
+			em_logf("elements_modal: theme \"%s\" が見つからない "
+			        "(探した先: json/theme/%s.jsonc, theme/%s.jsonc)",
+			        name.c_str(), name.c_str(), name.c_str());
+			return;
+		}
+		picojson::value v;
+		std::string err = picojson::parse(v, preprocess_jsonc(body));
+		if (!err.empty() || !v.is<picojson::object>()) {
+			em_logf("elements_modal: theme \"%s\" の解析に失敗: %s",
+			        name.c_str(), err.c_str());
+			return;
+		}
+		apply_theme_object(v.get<picojson::object>());
+	}
+
 	// "initial_focus": true が指定された要素 (なければ nullptr)。
 	// build() 完了後、 ホストが view.focus(...) に渡すために取得する。
 	element_ptr take_initial_focus() { return std::move(_initial_focus); }
@@ -960,6 +1773,10 @@ private:
 	// flatten の焼き直し契機 (両ストアが bump する)。 build 時に配線する。
 	layout_revision _rev = std::make_shared<std::uint64_t>(0);
 	std::map<std::string, std::map<std::string, std::string>> _vars_on_focus;
+	// "strings_on_focus": {変数名: textId} — vars_on_focus の多言語版。
+	// フォーカス時に textId を現在言語で解決してから変数へ書く。 ヘルプ文言を
+	// 訳せるようにするためのもの (生文字列を書く vars_on_focus では訳せない)。
+	std::map<std::string, std::map<std::string, std::string>> _strings_on_focus;
 	std::vector<std::pair<std::string, std::function<bool()>>> _focusables;
 	std::vector<std::pair<std::string, std::function<bool()>>> _hoverables;
 	std::vector<std::function<void(cycfi::elements::view&)>> _deferred_view_cbs;
@@ -1004,6 +1821,19 @@ private:
 
 	// "vars_on_focus": {name: value} を JSON object から読んで _vars_on_focus[id]
 	// に登録。 値が文字列でない要素は無視。
+	// "strings_on_focus": {name: textId} を記録する。 note_vars_on_focus と
+	// 同じ場所から呼ばれる。
+	void note_strings_on_focus(const picojson::object& o, const std::string& id)
+	{
+		if (id.empty()) return;
+		auto* v = get_field(o, "strings_on_focus");
+		if (!v || !v->is<picojson::object>()) return;
+		auto& m = _strings_on_focus[id];
+		for (const auto& kv : v->get<picojson::object>())
+			if (kv.second.is<std::string>())
+				m[kv.first] = kv.second.get<std::string>();
+	}
+
 	void note_vars_on_focus(const picojson::object& o, const std::string& id)
 	{
 		if (id.empty()) return;
@@ -1212,6 +2042,7 @@ private:
 	element_ptr build_radio_button (const picojson::object& o);
 
 	// 名前 → pixmap_ptr 解決。 未登録ならログ + nullptr。
+	element_ptr build_atlas_nine  (const picojson::object& o);
 	cycfi::elements::pixmap_ptr lookup_atlas(const std::string& name);
 	element_ptr build_tab_view    (const picojson::object& o);
 
@@ -1633,9 +2464,21 @@ element_ptr LayoutBuilder::apply_visible(const picojson::object& o, element_ptr 
 	return ce::share(visible_element(ce::hold_any(std::move(el)), vis));
 }
 
-element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
-                                          const std::string& type)
+element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
+                                          const std::string& in_type)
 {
+	// テーマのスキン指定 (docs/theming.md) を先に展開する。 何も当たらなければ
+	// コピーもせずそのまま流す (既存画面への影響ゼロ)。
+	std::string expanded_type = in_type;
+	picojson::object expanded;
+	const picojson::object* op = &in_o;
+	if (!g_skins.empty() || !g_widget_skins.empty()) {
+		expanded = in_o;
+		if (expand_skin(expanded_type, expanded)) op = &expanded;
+	}
+	const picojson::object& o = *op;
+	const std::string& type = expanded_type;
+
 	if (type == "label")         return build_label(o);
 	if (type == "button")        return build_button(o);
 	if (type == "vtile")         return build_vtile(o);
@@ -1688,6 +2531,8 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& o,
 	if (type == "floating")      return build_floating(o);
 	if (type == "canvas")        return build_canvas(o);
 	if (type == "locale_variant") return build_locale_variant(o);
+	if (type == "atlas_nine")     return build_atlas_nine(o);
+	if (type == "atlas_gizmo")    return build_atlas_nine(o);  // alias
 	if (type == "atlas_image")    return build_atlas_image(o);
 	if (type == "image")          return build_image(o);
 	if (type == "animated_sprite") return build_animated_sprite(o);
@@ -1907,14 +2752,26 @@ void LayoutBuilder::register_id(const picojson::object& o,
 //---------------------------------------------------------------------------
 std::function<void()> LayoutBuilder::take_focus_poll()
 {
-	auto vars            = _vars;
-	auto vars_on_focus   = std::move(_vars_on_focus);
-	auto focusables      = std::move(_focusables);
-	auto last_focused_id = _focused_id_slot;  // ホストと共有 (focused_id() 用)
-	auto focus_links     = std::move(_focus_links);
+	auto vars             = _vars;
+	auto vars_on_focus    = std::move(_vars_on_focus);
+	auto strings_on_focus = std::move(_strings_on_focus);
+	auto strings          = _strings;
+	auto focusables       = std::move(_focusables);
+	auto last_focused_id  = _focused_id_slot;  // ホストと共有 (focused_id() 用)
+	auto focus_links      = std::move(_focus_links);
+	// 言語が変わったら、 いま focus 中の要素のヘルプ文言を訳し直す必要がある。
+	// poll は «focus が変わったときだけ» 書くので、 あり得ない id を入れて
+	// 次の poll を強制的に走らせる。
+	if (!strings_on_focus.empty()) {
+		auto slot = last_focused_id;
+		_strings->subscribe_language([slot](const std::string&) {
+			*slot = std::string("\x01relang");
+		});
+	}
 	// "" は「何も focus されていない」を表す sentinel。 初回はその状態と
 	// 比較されるので、 初回 focus に対して必ず 1 回 set される。
-	return [vars, vars_on_focus, focusables, last_focused_id, focus_links]() {
+	return [vars, vars_on_focus, strings_on_focus, strings, focusables,
+	        last_focused_id, focus_links]() {
 		std::string current;
 		for (auto& kv : focusables) {
 			if (kv.second()) { current = kv.first; break; }
@@ -1924,10 +2781,14 @@ std::function<void()> LayoutBuilder::take_focus_poll()
 		// focus_link の飾り要素へ通知 (フォーカスが外れた "" も配る)。
 		for (auto& fn : focus_links) fn(current);
 		if (current.empty()) return;
-		auto it = vars_on_focus.find(current);
-		if (it == vars_on_focus.end()) return;
-		for (auto& var_kv : it->second) {
-			vars->set(var_kv.first, var_kv.second);
+		if (auto it = vars_on_focus.find(current); it != vars_on_focus.end()) {
+			for (auto& var_kv : it->second)
+				vars->set(var_kv.first, var_kv.second);
+		}
+		if (auto it = strings_on_focus.find(current);
+		    it != strings_on_focus.end()) {
+			for (auto& var_kv : it->second)
+				vars->set(var_kv.first, strings->resolve(var_kv.second));
 		}
 	};
 }
@@ -2027,10 +2888,8 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	}
 	bool has_color = false;
 	ce::color col;
-	if (auto* arr = get_array(o, "color")) {
+	if (parse_color_field(o, "color", col))
 		has_color = true;
-		col = parse_color(*arr);
-	}
 
 	element_ptr out;
 
@@ -2074,8 +2933,8 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 					ce::text_run tr;
 					tr.text = string_or(ro, "t");
 					tr.size = static_cast<float>(number_or(ro, "size", a_sz));
-					if (auto* ca = get_array(ro, "color")) tr.col = parse_color(*ca);
-					else tr.col = a_col;
+					tr.col = a_col;
+					parse_color_field(ro, "color", tr.col);
 					auto rf = ce::resolve_font_name(string_or(ro, "font"));
 					tr.family = rf.ok ? rf.family : std::string{};
 					tr.weight = rf.weight;
@@ -2107,6 +2966,12 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		else if (ta == "center") halign = ce::canvas::center;
 		else if (ta == "right")  halign = ce::canvas::right;
 	}
+	// "font" (families / "#wght=" 軸) と "weight" — 未指定ならテーマ既定。
+	// styler は font_descr を持ち続けるので families は intern 済みでなければ
+	// ならない (apply_widget_font がそうする)。
+	ce::font_descr fdescr = ce::get_theme().label_font;
+	bool has_font = apply_widget_font(o, fdescr);
+
 	// label builder API は font_color / relative_font_size を呼ぶごとに
 	// ラッパ型が変わるチェーン。 直接代入で繋げないので、 仕上げ (text_align /
 	// locale → share) はジェネリックラムダで一元化する。
@@ -2119,11 +2984,16 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 		if (halign >= 0) done(e.text_align(halign));
 		else             done(std::move(e));
 	};
-	auto base = ce::label(text);
-	if      (has_color && has_size) finish(base.font_color(col).font_size(sz));
-	else if (has_color)             finish(base.font_color(col));
-	else if (has_size)              finish(base.font_size(sz));
-	else                            finish(std::move(base));
+	// color / size の有無で型が変わるので、 font の有無も含めてジェネリック
+	// ラムダで受ける。
+	auto styled = [&](auto base) {
+		if      (has_color && has_size) finish(base.font_color(col).font_size(sz));
+		else if (has_color)             finish(base.font_color(col));
+		else if (has_size)              finish(base.font_size(sz));
+		else                            finish(std::move(base));
+	};
+	if (has_font) styled(ce::label(text).font(fdescr));
+	else          styled(ce::label(text));
 	}   // text_anchor else
 
 	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
@@ -2207,7 +3077,8 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);   // focus 追跡 (focused_id / focus トリガ演出 用)
 	wire_button_enabled_var(shared, o);
-	note_vars_on_focus(o, id);    // focus 時に vars を書込む (メニュー説明欄など)
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);    // focus 時に vars を書込む (メニュー説明欄など)
 	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
@@ -2279,7 +3150,7 @@ element_ptr LayoutBuilder::build_margin(const picojson::object& o)
 element_ptr LayoutBuilder::build_box(const picojson::object& o)
 {
 	ce::color c = ce::rgba(0, 0, 0, 255);
-	if (auto* arr = get_array(o, "color")) c = parse_color(*arr);
+	parse_color_field(o, "color", c);
 	auto out = ce::share(ce::box(c));
 	register_id(o, out);   // "id" 指定でホストから参照可能に
 	return out;
@@ -2397,36 +3268,110 @@ element_ptr LayoutBuilder::build_spacer(const picojson::object& o)
 	return ce::share(ce::fixed_size(ce::point{w, h}, ce::element{}));
 }
 
+//---------------------------------------------------------------------------
+// scroller — スクロール領域。
+//   { "type": "scroller", "child": {...}, "id": "credits",
+//     "horizontal": false, "no_scrollbars": false, "focusable": true,
+//     "pos_var": "credits_pos",          // 先頭位置 0..1
+//     "fraction_var": "credits_frac",    // 表示している割合 0..1
+//     "display_var": "credits_pct",      // 整形した文字列 ("37%" 等)
+//     "display": { "min": 0, "max": 100, "suffix": "%" } }
+//
+//   pos_var / fraction_var は progress や slider の value_var へ、
+//   display_var は label の text_var へそのまま挿せる。 「今どこを読んで
+//   いるか」の表示にホスト実装は要らない。
+//   focusable=true でスクローラ自身がフォーカスを取り、 Home/End/PageUp/
+//   PageDown と上下キーで送れるようになる (パッド駆動の長文ビューア向け)。
+//---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 {
 	auto child = build_child(o);
 	if (!child) return nullptr;
-	return ce::share(ce::vscroller(ce::hold_any(child)));
+
+	int traits = 0;
+	if (truthy_field(get_field(o, "no_scrollbars"))) traits |= ce::no_scrollbars;
+
+	bool horizontal = truthy_field(get_field(o, "horizontal"));
+	auto sp = horizontal
+		? ce::share(ce::hscroller(ce::hold_any(child), traits))
+		: ce::share(ce::vscroller(ce::hold_any(child), traits));
+
+	if (truthy_field(get_field(o, "focusable")))
+		sp->set_focusable(true);
+
+	std::string pos_var      = string_or(o, "pos_var");
+	std::string fraction_var = string_or(o, "fraction_var");
+	std::string display_var  = string_or(o, "display_var");
+	if (!pos_var.empty() || !fraction_var.empty() || !display_var.empty()) {
+		auto disp = parse_value_display(o);
+		auto vars = _vars;
+		std::weak_ptr<ce::scroller_base> w = sp;
+		// 位置と «表示量» の両方を、 スクロール時と内容量が変わった時の
+		// 両方で書く (どちらか片方だけだと初期表示が埋まらない)。
+		auto publish = [w, vars, pos_var, fraction_var, display_var, disp, horizontal]()
+		{
+			auto p = w.lock();
+			if (!p) return;
+			double al = horizontal ? p->halign() : p->valign();
+			double fr = horizontal ? p->visible_fraction_h() : p->visible_fraction_v();
+			if (!pos_var.empty())      vars->set(pos_var, fmt_slider_raw(al));
+			if (!fraction_var.empty()) vars->set(fraction_var, fmt_slider_raw(fr));
+			if (!display_var.empty())  vars->set(display_var, disp.format(al));
+		};
+		sp->on_scroll = [publish](ce::point) { publish(); };
+		sp->on_extent = [publish](ce::point) { publish(); };
+	}
+
+	element_ptr out = sp;
+	register_id(o, out);
+	return out;
 }
 
 //---------------------------------------------------------------------------
 // text_box — 複数行・自動折返しの静的テキスト (cycfi static_text_box)。
-//   { "type": "text_box", "text": "...", "size": 13, "color": [r,g,b,a],
-//     "mono": 1, "text_var": "varname" }
+//   { "type": "text_box", "text": "...", "text_file": "credits.txt",
+//     "size": 13, "color": [r,g,b,a], "mono": 1, "font": "Noto Sans JP",
+//     "text_var": "varname" }
 //   幅は親のレイアウト (hsize 等) が決め、 高さは折返し結果に追従する。
-//   長文は親に scroller を置いてスクロールする。 "text_var" は label と同じ
-//   変数 store 購読で、 ホストの setVar により本文を丸ごと差し替えられる
-//   (ライセンス表示等の長文ビューア向け。 行 label を大量に並べるより軽い)。
+//   長文は親に scroller を置いてスクロールする。
+//
+//   本文の出どころは **text_var > text_file > text** の順。
+//     text_var  … 変数 store 購読。 ホストの setVar で丸ごと差し替えられる
+//     text_file … リソースフォルダのテキストファイルを起動時に読む
+//                 (クレジット / ライセンス表記のように画面 JSON に直接
+//                  書きたくない長文向け)。 UTF-8、 BOM と CRLF は落とす
+//   行 label を大量に並べるより軽い: 折返しは幅が変わったときだけ計算し、
+//   描画はクリップ外の行を飛ばす。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 {
+	std::string text_id = string_or(o, "text_id");
 	std::string text_var = string_or(o, "text_var");
+	std::string text_file = string_or(o, "text_file");
 	std::string text;
-	if (!text_var.empty()) {
+	if (!text_id.empty()) {
+		text = _strings->has(text_id) ? _strings->resolve(text_id)
+		                              : string_or(o, "text", text_id);
+	} else if (!text_var.empty()) {
 		if (auto* init = _vars->get(text_var)) text = *init;
 		else                                    text = string_or(o, "text");
+	} else if (!text_file.empty()) {
+		text = read_text_resource(text_file);
+		if (text.empty()) {
+			em_logf("elements_modal: text_box text_file \"%s\": 読めない (空)",
+			        text_file.c_str());
+			text = string_or(o, "text");
+		}
 	} else {
 		text = string_or(o, "text");
 	}
 
 	bool mono = truthy_field(get_field(o, "mono"));
-	auto descr = mono ? ce::get_theme().mono_spaced_font
-	                  : ce::get_theme().text_box_font;
+	// "font" / "weight" があれば載せる (text_area と同じ)。 土台はテーマ既定
+	// なので、 サイズ等の他の既定はそのまま引き継ぐ。
+	ce::font_descr descr = mono ? ce::get_theme().mono_spaced_font
+	                            : ce::get_theme().text_box_font;
+	apply_widget_font(o, descr);
 	float px = resolve_font_px(o, "size", "size_scale");
 	if (!has_font_field(o, "size", "size_scale")) {
 		px = descr._size;
@@ -2435,9 +3380,16 @@ element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 	ce::font fnt{ descr.size(px) };
 
 	auto col = ce::get_theme().text_box_font_color;
-	if (auto* arr = get_array(o, "color")) col = parse_color(*arr);
+	parse_color_field(o, "color", col);
 
 	auto sp = std::make_shared<ce::static_text_box>(std::move(text), fnt, col);
+	if (!text_id.empty()) {
+		// 言語切替で本文を丸ごと差し替える (label と同じ StringStore 購読)。
+		std::weak_ptr<ce::static_text_box> w = sp;
+		_strings->subscribe(text_id, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		});
+	}
 	if (!text_var.empty()) {
 		std::weak_ptr<ce::static_text_box> w = sp;
 		_vars->subscribe(text_var, [w](const std::string& v) {
@@ -2451,7 +3403,8 @@ element_ptr LayoutBuilder::build_text_box(const picojson::object& o)
 
 //---------------------------------------------------------------------------
 // text_area — 矩形に流し込む静的テキスト (ce::block_text_box)。
-//   { "type": "text_area", "text": "...", "size": 36, "color": [r,g,b,a],
+//   { "type": "text_area", "text": "...", "text_file": "credits.txt",
+//     "size": 36, "color": [r,g,b,a],
 //     "font": "Noto Sans JP", "align": "left|center|right",
 //     "line_spacing": 12, "base": "auto|ltr|rtl",
 //     "count_var": "sub_count", "count": -1,
@@ -2482,6 +3435,13 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 	} else if (!text_var.empty()) {
 		if (auto* init = _vars->get(text_var)) text = *init;
 		else                                    text = string_or(o, "text");
+	} else if (auto text_file = string_or(o, "text_file"); !text_file.empty()) {
+		text = read_text_resource(text_file);
+		if (text.empty()) {
+			em_logf("elements_modal: text_area text_file \"%s\": 読めない (空)",
+			        text_file.c_str());
+			text = string_or(o, "text");
+		}
 	} else {
 		text = string_or(o, "text");
 	}
@@ -2493,13 +3453,10 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 		text = text_list.at(_strings.get(), list_idx);
 	}
 
-	// フォント: "font" があれば family 解決、 無ければ theme の text_box_font。
-	// "font" は comma 区切り families。 未指定なら theme の text_box_font
-	// (= 登録済フォントを Latin → CJK → Emoji の順に並べたもの)。
-	// family は descr が string_view で参照するので、 font を作るまで生かす。
-	std::string family = string_or(o, "font");
-	auto descr = family.empty() ? ce::get_theme().text_box_font
-	                            : ce::font_descr{family};
+	// フォント: "font" (comma 区切り families / "#wght=" 軸) と "weight"。
+	// 未指定なら theme の text_box_font のまま。
+	ce::font_descr descr = ce::get_theme().text_box_font;
+	apply_widget_font(o, descr);
 	float px = resolve_font_px(o, "size", "size_scale");
 	if (!has_font_field(o, "size", "size_scale")) {
 		px = descr._size;
@@ -2507,7 +3464,7 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 	}
 
 	auto col = ce::get_theme().text_box_font_color;
-	if (auto* arr = get_array(o, "color")) col = parse_color(*arr);
+	parse_color_field(o, "color", col);
 
 	auto sp = std::make_shared<ce::block_text_box>(
 		std::move(text), ce::font{descr.size(px)}, px, col);
@@ -2576,6 +3533,10 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	auto shared = ce::share(std::move(cb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	note_focusable(id, shared);          // focus 追跡 (focused_id / 演出トリガ)
+	subscribe_button_text_id(o, shared); // "text_id" で多言語キャプション
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);           // フォーカスでヘルプ変数を書く
 	return apply_row_height(shared);
 }
 
@@ -2598,6 +3559,10 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	auto shared = ce::share(std::move(tb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	note_focusable(id, shared);
+	subscribe_button_text_id(o, shared);
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return apply_row_height(shared);
 }
 
@@ -2619,6 +3584,9 @@ element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
 	auto shared = ce::share(std::move(sw));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
+	note_focusable(id, shared);
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return apply_row_height(shared);
 }
 
@@ -2873,6 +3841,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	// 依存 widget (text_list / rect_list 等) の初期表示を実選択に揃える。
 	if (!index_var.empty()) _vars->set(index_var, std::to_string(actual));
 	return shared;
@@ -2909,6 +3878,7 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	}
 	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	if (!id.empty()) {
 		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
@@ -2921,8 +3891,8 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 {
 	auto text = string_or(o, "text");
 	std::string id = string_or(o, "id");
-	ce::color outline = ce::colors::white;
-	if (auto* arr = get_array(o, "outline")) outline = parse_color(*arr);
+	ce::color outline = theme_color_or("ring_outline", ce::colors::white);
+	parse_color_field(o, "outline", outline);
 	float size = resolve_font_scale(o, "size", "size_scale");
 
 	auto btn = ce::ring_button(text, outline, size);
@@ -2941,6 +3911,7 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 		note_focusable(id, bp);
 	}
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	if (!id.empty()) {
 		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
@@ -3020,19 +3991,38 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	if (initial < 0.0) initial = 0.0;
 	if (initial > 1.0) initial = 1.0;
 
-	auto sl = ce::slider(
-		ce::basic_thumb<16>(ce::colors::white),
-		ce::basic_track<6, false>(ce::colors::white.opacity(0.4f)),
-		initial
-	);
+	// つまみ / 溝の色。 既定は従来どおり白系。 テーマが予約色名
+	// "slider_thumb" / "slider_track" を定義していればそちらを使い、
+	// 画面が "thumb_color" / "track_color" を書けばさらに上書きする。
+	ce::color thumb_col = theme_color_or("slider_thumb", ce::colors::white);
+	ce::color track_col =
+		theme_color_or("slider_track", ce::colors::white.opacity(0.4f));
+	parse_color_field(o, "thumb_color", thumb_col);
+	parse_color_field(o, "track_color", track_col);
+
+	// "vertical": true で縦スライダー。 縦横は track スタイラの «型» で決まる
+	// (basic_slider_base::limits が track の limits から判定する) ので、
+	// ここで分岐して作り分けるしかない — 三項演算子では型が揃わない。
+	std::function<void(double)> on_change;
 	if (!id.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		sl.on_change = [cb_id, user_cb](double pos) {
+		on_change = [cb_id, user_cb](double pos) {
 			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{pos});
 		};
 	}
-	auto shared = ce::share(std::move(sl));
+	element_ptr shared;
+	if (truthy_field(get_field(o, "vertical"))) {
+		auto sl = ce::slider(ce::basic_thumb<16>(thumb_col),
+		                     ce::basic_track<6, true>(track_col), initial);
+		if (on_change) sl.on_change = on_change;
+		shared = ce::share(std::move(sl));
+	} else {
+		auto sl = ce::slider(ce::basic_thumb<16>(thumb_col),
+		                     ce::basic_track<6, false>(track_col), initial);
+		if (on_change) sl.on_change = on_change;
+		shared = ce::share(std::move(sl));
+	}
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
@@ -3041,6 +4031,7 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 		                 string_or(o, "display_var"), parse_value_display(o));
 	}
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return shared;
 }
 
@@ -3096,6 +4087,7 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 		                 string_or(o, "display_var"), disp);
 	}
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return rs.widget;
 }
 
@@ -3144,10 +4136,8 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 	// canvas API の拡張要なので future work。
 	bool has_color = false;
 	ce::color tint = ce::colors::white;
-	if (auto* arr = get_array(o, "color")) {
+	if (parse_color_field(o, "color", tint))
 		has_color = true;
-		tint = parse_color(*arr);
-	}
 
 	if (use_font) {
 		// pad_font_icon の size は内部で label.relative_font_size を呼ぶので
@@ -3187,7 +4177,7 @@ element_ptr LayoutBuilder::build_pad_icon(const picojson::object& o)
 element_ptr LayoutBuilder::build_band(const picojson::object& o)
 {
 	ce::color c = ce::rgba(0, 0, 0, 255);
-	if (auto* arr = get_array(o, "color")) c = parse_color(*arr);
+	parse_color_field(o, "color", c);
 
 	auto bg = ce::share(ce::box(c));
 
@@ -3248,6 +4238,7 @@ element_ptr LayoutBuilder::build_sprite_button(const picojson::object& o)
 			note_focusable(id, bp);
 		}
 		note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 		if (!id.empty()) {
 			if (truthy_field(get_field(o, "close_on_click"))) {
 				_close_button_ids.insert(id);
@@ -3726,6 +4717,7 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 			register_id(o, grp);
 			note_initial_focus(o, grp);
 			note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 			root = grp;
 		}
 	}
@@ -3794,6 +4786,46 @@ ce::pixmap_ptr LayoutBuilder::lookup_atlas(const std::string& name)
 		return nullptr;
 	}
 	return it->second;
+}
+
+//---------------------------------------------------------------------------
+// atlas_nine — アトラスの矩形を 9-patch で伸縮して描く (ウィンドウ枠/パネル)。
+//   { "type": "atlas_nine", "atlas": "ui", "rect": [x,y,w,h],
+//     "insets": [left, top, right, bottom] }
+//   あるいはテーマのスキン名で:
+//   { "type": "atlas_nine", "skin": "panel" }
+//
+//   insets = 伸ばさずに保つ四辺の幅。 角の丸みや枠線の太さを保ったまま、
+//   置きたい矩形いっぱいに広がる。 素材の原寸に縛られないので、 ベクタで
+//   組んだレイアウトへ画像テーマを流し込める (docs/theming.md)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_nine(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		em_logf("elements_modal: atlas_nine without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	auto* r = get_array(o, "rect");
+	if (!r || r->size() < 4) {
+		em_logf("elements_modal: atlas_nine \"%s\" needs 'rect' [x,y,w,h]",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+	ce::atlas_nine::insets ins;
+	if (auto* iv = get_array(o, "insets"); iv && iv->size() >= 4) {
+		ins.left   = static_cast<float>(int_at(*iv, 0, 0));
+		ins.top    = static_cast<float>(int_at(*iv, 1, 0));
+		ins.right  = static_cast<float>(int_at(*iv, 2, 0));
+		ins.bottom = static_cast<float>(int_at(*iv, 3, 0));
+	}
+	auto sp = ce::share(ce::atlas_nine(pm, parse_xywh(*r), ins));
+	element_ptr out = sp;
+	register_id(o, out);
+	return out;
 }
 
 //---------------------------------------------------------------------------
@@ -4171,10 +5203,8 @@ namespace
 
 		ce::color col{1.0f, 1.0f, 1.0f, 1.0f};
 		bool has_color = false;
-		if (auto* arr = get_array(o, "text_color")) {
-			col = parse_color(*arr);
+		if (parse_color_field(o, "text_color", col))
 			has_color = true;
-		}
 
 		// C6: "text_anchor" があればキャプションを絶対 baseline アンカーで描く
 		// (anchored_text)。 label_decoration が overlay に button の bounds を渡すため、
@@ -4332,6 +5362,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 	}
 	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	if (!id.empty()) {
 		if (truthy_field(get_field(o, "close_on_click"))) {
 			_close_button_ids.insert(id);
@@ -4420,6 +5451,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 		}
 	}
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
@@ -4506,6 +5538,7 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 	}
 	subscribe_choice_selected_var(shared, sel_var, sel_val);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
@@ -4668,11 +5701,22 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
 		// track 省略時 (溝が背景側に描いてある素材) は見えない stretchable 要素を
 		// 敷く (widget の box いっぱいが可動域になる)。
-		element_ptr track_img = has_track
-			? ce::share(ce::atlas_image(pm, track_src,
-			                            /*stretch_h=*/!vertical,
-			                            /*stretch_v=*/ vertical))
-			: ce::share(cycfi::elements::element{});
+		// track 省略時 (溝が背景側に描いてある素材) は不可視の «敷き板» を置く。
+		// ただの element{} だと max が両軸とも full_extent になり、
+		// slider_base の縦横判定 (`max.x > max.y`) が必ず «縦» に倒れて、
+		// つまみが widget いっぱいに引き伸ばされる。 可動軸だけ伸びる形に
+		// して向きを宣言する。
+		const float cross = vertical ? thumb_src.width() : thumb_src.height();
+		element_ptr track_img;
+		if (has_track) {
+			track_img = ce::share(ce::atlas_image(pm, track_src,
+			                                      /*stretch_h=*/!vertical,
+			                                      /*stretch_v=*/ vertical));
+		} else if (vertical) {
+			track_img = ce::share(ce::hsize(cross, cycfi::elements::element{}));
+		} else {
+			track_img = ce::share(ce::vsize(cross, cycfi::elements::element{}));
+		}
 		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
 		                                          /*stretch_h=*/false,
 		                                          /*stretch_v=*/false));
@@ -4698,6 +5742,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		                 parse_value_display(o), gauge);
 	}
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return shared;
 }
 
@@ -4975,7 +6020,7 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 		}
 	};
 	p->font_size(fs);
-	if (auto* arr = get_array(o, "color")) p->text_color(parse_color(*arr));
+	{ ce::color tc; if (parse_color_field(o, "color", tc)) p->text_color(tc); }
 	note_focusable(id, p);
 	subscribe_picker_options(p, opt_ids);
 	subscribe_picker_index_var(p, index_var);
@@ -4983,6 +6028,7 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 	register_id(o, p);
 	note_initial_focus(o, p);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	if (!index_var.empty()) _vars->set(index_var, std::to_string(p->index()));
 	return p;
 }
@@ -5029,12 +6075,14 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	}
 	auto shared = ce::share(std::move(rb));
 	register_id(o, shared);
+	subscribe_button_text_id(o, shared);   // "text_id" で多言語キャプション
 	note_initial_focus(o, shared);
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
 	subscribe_choice_selected_var(shared, sel_var, sel_val);
 	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return shared;
 }
 
@@ -5213,11 +6261,38 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 		em_logf("elements_modal: labeled_row without 'child'");
 		return nullptr;
 	}
-	auto text = string_or(o, "label");
 	float lw = static_cast<float>(number_or(o, "label_width", 180.0));
 	// labeled_row の font_size は内部 label.relative_font_size 用 scale。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
-	return ce::share(ce::labeled_row(std::move(text), child, lw, fs));
+
+	// ラベルは lib の labeled_row に作らせず自前で持つ。 lib 版は文字色が
+	// colors::white 固定で、 要素も外から掴めないため text_id (多言語) を
+	// 仕掛けられない。 見た目と click-focus 転送は lib と同じ構成
+	// (hsize + align_left + hmargin{8,8} + htile + focus_row)。
+	std::string label_id = string_or(o, "label_id");
+	if (label_id.empty()) label_id = string_or(o, "text_id");
+	std::string text = string_or(o, "label");
+	if (!label_id.empty() && _strings->has(label_id))
+		text = _strings->resolve(label_id);
+
+	ce::color lc = ce::get_theme().label_font_color;
+	parse_color_field(o, "label_color", lc);
+
+	auto lbl = std::make_shared<ce::label>(std::move(text));
+	lbl->font_color(lc);
+	lbl->relative_font_size(fs);
+	if (!label_id.empty()) {
+		std::weak_ptr<ce::label> w = lbl;
+		_strings->subscribe(label_id, [w](const std::string& v) {
+			if (auto p = w.lock()) p->set_text(v);
+		});
+	}
+
+	auto row = ce::htile(
+		ce::hsize(lw, ce::align_left(ce::hmargin({8, 8}, ce::hold(lbl)))),
+		ce::hold(child)
+	);
+	return ce::share(ce::focus_row(std::move(row), child));
 }
 
 //---------------------------------------------------------------------------
@@ -5701,6 +6776,21 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		builder.set_default_locale(v->get<std::string>());
 	}
 
+	// テーマ (色 / 寸法 / フォント / スキン) — content build より先に。
+	// 重ね順は アプリ既定 (app.jsonc) → 画面の "theme"。 実行時指定
+	// (--theme / id "theme:<名前>") があればアプリ既定の代わりに使う。
+	// docs/theming.md
+	reset_theme_state();
+	if (!g_theme_override.empty())
+		builder.apply_theme_spec(picojson::value(g_theme_override));
+	else if (!g_app_theme.is<picojson::null>())
+		builder.apply_theme_spec(g_app_theme);
+	if (auto* tv = get_field(o, "theme"))
+		builder.apply_theme_spec(*tv);
+	// 画面が直接書いた "skins" はテーマの表の上に重ねる。
+	if (auto* sv = get_field(o, "skins"); sv && sv->is<picojson::object>())
+		parse_skin_table(sv->get<picojson::object>());
+
 	// "font_languages": 言語連動フォント置換表 (詳細は apply_font_languages)。
 	apply_font_languages(o);
 
@@ -5775,8 +6865,13 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	// 起点にして resolve_resource() で解決 (絶対パスはそのまま)。
 	// !!! content build より先に解決すること。 そうしないと content 中の
 	// atlas_* dispatch が "atlas not registered" になる。
-	if (auto* v = get_field(o, "atlases"); v && v->is<picojson::object>()) {
-		for (auto& kv : v->get<picojson::object>()) {
+	// テーマが宣言した atlases を土台にし、 画面の "atlases" で上書きする。
+	picojson::object atlas_specs = g_theme_atlases;
+	if (auto* v = get_field(o, "atlases"); v && v->is<picojson::object>())
+		for (auto& kv : v->get<picojson::object>())
+			atlas_specs[kv.first] = kv.second;
+	if (!atlas_specs.empty()) {
+		for (auto& kv : atlas_specs) {
 			const std::string& name = kv.first;
 			const auto& spec = kv.second;
 			std::string path_str;
@@ -5825,8 +6920,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		content = ce::share(ce::margin({p, p, p, p}, ce::hold_any(content)));
 	}
 
-	if (auto* arr = get_array(o, "background")) {
-		ce::color bg = parse_color(*arr);
+	if (ce::color bg; parse_color_field(o, "background", bg)) {
 		element_ptr bgel = ce::share(ce::box(bg));
 		// "background_opacity_var": 背景板だけの不透明度を変数連動にする
 		// (0..1 の 10 進小数)。 中身 (文字やボタン) はそのままなので、
@@ -6096,8 +7190,26 @@ app_manifest parse_app_manifest(const std::string& json_utf8)
 	// 上書きする)。 manifest を読むだけで有効になる。
 	apply_font_languages(o);
 
+	// アプリ既定のテーマ。 値はテーマ名かテーマオブジェクト。 実際に当てるのは
+	// 画面を組むとき (build_top_level) で、 画面側の "theme" がこの上に重なる。
+	if (auto* tv = get_field(o, "theme")) g_app_theme = *tv;
+	else                                  g_app_theme = picojson::value();
+
 	m.ok = true;
 	return m;
+}
+
+//---------------------------------------------------------------------------
+// 実行時テーマ選択 (modal.h 参照)。 次に画面を組むときから効く。
+//---------------------------------------------------------------------------
+void set_ui_theme(const std::string& name)
+{
+	g_theme_override = name;
+}
+
+std::string get_ui_theme()
+{
+	return g_theme_override;
 }
 
 //---------------------------------------------------------------------------

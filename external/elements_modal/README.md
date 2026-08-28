@@ -14,6 +14,13 @@ SDL3 を使う任意のアプリから単体で利用できる。
 - 既存サーフェスへのオーバーレイ (`overlay_session`) — ホスト側がイベント / 描画ループを駆動
 - 複数画面の JSON 駆動遷移 (`navigator` + マニフェスト + `"transitions"`) — push / pop / replace / fade をホストにロジックを書かずに
 - パーツ演出 (`"animate"`) — 要素の移動 / 拡縮 / 回転 / フェードを一般イージング・台形プロファイル・ループ付きで JSON 指定 (周囲を reflow しない見た目だけの変換)。 発火トリガ `"on"` で登場 (enter) / focus / 決定 (select) / 退場 (exit) を出し分け
+- **テーマ (`"theme"` / `"skins"` / `"widget_skins"`)** — 配色・寸法・フォントの
+  一括差し替え、 名前付きフレーム表、 ベクタ型 → 画像実装の差し替え。
+  **画面 JSON を変えずに**見た目だけ入れ替えられる (下記「テーマ」)
+- **長文ビューア** — `scroller` + `text_box` で、 本文をファイルから読み
+  (`"text_file"`)、 読んでいる位置と表示量を変数へ出せる
+  (`"pos_var"` / `"fraction_var"` / `"display_var"`)。 日本語は行頭行末禁則つきで
+  文字単位に折り返す
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -135,7 +142,14 @@ int main()
 - `band` — 単色背景帯 + child の重ね合わせ (= `layer` のショートカット)。 `"color": [r, g, b, a]` + 任意 `"child"`。 child 省略時は `box` 相当。 footer 帯やタイトルバーなど、 背景を引きつつ中身を上に乗せたい局所要素に使う。 将来 `gradient` / `image` フィールドを追加予定。
 - `layer` — 重ね順。 `"children"`: 先頭が最前面。
 - `group` — タイトル付きフレーム。 `"title"` + `"label_size"` + `"child"`。
-- `scroller` — 縦スクロール領域。 `"child"`。
+- `scroller` — スクロール領域。 `"child"` + `"id"` + `"horizontal"` (真で横) +
+  `"no_scrollbars"` + `"focusable"`。 スクロール状態を変数へ出せる:
+  `"pos_var"` (先頭位置 0..1) / `"fraction_var"` (見えている割合 0..1) /
+  `"display_var"` + `"display"` (整形済み文字列。 slider と同じ書式指定)。
+  `"focusable": true` にすると自分でフォーカスを取り、 Home / End / PageUp /
+  PageDown と上下キーで送れる (パッド駆動の長文ビューア向け)。 既定は
+  フォーカスを取らない — ふつうのコントロールを包むスクローラが余計な
+  フォーカス停止点になるのを避けるため。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 - `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
 - `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 内部の composite が **親 bounds の origin に rect をオフセット** して子を配置する (= 親 bounds の左上を基準とする相対座標)。 root に置けば bounds origin = (0, 0) なので絶対座標に見えるが、 別 canvas にネストすると外側 canvas が割り当てた領域の中で相対配置になる (排他グループの分離等で nested canvas を使う場面で重要)。 PSD ベース UI の主役。 追加オプション:
@@ -151,8 +165,17 @@ int main()
   - **改行 (`\n`) を含む text は複数行として扱う**。 行ごとに描画し、 高さも行数ぶん確保するので、 `vtile` の子に置いても後続ウィジェットと重ならない。 幅は最長行。 縦アライン (`top`/`middle`/`bottom`) はブロック全体に効く。
     - ただし `label` は**自動折返しをしない** (明示した `\n` でのみ改行する)。 与えられた幅で折り返したいなら `text_area` (禁則付き・ホストのテキストエンジンと改行位置が一致) か `text_box` (cycfi 内蔵 wrap) を使う。
     - `text_var` / `text_id` で**行数が変わる**差し替えをすると、 高さは次に親がレイアウトし直すまで更新されない。 行数が動くものは `text_area` を使うか、 行ごとの label に分けるのが確実。
-- `text_box` — 複数行・自動折返しの静的テキスト (cycfi `static_text_box`)。 `"text"` + `"size"` (px 絶対) / `"size_scale"` + `"color"` + `"mono"` (真で等幅フォント) + `"text_var"` (label と同じ変数 store 購読。 setVar で本文を丸ごと差替え)。 幅は親 (`hsize` 等) が決め、 高さは折返し結果に追従。 長文は親に `scroller` を置く (ライセンス表示等の長文ビューア向け、 行 label を大量に並べるより軽い)。
-- `text_area` — 矩形に流し込む静的テキスト (lib の `block_text_box`)。 折返しを**ホストが差し込んだ block text バックエンド**に任せるのが `text_box` との違いで、 ホスト側のテキストエンジンと**改行位置が一致する** (吉里吉里Z なら `Layer.drawShapedTextArea` と同一。 行頭行末禁則が効く)。 バックエンド未注入なら lib 内蔵の幅貪欲 wrap にフォールバックする。 字幕 / セリフ窓向け。
+- `text_box` — 複数行・自動折返しの静的テキスト (cycfi `static_text_box`)。 `"text"` + `"size"` (px 絶対) / `"size_scale"` + `"color"` + `"font"` (comma 区切り families) + `"mono"` (真で等幅フォント) + `"text_var"` (label と同じ変数 store 購読。 setVar で本文を丸ごと差替え)。 幅は親 (`hsize` 等) が決め、 高さは折返し結果に追従。 長文は親に `scroller` を置く (ライセンス表示等の長文ビューア向け、 行 label を大量に並べるより軽い)。
+  - `"text_file": "text/credits.txt"` — 本文をリソースフォルダのテキスト
+    ファイルから読む (UTF-8。 BOM と CRLF は落とす)。 クレジットやライセンス
+    表記のように画面 JSON へ直接書きたくない長文向け。 出どころの優先順位は
+    **`text_var` > `text_file` > `text`**。
+  - 折返しは**空白の無い言語 (CJK) では文字単位**で、 行頭行末禁則が効く
+    (閉じ括弧や句読点が行頭に来ない / 開き括弧が行末に残らない)。
+  - 折返しの計算は**幅か本文が変わったときだけ**走る。 `scroller` は毎描画で
+    子を再レイアウトするので、 この判定が無いと長文で毎フレーム全文を
+    走査することになる。
+- `text_area` — 矩形に流し込む静的テキスト (lib の `block_text_box`)。 `"text_file"` は `text_box` と同じ (`text_var` > `text_file` > `text`)。 折返しを**ホストが差し込んだ block text バックエンド**に任せるのが `text_box` との違いで、 ホスト側のテキストエンジンと**改行位置が一致する** (吉里吉里Z なら `Layer.drawShapedTextArea` と同一。 行頭行末禁則が効く)。 バックエンド未注入なら lib 内蔵の幅貪欲 wrap にフォールバックする。 字幕 / セリフ窓向け。
   - `"text"` / `"text_id"` / `"text_var"` / `"text_list"` + `"text_list_id"` + `"index_var"` — label と同規約 (優先順位 index_var > text_id > text_var > 静的 text)。 指定番号表示も i18n の言語切替追従も label と同じ挙動。
   - `"size"` (px 絶対) / `"size_scale"` + `"color": [r,g,b,a]` + `"font"` (comma 区切り families、 省略時は theme の text_box_font)。
   - `"align"`: `"left"` (既定) / `"center"` / `"right"`、 `"line_spacing"`: 行間追加 px (負値可)、 `"base"`: `"auto"` (既定) / `"ltr"` / `"rtl"`。
@@ -225,6 +248,14 @@ PSD でデザインされた固定サイズ / 固定位置のビットマップ 
 
 - `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 frame が 4 未満のときは欠けた状態をフォールバックする (pressed+hilite→pressed→normal) ので、 **3 frame (normal/hilite/pressed)** だけでも可。 その場合マウス押下 (hilite 中) もキーボード押下も同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
+
+- `atlas_nine` (別名 `atlas_gizmo`) — アトラスの矩形を **9-patch** で伸縮して描く
+  (ウィンドウ枠 / パネル)。 `"atlas"` + `"rect"` + `"insets": [l,t,r,b]`、
+  またはテーマのスキン名 `"skin"`。 `insets` は伸ばさずに保つ四辺の幅で、
+  角の丸みや枠線の太さを保ったまま `at` いっぱいに広がる。 素材の原寸に
+  縛られないので、 ベクタ用に組んだレイアウトへ画像テーマを流し込める。
+  上流の `gizmo_image` (ce::gizmo) は画像 1 枚まるごとを 1/2.4 の固定比で
+  割るので、 角の大きさが素材ごとに違う UI パックには合わない。
 
 #### アトラス共有 (`atlases` / `atlas_image` / `atlas_button` / `atlas_slider`)
 
@@ -441,6 +472,47 @@ bool on = elements_modal::focus_ring_enabled();
 のフラグ。 button / slider / dial / thumbwheel の枠がまとめて消える。
 **フォーカス自体は生きている**ので、 キー/パッドのナビゲーションと
 `hilite` frame の切替は従来どおり動く。
+
+### テーマ (`"theme"` / `"skins"` / `"widget_skins"`)
+
+見た目を一括で差し替える仕組み。 **画面 JSON はそのまま**で、 配色・寸法・
+フォント (ベクタ widget) と絵 (画像 widget) を入れ替えられる。
+
+```jsonc
+// アプリ既定 (マニフェスト) — 画面側の "theme" がこの上にマージされる
+{ "entry": "title", "theme": "kenney_blue", "screens": { … } }
+```
+
+値はテーマ名 (文字列) かテーマオブジェクト。 名前のときは
+`<runtime>/json/theme/<名前>.jsonc` (または `<runtime>/theme/<名前>.jsonc`) を
+リソースリゾルバ経由で読む。 ホストからは `set_ui_theme(name)` /
+`get_ui_theme()` (`modal.h`)。 **テーマは画面を組むときに当たる**ので、
+表示中の画面へ反映するには組み直すこと (elements のテーマはプロセス全体で
+1 つで、 一部の色はスタイラ構築時に焼き込まれる)。
+
+テーマオブジェクトの中身:
+
+| キー | 内容 |
+|---|---|
+| `colors` | 名前付き色。 以後どこでも `"@名前"` で参照できる。 色を書けるところは `[r,g,b,a]` / `"@名前"` / `"#rrggbb"` / `"#rrggbbaa"` / `"#rgb"` を受ける |
+| (elements テーマの各フィールド) | `panel_color` / `frame_color` / `frame_corner_radius` / `default_button_color` / `label_font` / `text_box_font` / `picker_bg_color` / `picker_fg_color` / `scrollbar_color` / `focus_ring_enabled` … 約 60 個 |
+| `font_variations` | `{ファミリ名: "wght=500"}` — 可変フォントの既定軸。 UI 全体の太さを 1 行で変えるためのもの |
+| `font_languages` | 言語連動フォント置換表 (画面 / マニフェストと同じ書式) |
+| `atlases` | 画面の `"atlases"` と同じ書式。 テーマ側で絵の出どころを宣言できる |
+| `skins` | **名前付きフレーム表**。 `{名前: {atlas, rect, frames, insets, native}}` |
+| `widget_skins` | **ベクタ型 → 画像実装**。 `{型名: {impl, skin, track, thumb, fill}}` |
+
+`skins` の `insets` [l,t,r,b] を書くと 9-patch (`atlas_nine`) として描かれ、
+四隅と辺を原寸のまま保ったまま `at` いっぱいに伸びる。 素材の原寸に縛られない
+ので、 ベクタ用に組んだレイアウトへ画像テーマを流し込める。
+
+画像 widget 側では `"frames"` / `"rect"` の代わりに `"skin": "名前"` と書ける
+(スキンが無ければ従来どおり `frames` / `rect` を見るので既存画面は無改変で動く)。
+
+テーマを当てていなくても引ける**予約色名**: `@ink` / `@ink_dim` / `@accent` /
+`@accent_hi` / `@accent_dim` / `@panel` / `@panel_line` / `@disabled` / `@bg`
+(現在の elements テーマから自動で埋まる)。 加えて `@slider_thumb` /
+`@slider_track` / `@ring_outline` を定義すると、 スタイラ内部の色を差し替える。
 
 ### 変数 store (`vars` / `text_var` / `vars_on_focus`)
 
