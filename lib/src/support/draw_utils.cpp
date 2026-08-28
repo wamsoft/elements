@@ -325,6 +325,11 @@ namespace cycfi::elements
 
    void draw_track(canvas& cnv, rect bounds)
    {
+      draw_track(cnv, bounds, colors::black);
+   }
+
+   void draw_track(canvas& cnv, rect bounds, color fill_color)
+   {
       auto state = cnv.new_state();
       auto w = bounds.width();
       auto h = bounds.height();
@@ -340,7 +345,7 @@ namespace cycfi::elements
       cnv.add_round_rect(bounds, r);
       cnv.clip();
 
-      cnv.fill_style(colors::black);
+      cnv.fill_style(fill_color);
       cnv.add_round_rect(bounds, r);
       cnv.fill();
 

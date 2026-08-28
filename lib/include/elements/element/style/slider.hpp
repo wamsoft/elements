@@ -96,7 +96,7 @@ namespace cycfi::elements
    inline void basic_track_styler<size, vertical>
       ::draw(context const& ctx)
    {
-      draw_track(ctx.canvas, ctx.bounds);
+      draw_track(ctx.canvas, ctx.bounds, _color);
    }
 
    template <unsigned size, bool vertical = false>

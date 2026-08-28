@@ -4023,12 +4023,13 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	if (initial < 0.0) initial = 0.0;
 	if (initial > 1.0) initial = 1.0;
 
-	// つまみ / 溝の色。 既定は従来どおり白系。 テーマが予約色名
-	// "slider_thumb" / "slider_track" を定義していればそちらを使い、
-	// 画面が "thumb_color" / "track_color" を書けばさらに上書きする。
+	// つまみ / 溝の色。 既定は elements の既定と同じ (つまみ = 白、
+	// 溝 = 黒地に白のハイライト)。 テーマが予約色名 "slider_thumb" /
+	// "slider_track" を定義していればそちらを使い、 画面が "thumb_color" /
+	// "track_color" を書けばさらに上書きする。 track_color は溝の «地» の色で、
+	// 上に乗るハイライトは色を変えても白のまま。
 	ce::color thumb_col = theme_color_or("slider_thumb", ce::colors::white);
-	ce::color track_col =
-		theme_color_or("slider_track", ce::colors::white.opacity(0.4f));
+	ce::color track_col = theme_color_or("slider_track", ce::colors::black);
 	parse_color_field(o, "thumb_color", thumb_col);
 	parse_color_field(o, "track_color", track_col);
 
