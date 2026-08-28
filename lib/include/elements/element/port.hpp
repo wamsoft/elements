@@ -234,6 +234,9 @@ namespace cycfi::elements
       void                    draw(context const& ctx) override;
 
       bool                    wants_control() const override;
+      bool                    wants_focus() const override;
+      void                    begin_focus(focus_request req) override;
+      bool                    end_focus() override;
       bool                    click(context const& ctx, mouse_button btn) override;
       void                    drag(context const& ctx, mouse_button btn) override;
       bool                    scroll(context const& ctx, point dir, point p) override;
@@ -243,7 +246,33 @@ namespace cycfi::elements
 
       using scroll_callback_f = std::function<void(point p)>;
 
+      // Fired whenever the scroll alignment changes: wheel, scrollbar drag,
+      // scroll_into_view, and keyboard paging. The point carries
+      // (halign(), valign()), both 0..1.
       scroll_callback_f       on_scroll = [](point){};
+
+      // Fired when the content size or the viewport size changes (content
+      // replaced, window resized). Lets an observer refresh a "showing x of
+      // y" readout without polling. The point carries
+      // (visible_fraction_h(), visible_fraction_v()).
+      scroll_callback_f       on_extent = [](point){};
+
+      // Content and viewport extents as of the last layout. A "you are here"
+      // indicator needs both: valign() alone says where the top edge is, not
+      // how much of the body is on screen.
+      point                   content_extent() const  { return _content; }
+      point                   view_extent() const     { return _view; }
+
+      // Fraction of the content visible in the port, 0..1 (1 = it all fits).
+      double                  visible_fraction_h() const;
+      double                  visible_fraction_v() const;
+
+      // Opt in to taking keyboard focus, so Home/End/PageUp/PageDown and the
+      // arrow keys reach key(). Off by default: a scroller wrapping ordinary
+      // controls should not become a focus stop of its own, but a long-text
+      // viewer must be reachable in a focus-driven (pad/keyboard) UI.
+      void                    set_focusable(bool f)   { _focusable = f; }
+      bool                    focusable() const       { return _focusable; }
 
       void                    set_alignment(point p);
                               [[deprecated("use set_alignment(p) instead")]]
@@ -282,6 +311,10 @@ namespace cycfi::elements
       point             _offset;
       tracking_status   _tracking;
       int               _traits;
+      bool              _focusable = false;
+      bool              _has_focus = false;
+      point             _content = {0, 0};
+      point             _view = {0, 0};
    };
 
    //--------------------------------------------------------------------------

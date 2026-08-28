@@ -273,9 +273,32 @@ namespace cycfi::elements
       return view_limits{{min_x, min_y}, {max_x, max_y}};
    }
 
+   double scroller_base::visible_fraction_h() const
+   {
+      if (_content.x <= 0)
+         return 1.0;
+      double f = _view.x / _content.x;
+      return (f > 1.0) ? 1.0 : ((f < 0.0) ? 0.0 : f);
+   }
+
+   double scroller_base::visible_fraction_v() const
+   {
+      if (_content.y <= 0)
+         return 1.0;
+      double f = _view.y / _content.y;
+      return (f > 1.0) ? 1.0 : ((f < 0.0) ? 0.0 : f);
+   }
+
    void scroller_base::prepare_subject(context& ctx)
    {
       view_limits e_limits = subject().limits(ctx);
+
+      // Remember what the port is showing and how much there is, so an
+      // observer can render "you are here" without a context of its own.
+      // The snapshot is taken *after* layout(): a wrapping text box reports a
+      // one-line minimum until it has been laid out at the real width, so the
+      // limits read here are not yet the content height.
+      point view{ctx.parent->bounds.width(), ctx.parent->bounds.height()};
 
       if (allow_vscroll())
       {
@@ -301,6 +324,17 @@ namespace cycfi::elements
          ctx.bounds.width(elem_width);
       }
       subject().layout(ctx);
+
+      // limits() is cached by the subject, so re-reading it here is cheap and
+      // is the first point at which a wrapping subject knows its real height.
+      view_limits after = subject().limits(ctx);
+      point content{float(after.min.x), float(after.min.y)};
+      if (content != _content || view != _view)
+      {
+         _content = content;
+         _view = view;
+         on_extent(point(float(visible_fraction_h()), float(visible_fraction_v())));
+      }
    }
 
    element* scroller_base::hit_test(context const& ctx, point p, bool leaf, bool control)
@@ -630,12 +664,32 @@ namespace cycfi::elements
       return false;
    }
 
+   bool scroller_base::wants_focus() const
+   {
+      return _focusable || port_element::wants_focus();
+   }
+
+   void scroller_base::begin_focus(focus_request req)
+   {
+      _has_focus = true;
+      port_element::begin_focus(req);
+   }
+
+   bool scroller_base::end_focus()
+   {
+      _has_focus = false;
+      return port_element::end_focus();
+   }
+
    bool scroller_base::key(context const& ctx, key_info k)
    {
       auto valign_ = [&](double align)
       {
          clamp(align, 0.0, 1.0);
          valign(align);
+         // Keyboard paging moves the view just like the wheel and the
+         // scrollbar do, so it has to report the move as well.
+         on_scroll(point(halign(), align));
          ctx.view.refresh(ctx);
       };
 
@@ -663,6 +717,24 @@ namespace cycfi::elements
                   ctx, {valign(), e_limits.min.y, sb.vscroll_bounds});
                double page = b.height() / sb.vscroll_bounds.height();
                valign_(valign() + ((k.key == key_code::page_down) ? page : -page));
+               handled = true;
+               break;
+            }
+
+            case key_code::up:
+            case key_code::down:
+            {
+               // One "line" is a fixed slice of the viewport; the port has no
+               // notion of the subject's line height. Only when this scroller
+               // is the focus, so arrow keys keep driving focus navigation
+               // everywhere else.
+               if (!_focusable || !_has_focus)
+                  break;
+               double hidden = _content.y - _view.y;
+               if (hidden <= 0)
+                  break;
+               double step = (_view.y * 0.12) / hidden;
+               valign_(valign() + ((k.key == key_code::down) ? step : -step));
                handled = true;
                break;
             }
