@@ -2295,6 +2295,21 @@ public:
 		emit(drag_event::phase::move, t);
 	}
 
+	// 離した位置は tracker が current へ入れてくれない (up では追跡位置を
+	// 更新しない) ので、 click(up) で控えたものを end の直前に反映する。
+	// 実マウスは離す直前に必ず move が来るので差は出ないが、 入力を合成する
+	// 検証では up の座標がそのまま無視されてしまう。
+	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		if (!btn.down) {
+			if (auto* st = this->get_state()) {
+				st->previous = st->current;
+				st->current  = btn.pos.move(-st->offset.x, -st->offset.y);
+			}
+		}
+		return base_type::click(ctx, btn);
+	}
+
 	void end_tracking(ce::context const& /*ctx*/,
 	                  ce::tracker_info& t) override
 	{
