@@ -811,33 +811,39 @@ bool overlay_session::start(const std::string& json_utf8,
 		_impl->hover_gate_seen = false;
 	}
 
-	// JSON "initial_focus": true 指定があればフォーカス。 view::focus() は
-	// asio::post で次 idle へデファードされるので順序問題なし。
-	// 候補の選定 (先頭候補が無効なら次の有効な候補へフォールバック) は
-	// 次 idle まで遅延する — show 直後にホストが set_var した enabled_var を
-	// 反映してから判定するため (例: cmd_enabled を show 後に注入する画面)。
-	if (!layout.initial_focus_list.empty() || layout.initial_focus) {
-		auto cands = layout.initial_focus_list;
-		auto fb    = layout.initial_focus;
-		auto* vraw = _impl->view.get();
-		_impl->view->post([vraw, cands = std::move(cands), fb = std::move(fb)]() {
-			for (auto const& e : cands) {
-				if (e && e->is_enabled()) { vraw->focus(e); return; }
-			}
-			if (fb) vraw->focus(fb);
-		});
-	}
-
-	// "input":{"initial_focus":"<id>"} — id 指定の初期フォーカス。 要素側
-	// フラグと併存した場合はこちらが勝つ (後から post されるため)。
+	// 初期フォーカス。 指定は 2 系統ある:
+	//   1. "input":{"initial_focus":"<id>"} — 画面全体の指定。 こちらが勝つ。
+	//   2. 要素側の "initial_focus": true — 候補が複数あれば先頭の «有効な»
+	//      ものへ。
+	// 両方を «1 つの» deferred でまとめて決める。 分けて書くと、 要素側は
+	// post の中でさらに view::focus() (これ自体が post) を呼ぶため 1 周遅く
+	// 着地し、 id 指定を後から上書きしてしまう。
+	// 次 idle まで遅らせるのは、 show 直後にホストが set_var した enabled_var
+	// を反映してから有効/無効を判定するため (例: cmd_enabled を show 後に
+	// 注入する画面)。
+	ce::element_ptr focus_by_id;
 	if (!layout.actions.initial_focus_id.empty()) {
 		auto fit = _impl->id_map.find(layout.actions.initial_focus_id);
 		if (fit != _impl->id_map.end()) {
-			_impl->view->focus(fit->second);
+			focus_by_id = fit->second;
 		} else {
 			em_logf("elements_modal: input.initial_focus id '%s' not found",
 			        layout.actions.initial_focus_id.c_str());
 		}
+	}
+	if (focus_by_id || !layout.initial_focus_list.empty() || layout.initial_focus) {
+		auto cands = layout.initial_focus_list;
+		auto fb    = layout.initial_focus;
+		auto* vraw = _impl->view.get();
+		_impl->view->post(
+			[vraw, byid = std::move(focus_by_id), cands = std::move(cands),
+			 fb = std::move(fb)]() {
+				if (byid) { vraw->focus(byid); return; }
+				for (auto const& e : cands) {
+					if (e && e->is_enabled()) { vraw->focus(e); return; }
+				}
+				if (fb) vraw->focus(fb);
+			});
 	}
 
 	_impl->started          = true;
