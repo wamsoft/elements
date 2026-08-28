@@ -51,6 +51,57 @@ namespace cycfi::elements
    };
 
    ////////////////////////////////////////////////////////////////////////////
+   // atlas_nine — アトラスの sub-rect を 9-patch (9 分割) で伸縮描画する。
+   //
+   //   upstream の gizmo は「画像 1 枚まるごと」を 1/2.4 の固定比で割るので、
+   //   角の大きさが素材ごとに違う UI パック (Kenney 等) には合わない。
+   //   atlas_nine は **アトラスの矩形** と **明示的な固定辺 (insets)** を取り、
+   //
+   //       +----+--------+----+     insets = {left, top, right, bottom}
+   //       |    |   ↔    |    |     角 4 つ: 原寸のまま
+   //       +----+--------+----+     上下の辺: 横だけ伸ばす
+   //       | ↕  |  ↔ ↕   | ↕  |     左右の辺: 縦だけ伸ばす
+   //       +----+--------+----+     中央    : 両方伸ばす
+   //       |    |   ↔    |    |
+   //       +----+--------+----+
+   //
+   //   これで「置きたい矩形 (at) を指定すれば、 角の丸みや枠線の太さを保った
+   //   まま、 その大きさのウィンドウ枠/ボタンになる」。 テーマ差し替えで
+   //   素材の原寸が変わってもレイアウトが崩れないための土台。
+   //
+   //   insets が縮小先より大きい場合は、 角同士が重ならないよう比例縮小する。
+   ////////////////////////////////////////////////////////////////////////////
+   class atlas_nine : public image
+   {
+   public:
+
+      struct insets
+      {
+         float left = 0, top = 0, right = 0, bottom = 0;
+
+         bool  empty() const
+         {
+            return left <= 0 && top <= 0 && right <= 0 && bottom <= 0;
+         }
+      };
+
+                              atlas_nine(pixmap_ptr atlas, rect src, insets ins);
+
+      view_limits             limits(basic_context const& ctx) const override;
+      point                   size() const override;
+      rect                    source_rect(context const& ctx) const override;
+      void                    draw(context const& ctx) override;
+
+      rect const&             sub_rect() const { return _src; }
+      void                    sub_rect(rect r) { _src = r; }
+
+   private:
+
+      rect                    _src;
+      insets                  _ins;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
    // atlas_sprite — テクスチャアトラスから複数 sub-rect を状態別 frame と
    // して持つ sprite。 basic_sprite を継承して sprite_button_styler の
    // find_subject<sprite*> が dynamic_cast で拾えるようにしている。

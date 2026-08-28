@@ -44,6 +44,86 @@ namespace cycfi::elements
    }
 
    //---------------------------------------------------------------------
+   // atlas_nine
+   //---------------------------------------------------------------------
+   atlas_nine::atlas_nine(pixmap_ptr atlas, rect src, insets ins)
+    : image(std::move(atlas))
+    , _src(src)
+    , _ins(ins)
+   {}
+
+   view_limits atlas_nine::limits(basic_context const& /*ctx*/) const
+   {
+      // 最小は «角が潰れない» 大きさ。 最大は両軸とも伸びる。
+      float min_w = std::max(1.0f, _ins.left + _ins.right);
+      float min_h = std::max(1.0f, _ins.top + _ins.bottom);
+      return {{min_w, min_h}, {full_extent, full_extent}};
+   }
+
+   point atlas_nine::size() const
+   {
+      return {_src.width(), _src.height()};
+   }
+
+   rect atlas_nine::source_rect(context const& /*ctx*/) const
+   {
+      return _src;
+   }
+
+   void atlas_nine::draw(context const& ctx)
+   {
+      auto const& dest = ctx.bounds;
+      if (dest.width() <= 0 || dest.height() <= 0)
+         return;
+
+      if (_ins.empty())
+      {
+         // 固定辺が無い = ただの引き伸ばし。
+         ctx.canvas.draw(pixmap(), _src, dest);
+         return;
+      }
+
+      // 描画先が固定辺の合計より小さいときは、 角同士が重ならないように
+      // 固定辺を比例縮小する (0 除算と裏返りを避ける)。
+      float l = _ins.left, t = _ins.top, r = _ins.right, b = _ins.bottom;
+      if (float sum = l + r; sum > dest.width() && sum > 0)
+      {
+         float k = dest.width() / sum;
+         l *= k; r *= k;
+      }
+      if (float sum = t + b; sum > dest.height() && sum > 0)
+      {
+         float k = dest.height() / sum;
+         t *= k; b *= k;
+      }
+
+      // ソース側の分割線 (素材の固定辺はそのまま使う。 縮めるのは描画先だけ)。
+      float sl = std::min(_ins.left, _src.width());
+      float sr = std::min(_ins.right, _src.width() - sl);
+      float st = std::min(_ins.top, _src.height());
+      float sb = std::min(_ins.bottom, _src.height() - st);
+
+      float sx[4] = {_src.left, _src.left + sl, _src.right - sr, _src.right};
+      float sy[4] = {_src.top, _src.top + st, _src.bottom - sb, _src.bottom};
+      float dx[4] = {dest.left, dest.left + l, dest.right - r, dest.right};
+      float dy[4] = {dest.top, dest.top + t, dest.bottom - b, dest.bottom};
+
+      for (int row = 0; row < 3; ++row)
+      {
+         for (int col = 0; col < 3; ++col)
+         {
+            rect src{sx[col], sy[row], sx[col+1], sy[row+1]};
+            rect dst{dx[col], dy[row], dx[col+1], dy[row+1]};
+            // 幅/高さが 0 の帯 (固定辺 0 指定や潰れた中央) は描かない。
+            if (src.width() <= 0 || src.height() <= 0
+               || dst.width() <= 0 || dst.height() <= 0)
+               continue;
+            ctx.canvas.draw(pixmap(), src, dst);
+         }
+      }
+   }
+
+   //---------------------------------------------------------------------
    // atlas_sprite
    //---------------------------------------------------------------------
    atlas_sprite::atlas_sprite(pixmap_ptr atlas, std::vector<rect> frames, bool native)
