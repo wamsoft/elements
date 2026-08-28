@@ -19,8 +19,9 @@ SDL3 を使う任意のアプリから単体で利用できる。
   **画面 JSON を変えずに**見た目だけ入れ替えられる (下記「テーマ」)
 - **長文ビューア** — `scroller` + `text_box` で、 本文をファイルから読み
   (`"text_file"`)、 読んでいる位置と表示量を変数へ出せる
-  (`"pos_var"` / `"fraction_var"` / `"display_var"`)。 日本語は行頭行末禁則つきで
-  文字単位に折り返す
+  (`"pos_var"` / `"fraction_var"` / `"display_var"`)。 `"pos_var"` は**双方向**で、
+  スライダと同じ変数を挿すだけで «つまみを掴んで本文を送る» が組める。 日本語は
+  行頭行末禁則つきで文字単位に折り返す
 - ボタン押下 / state widget の値変化を結果構造で返却 + 任意 callback でも通知
 - 親 SDL_Window を渡せば OS レベルでモーダル化 (`SDL_WINDOW_MODAL`)
 - 多言語フォントレンダリング (Elements の FreeType + HarfBuzz ローダ経由)
@@ -146,6 +147,10 @@ int main()
   `"no_scrollbars"` + `"focusable"`。 スクロール状態を変数へ出せる:
   `"pos_var"` (先頭位置 0..1) / `"fraction_var"` (見えている割合 0..1) /
   `"display_var"` + `"display"` (整形済み文字列。 slider と同じ書式指定)。
+  **`"pos_var"` は双方向** — 変数へ書けば本文がその位置へ送られる。 `slider` /
+  `atlas_slider` の `"value_var"` と同じ変数名にするだけで «つまみを掴んで本文を
+  送る» が成立する (ホスト実装は要らない)。 外から動かしたときも `"fraction_var"` /
+  `"display_var"` は追従する。 現在位置と同値なら何もしないので往復しない。
   `"focusable": true` にすると自分でフォーカスを取り、 Home / End / PageUp /
   PageDown と上下キーで送れる (パッド駆動の長文ビューア向け)。 既定は
   フォーカスを取らない — ふつうのコントロールを包むスクローラが余計な
@@ -160,6 +165,8 @@ int main()
 - `label` — `"text"` + `"size"` (フォントサイズ、 **px 絶対**) + `"locale"` + `"color": [r,g,b,a]` (任意) + `"text_var": "varname"` (任意、 後述の **変数 store** から動的に text を取る、 指定時は `text` は初期値の fallback)。 倍率で指定したい場合は `"size_scale"` を使用 (テーマ既定 `label_font._size` ≒ 14px に対する比)。 両方指定時は `size` 優先。 追加バリエーション:
   - `"text_id": "id"` — i18n。 StringStore の textID で現在言語の訳文を表示、 言語切替に追従 (後述「i18n」節。 優先順位 text_id > text_var > 静的 text)。
   - `"fit": true` — **枠幅に合わせてフォントを自動縮小**。 実測幅が `at` 矩形の幅を超えるときだけ、 収まる最大サイズまで縮めて描く。 多言語化 (EN/TC/SC) で訳文が枠に入らないのを、 訳を詰めずに表示側で吸収するための指定。 下限倍率は `"fit_min_scale"` (既定 0.5)。 下限でも入らない場合は下限で描く (= 従来どおりはみ出す。 読めなくなるより崩れて見える方を選べるようにしてある)。 描画のたびに測り直すので言語切替にも追従する。 **`wrap` / `runs` (rich text) との併用は無効**。
+  - `"color_var": "varname"` — **文字色を変数で差し替える**。 値の書き方は `"@名前"` (テーマの色トークン) / `"#rrggbb"` / `"r,g,b"` / `"r,g,b,a"` (後 2 者は 0-255)。 `"color"` 未指定でも使える (テーマ既定色から始まる)。 `text_anchor` のある label (anchored_text 経路) と通常の label のどちらでも効く。 一覧の行で «選択中だけ色を変える» のに、 色違いの label を重ねて `visible_var` で出し分ける必要がなくなる。
+    - 実装メモ: 色スタイラを持たない label は後から色を変えられないので、 `color_var` があるときはテーマ既定色で «色を持った» label として組んでいる。
   - `"text_list": [s0, s1, ...]` + `"index_var": "varname"` — **指定番号表示ラベル**。 変数 store の値 (10 進 index 文字列) で text_list の 1 エントリを選んで表示し、 変数変更に追従する。 picker の `index_var` と同名にすると選択連動 (機種別 SPEC 表示等)。 範囲外 index は clamp。
   - `"text_list_id": [id0, id1, ...]` — i18n。 `text_list` の各エントリを StringStore の textID で与える版 (`text_list` より優先)。 index で引いてから現在言語で解決するので、 **言語切替でも表示中の 1 本がその場で差し替わる** (picker の `options_id` と同じ考え方)。 `text_list` を併記した場合は「i18n 非対応ランタイム / 未知 id」用の静的 fallback として同 index が使われる。
   - **改行 (`\n`) を含む text は複数行として扱う**。 行ごとに描画し、 高さも行数ぶん確保するので、 `vtile` の子に置いても後続ウィジェットと重ならない。 幅は最長行。 縦アライン (`top`/`middle`/`bottom`) はブロック全体に効く。
@@ -300,7 +307,8 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 各要素タイプ:
 
 - `atlas_image` — `"atlas": name` + `"rect": [x, y, w, h]` (アトラス内座標) + `"stretch_h"` / `"stretch_v"` (任意、 既定 false)。 既定は固定サイズ (= 飾り)。 stretch_h/v: true で当該軸を stretchable に (= 親 floating の bounds に合わせて伸縮)。 追加バリエーション:
-  - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。
+  - `"native": true` — **矩形を bounds へ引き伸ばさず、 実寸のまま bounds 中央へ**描く。 大きさの違う絵を `rect_list` で切り替えても歪まない (長さの違うメッセージ画像など)。 単一 `rect` でも効く。 幅か高さが 0 の矩形は「何も描かない」。 テーマの `skins` が `"native": true` を書くと `"native_frames"` に落ちるので、 **`"native_frames"` も同じ意味で受ける** (スキン経由で指定できるように)。 `atlas_sprite` (`atlas_button` 等) の `native_frames` と同じ挙動。
+  - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。 寸法の違う絵を並べたいときは `"native": true` を併記する (伸縮せず中央に置かれるので歪まない)。
   - `"focus_link": "id"` / `["id", ...]` + `"frames": { "normal": [x,y,w,h], "hilite": [x,y,w,h] }` — **自分はフォーカスを取らない飾り**が、 リンク先 id のフォーカス状態で frame を切り替える。 行の下地や「当たっている項目にぽっちを出す」インジケータ用。 配列で複数 id を書くと、 そのいずれかがフォーカス中なら hilite。 `hilite` は必須で、 **`normal` は省略可** (省略時は非フォーカス中に何も描かない = 素材 1 枚でフォーカスインジケータが組める)。
   - `"hover_focus_link": false` (既定 true) — 上の飾りは既定で「飾りの上へ hover するとリンク先へフォーカスを移す」プロキシに包まれる (行のどこへマウスを乗せても選択が動く)。 プロキシはクリックも先に受け取るので、 **飾りがコントロールに重なる配置** (項目の角に載せるインジケータ等) では下のボタンが押せない死角になる。 その場合は `false` を指定して「クリックを一切取らない飾り」へ戻す (重なりの無い行の下地は既定のままでよい)。
 - `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 pixmap は build 時に一度読むので、 実行時差し替えは画像を再登録して画面を開き直す。 セーブサムネイル等の動的画像に使う (ホスト側は自前で PNG 等にエンコードして注入する)。
@@ -553,6 +561,24 @@ bool on = elements_modal::focus_ring_enabled();
 - ホストからも `overlay_session::set_var(name, value)` で書ける (focus poll 以外の書き手。 ソフトウェアキーボードの入力文字列表示のような「ホスト状態 → label」の動的反映に使う)。 反映は次フレームの `render_to_buffer`。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
 
+#### hover 連動 (`vars_on_hover`)
+
+`vars_on_focus` の hover 版。 **要素の型を問わず**書ける (label / 画像 /
+コントロールいずれも)。 `{名前: 値}` を**カーソルが乗っている間だけ**書き、
+**離れたら乗る直前の値へ戻す**。 キー / パッドのフォーカスとは独立なので、
+「一覧の行をマウスでなぞって説明を出す / 色を変える」はこちらで書く。
+
+```jsonc
+{ "type": "label", "id": "row1", "text": "SAVE",
+  "color_var": "row1_color",
+  "vars_on_hover": { "row1_color": "@accent_hi", "help": "セーブします。" } }
+```
+
+⚠ **当たりを持たない要素 (label / 画像) は hover を受け取れない**ので、 この
+指定を書くと proxy が当たりを引き受ける。 そのため **下に重なっているコントロールが
+押せなくなる** (`hover_focus_link` と同じ事情)。 コントロール自身に付けた場合は
+中身の当たりが優先されるので影響しない。
+
 #### 変数連動ファミリ一覧
 
 変数 store を読む / 書くフィールドの早見。 いずれも同名変数で連動する:
@@ -560,8 +586,10 @@ bool on = elements_modal::focus_ring_enabled();
 | フィールド | 対象 widget | 向き | 値の形式 |
 |---|---|---|---|
 | `text_var` | label / text_box / text_area | 読み | 表示文字列 |
+| `color_var` | label | 読み (文字色) | `"@名前"` / `"#rrggbb"` / `"r,g,b[,a]"` (0-255) |
 | `count_var` | text_area | 読み | 表示クラスタ数 (10 進、 `"-1"` = 全部) |
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
+| `vars_on_hover` | 全 widget 共通 | 書き (hover 中。 離れたら直前の値へ復帰) | 任意 string |
 | `text_list` / `text_list_id` + `index_var` | label / text_area | 読み | 10 進 index (`"2"`) |
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
@@ -569,7 +597,10 @@ bool on = elements_modal::focus_ring_enabled();
 | `enabled_var` | button 系 (`button` / `atlas_button` / `invert_button` / `ring_button`) | 読み (要素そのものの有効/無効) | `"0"` = 無効 / それ以外 = 有効 |
 | `selected_var` (+`selected_value`) | atlas_choice / radio_button | **双方向** (var == selected_value で選択 / クリックで var へ selected_value を書き戻し) | 任意 string (`selected_value` 既定 `"1"`) |
 | `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
+| `pos_var` | scroller | **双方向** (スクロールで書き + 変数変更で本文をその位置へ送る) | 10 進小数 (`"0.37"`) |
+| `fraction_var` / `display_var` | scroller | 書き (見えている割合 / 整形済み文字列) | 10 進小数 / 表示文字列 |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
+| `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
 | `opacity_var` | 全 widget 共通 | 読み | 不透明度 0..1 の 10 進小数 (`"0.6"`) |
 | `visible_var` | 全 widget 共通 | 読み | `"0"` / `"false"` / 空文字 = 非表示、 それ以外 = 表示 |
 | `background_opacity_var` | トップレベル (`background` の板) | 読み | 不透明度 0..1 の 10 進小数 |
@@ -596,6 +627,35 @@ bool on = elements_modal::focus_ring_enabled();
   ```
 
 - **picker → text_list / rect_list の選択連動**: picker に `index_var` を付け、 表示側 (label の text_list / atlas_image の rect_list) に同名の `index_var` を付けるだけで、 選択変更が表示に即時反映される (build 時に picker が初期 index を書き込むので初期表示も揃う)。 機種選択 → スクリーンショット / SPEC 表示のような連動 UI が JSON だけで組める。
+
+### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
+
+マウスで要素を掴んで動かす指定。 `vars_on_hover` と同じく build の最後に proxy で
+包むので、 **要素の型を問わず**書ける。 出口が 2 つあり、 両方同時に書ける:
+
+| キー | 型 | 説明 |
+|---|---|---|
+| `drag_at_var` | string | ドラッグ中の位置を `"x,y"` (10 進 px) で変数へ書く |
+| `drag_bounds` | `[x, y, w, h]` | 可動域。 **絵全体**が中に収まるよう左上位置を丸める |
+| `drag_events` | bool | `begin` / `move` / `end` をホストへ通知する (下記「ドラッグ通知」) |
+
+```jsonc
+{ "at": [200, 120, 96, 96],
+  "type": "atlas_image", "atlas": "ui", "rect": [0, 0, 96, 96], "id": "pin",
+  "drag_at_var": "pin_at",             // ドラッグ位置をここへ書き
+  "at_var":      "pin_at",             // 同じ変数で配置を駆動 = 絵がついてくる
+  "drag_bounds": [0, 0, 1920, 1080],
+  "drag_events": true }
+```
+
+- `drag_at_var` を canvas 子の `at_var` に挿すと、 **ホスト実装なしで絵がついてくる**
+  (C++ 内で完結するのでフレーム同期。 描画とずれない)。
+- 2 回目以降のドラッグは `at_var` に残っている位置を起点にするので、 元位置へ
+  戻らない。
+- 下地は lib の `tracker`。 `tracker::click` / `drag` は先に中身へ転送してから追跡を
+  始めるので、 **ボタンに付けてもボタンのクリックは効く**。
+- **使い分け**: 見た目の追従は `drag_at_var` (フレーム同期)、 «どこで離したか» の
+  ような判断は `drag_events` (通知は非同期になり得るので、 見た目を任せない)。
 
 ### i18n (`strings` / `lang` / `text_id` / `text_list_id` / `options_id`)
 
@@ -933,6 +993,26 @@ using event_callback = std::function<void(
   - `input_box` → `std::string`
   - `selection_menu` → 選択された option 文字列 (`std::string`)
 
+### ドラッグ通知 (`drag_callback`)
+
+`"drag_events": true` を書いた要素の押下 → 移動 → 離すが届く。 受け口は
+`event_callback` とは**別**で、 **`event_callback` の署名は変えていない**:
+
+```cpp
+sess.set_drag_callback([](elements_modal::drag_event const& ev) {
+    // ev.id                  … widget の "id"
+    // ev.ph                  … drag_event::phase::begin / move / end
+    // ev.x, ev.y             … 現在位置 (view 論理座標)
+    // ev.dx, ev.dy           … 前回の通知からの差分 (begin では 0)
+    // ev.start_x, ev.start_y … 掴んだ位置
+    // ev.modifiers           … 押されている修飾キー
+});
+```
+
+receiver は shared_ptr のスロット越しに持つので、 **`start()` の前後どちらでも
+設定・差し替えできる** (空を渡せば解除)。 見た目の追従は `drag_at_var` に任せ、
+こちらは «どこで離したか» の判断に使う (→「掴んで動かす」)。
+
 ## 使い方 (overlay_session)
 
 ホスト側のサーフェスに描画 + ホストがイベント転送する低レベル API:
@@ -1053,6 +1133,26 @@ sess.on_pad_button(elements_modal::parse_pad_button("dpad_up"), true);
 ### 入力転送の戻り値 (handled / pass-through)
 
 `on_key_down` / `on_key_up` / `on_pad_button` は **`bool` (このダイアログが入力を消費したか)** を返す。 `true` = Esc / focus 中 widget が処理 / 既知パッドボタン、 `false` = 未処理。 ホストが**複数 UI を重ねる / ゲームと共存させる**場合、 この戻り値を見て「ダイアログが使わなかったキーはゲーム側へ素通しする」といったキーボードフォーカスの pass-through を実装できる (戻り値を無視すれば従来どおり)。 `on_text_input` / `on_mouse_*` / `on_pad_axis` は `void` のまま。
+
+## 登録済みフォントの列挙 (`font_families`)
+
+フォント選択画面をホスト側で組むための **elements 本体 API**
+(`lib/include/elements/support/font.hpp`)。 いま描画に使える family 名を昇順で
+返す:
+
+```cpp
+#include <elements/support/font.hpp>
+
+for (auto const& family : cycfi::elements::font_families())
+    ;   // picker の "options" に積む / 一覧に並べる
+```
+
+- 返るのは fonts ディレクトリ / `register_font()` で**登録済み**の family だけ。
+  OS にインストールされているだけのフォントは含まれない (その列挙はホストの仕事)。
+- ディレクトリから読んだフォントは **«整形名» と «ファイル stem» の 2 つの名前で
+  登録される** (`Noto Sans JP` と `NotoSansJP-VF`) ので、 同じ face が 2 行出る。
+  どちらの名前でも描けるが、 1 face 1 行にしたいなら呼出側で絞る。
+- ある family が使えるかだけ知りたいときは `font_family_available(name)`。
 
 ## pad_icon の前提セットアップ
 
