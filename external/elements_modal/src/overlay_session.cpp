@@ -451,6 +451,35 @@ struct overlay_session::impl
 		                   (b.right + ex + m) * d, (b.bottom + ey + m) * d);
 		return true;
 	}
+	// canvas 子が "at_var" で動いたときのダーティ。 «移動前» と «移動後» の
+	// 両方を積む — 移動後だけだと元の位置の絵が消え残り、 移動前だけだと
+	// 移動先が描かれない。 引数の rect は canvas ローカル座標なので、
+	// canvas の bounds を足して view 座標へ直してから px へ換算する。
+	// canvas の bounds が引けない (まだ layout されていない等) ときは全面へ。
+	void mark_child_rect_dirty(ce::element& canvas, ce::rect prev, ce::rect now)
+	{
+		needs_render_ = true;
+		// 範囲が特定できたので set_var 側の «全面フォールバック» を抑える。
+		var_change_hits++;
+		ce::rect b{};
+		ce::extent nat{0, 0};
+		if (!view || !view->element_bounds(canvas, b, nat)) {
+			dirty_full_ = true;
+			return;
+		}
+		const float d = (view_w > 0 && last_buf_w_ > 0)
+			? static_cast<float>(last_buf_w_) / view_w : 1.0f;
+		const float m = 2.0f;   // AA / 端数の吸収
+		auto mark = [&](const ce::rect& r) {
+			mark_dirty_rect_px((b.left + r.left  - m) * d,
+			                   (b.top  + r.top   - m) * d,
+			                   (b.left + r.right + m) * d,
+			                   (b.top  + r.bottom + m) * d);
+		};
+		mark(prev);
+		mark(now);
+	}
+
 	// update() 済みで render_to_buffer 未消費か。 render_to_buffer 内での
 	// 二重 update 防止 (update を呼ばない従来ホストの後方互換用)。
 	bool updated_ = false;
@@ -774,6 +803,17 @@ bool overlay_session::start(const std::string& json_utf8,
 		layout.set_var_change_notifier(
 			[impl = _impl.get()](ce::element& e) {
 				if (impl->mark_element_dirty(e)) impl->var_change_hits++;
+			});
+	}
+
+	// canvas 子の配置 rect が at_var で動いたとき (位置が変わる要素は上の
+	// 要素ベース通知では «移動後» を出せない) は、 移動前後の rect を
+	// そのまま受け取ってダーティにする。
+	if (layout.set_child_rect_notifier) {
+		layout.set_child_rect_notifier(
+			[impl = _impl.get()](ce::element& canvas, ce::rect prev,
+			                     ce::rect now) {
+				impl->mark_child_rect_dirty(canvas, prev, now);
 			});
 	}
 

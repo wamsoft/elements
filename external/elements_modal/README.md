@@ -325,6 +325,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 - `atlas_choice` (別名 `atlas_radio`) — 排他選択型 (ラジオボタン)。 frames は atlas_toggle と同じ。 同じ親 composite (`canvas` の layer など) に並べた複数の atlas_choice 群は、 1 個 ON になると他を自動 OFF (lib の `basic_choice` の `find_composite` + 兄弟スキャン)。 `"selected": bool` で初期状態 (1 グループ内で 1 つだけ true 推奨)。 値変化で `value_t{bool true}` を発火 (新しく選ばれた側のみ。 deselect 側は `on_click` 走らず)。 `"selected_var"` / `"selected_value"` (任意) で変数 store と双方向連動 (下記「変数連動ファミリ一覧」参照)。 **排他スコープは「直近の親 composite」単位** — 複数の独立グループを 1 画面で使うときは、 各グループを別々の composite (= ネストした `canvas` や `layer` / `htile` 等) に入れて分離する (下記「排他グループの分離」参照)。
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
   - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 track 画像は **widget の全域** (= canvas 配置なら `at` の矩形そのまま) に描かれる — 角丸ボーダー込みで書き出した枠素材の端が切り詰められないようにするため、 「thumb 半分だけ内側へインセット」という一般 slider の既定は使わない。 thumb は直交軸も素材本来のサイズでレール中央に置かれる (canvas 配置でつまみがレール高さに押し潰されない)。 **`track` は省略可** — 溝 (バー) が背景画像側に描いてある素材向けで、 見えない stretchable 要素が敷かれて thumb だけ描画される (可動域は widget の bounds いっぱい)。
+  - **thumb の 9-slice (キャップ付きつまみ)**: `"thumb"` はオブジェクトでも書ける — `{ "rect": [x,y,w,h], "insets": [l,t,r,b], "size": [w,h] }`。 `insets` の四辺を潰さずに `size` のつまみへ伸ばす (`size` 省略時は `rect` 原寸)。 上下 (左右) にキャップがあり胴だけ伸びる資材を、 素材原寸に縛られずレールの長さに合わせて使える。 `insets` が全て 0 なら単一矩形と同じなので配列形式でよい。
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
@@ -609,6 +610,7 @@ bool on = elements_modal::focus_ring_enabled();
 | `pos_var` | scroller | **双方向** (スクロールで書き + 変数変更で本文をその位置へ送る) | 10 進小数 (`"0.37"`) |
 | `fraction_var` / `display_var` | scroller | 書き (見えている割合 / 整形済み文字列) | 10 進小数 / 表示文字列 |
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
+| `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
 | `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
 | `opacity_var` | 全 widget 共通 | 読み | 不透明度 0..1 の 10 進小数 (`"0.6"`) |
 | `visible_var` | 全 widget 共通 | 読み | `"0"` / `"false"` / 空文字 = 非表示、 それ以外 = 表示 |
@@ -705,6 +707,22 @@ sess.set_var("list_top",   "3");   // → 窓が D..H + 空行 1 行になる
   値を毎フレーム書き直すため、 途中のホスト書込は次の move (と離したときの end) で
   上書きされる。 ホスト側の書込が位置として効くのは «掴んでいない間» で、 次に
   掴んだときの起点として読み直される。
+- **1 本の変数で複数枚を動かす**には、 挿す側 (canvas の子) に
+  `"at_var_offset": [dx, dy, dw, dh]` を書く。 変数の値へ加える差分で、
+  dx/dy は位置、 dw/dh はサイズへの加算。 つまみを «上キャップ + 伸びる胴 +
+  下キャップ» の 3 枚で描くような資材でも、 `drag_at_var` が書く 1 本の変数で
+  まとめて動かせる (offset が無いと 3 枚のうち 1 枚しか追従しない)。
+
+```jsonc
+// つまみ 3 枚を 1 変数 "thumb_at" で動かす (胴は上下キャップぶん詰める)
+{ "at": [40,  92, 16,  8], "type": "atlas_image", "atlas": "ui",
+  "rect": [0, 0, 16, 8], "at_var": "thumb_at", "at_var_offset": [0, -8, 0, 0] },
+{ "at": [40, 100, 16, 40], "type": "atlas_image", "atlas": "ui",
+  "rect": [0, 8, 16, 8], "stretch_v": true, "at_var": "thumb_at" },
+{ "at": [40, 140, 16,  8], "type": "atlas_image", "atlas": "ui",
+  "rect": [0, 16, 16, 8], "at_var": "thumb_at", "at_var_offset": [0, 40, 0, 0] }
+```
+
 - **使い分け**: 見た目の追従は `drag_at_var` (フレーム同期)、 «どこで離したか» の
   ような判断は `drag_events` (通知は非同期になり得るので、 見た目を任せない)。
 

@@ -1530,6 +1530,14 @@ public:
 	// ドラッグ通知の receiver スロット (中身はホストが後から差し替える)。
 	std::shared_ptr<drag_callback> _drag_slot;
 
+	// canvas 子の配置 rect が "at_var" で動いたときの通知スロット
+	// (部分再描画のダーティ範囲用。 詳細は json_layout.h)。
+	using child_rect_callback =
+		std::function<void(ce::element&, ce::rect, ce::rect)>;
+	std::shared_ptr<child_rect_callback> _rect_slot =
+		std::make_shared<child_rect_callback>();
+	std::shared_ptr<child_rect_callback> rect_slot() { return _rect_slot; }
+
 	void set_default_locale(std::string locale) { _default_locale = std::move(locale); }
 	void set_resource_base(std::string base) { _resource_base = std::move(base); }
 
@@ -4877,6 +4885,12 @@ namespace
 			_children.emplace_back(r, std::move(child));
 		}
 
+		// 子 ix の現在の配置 rect (canvas ローカル座標)。
+		ce::rect rect_at(std::size_t ix) const
+		{
+			return (ix < _children.size()) ? _children[ix].first : ce::rect{};
+		}
+
 		// "at_var" (座標の変数駆動): 子 ix の配置 rect を差し替える。
 		// _prev_size を無効化して次 draw で relayout させる。
 		void set_rect(std::size_t ix, ce::rect r)
@@ -5183,19 +5197,43 @@ element_ptr LayoutBuilder::build_canvas(const picojson::object& o)
 		// "at_var": 配置 rect を変数で駆動 (map 画面のキャラ位置等)。 変数値は
 		// "x,y" (サイズは "at" のまま) または "x,y,w,h" の 10 進 px 文字列。
 		// パース不能 / 要素不足の値は無視 (現状維持)。 初期値は "at"。
+		//
+		// "at_var_offset": [dx, dy, dw, dh] — 変数の値へ加える差分。
+		// **1 本の変数を複数の子で共有する**ための口。 つまみを «上キャップ +
+		// 伸びる胴 + 下キャップ» の 3 枚で描くような場合、 同じ at_var を 3 枚に
+		// 挿し、 それぞれ違う offset を書けば 1 変数で 9-slice が組める
+		// (ドラッグの drag_at_var は 1 本しか書かないので、 offset 無しでは
+		//  どれか 1 枚しか動かせなかった)。 dw / dh はサイズへの加算。
 		if (std::string at_var = string_or(co, "at_var"); !at_var.empty()) {
 			std::size_t ix = layer->size() - 1;
 			std::weak_ptr<canvas_layer_element> wl = layer;
 			float iw = w, ih = h;
-			auto apply = [wl, ix, iw, ih](const std::string& v) {
+			float ox = 0, oy = 0, ow = 0, oh = 0;
+			if (auto* off = get_array(co, "at_var_offset");
+			    off && off->size() >= 2) {
+				ox = static_cast<float>(int_at(*off, 0, 0));
+				oy = static_cast<float>(int_at(*off, 1, 0));
+				ow = static_cast<float>(int_at(*off, 2, 0));
+				oh = static_cast<float>(int_at(*off, 3, 0));
+			}
+			auto rect_slot = _rect_slot;
+			auto apply = [wl, ix, iw, ih, ox, oy, ow, oh, rect_slot]
+			             (const std::string& v) {
 				float nx = 0, ny = 0, nw = 0, nh = 0;
 				int n = std::sscanf(v.c_str(), " %f , %f , %f , %f",
 				                    &nx, &ny, &nw, &nh);
 				if (n < 2) return;
-				ce::rect r = (n >= 4)
-					? ce::rect{nx, ny, nx + nw, ny + nh}
-					: ce::rect{nx, ny, nx + iw, ny + ih};
-				if (auto l = wl.lock()) l->set_rect(ix, r);
+				const float bw = (n >= 4) ? nw : iw;
+				const float bh = (n >= 4) ? nh : ih;
+				const float x0 = nx + ox, y0 = ny + oy;
+				ce::rect r{x0, y0, x0 + bw + ow, y0 + bh + oh};
+				auto l = wl.lock();
+				if (!l) return;
+				const ce::rect prev = l->rect_at(ix);
+				l->set_rect(ix, r);
+				// 部分再描画: «移動前» と «移動後» の両方をホストへ渡す。
+				// 移動前を渡さないと元の位置に絵が消え残る。
+				if (rect_slot && *rect_slot) (*rect_slot)(*l, prev, r);
 			};
 			if (auto* cur = _vars->get(at_var)) apply(*cur);
 			_vars->subscribe(at_var, apply);
@@ -6092,6 +6130,15 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 // track はスライダ軸方向に stretchable (親 floating の bounds に合わせる)。
 // thumb は固定サイズ。 値変化で value_t{double pos} を発火。
 //
+// つまみに «キャップ付き» の資材を使う場合は "thumb" をオブジェクトで書くと
+// 9-slice (atlas_nine) で描かれる。 上下 (左右) のキャップを潰さずに、 指定
+// サイズのつまみへ伸ばせる:
+//   { "type": "atlas_slider", "atlas": "ui", "id": "vol", "vertical": true,
+//     "track": [x, y, w, h],
+//     "thumb": { "rect": [x, y, w, h],       // アトラス上の元矩形
+//                "insets": [l, t, r, b],     // 伸ばさずに保つ四辺
+//                "size": [w, h] } }          // つまみの表示サイズ (省略= rect)
+//
 // fill 形式 (ゲージ型スライダ): "thumb" の代わりに "fill" を指定すると、
 // atlas_progress と同じ track+fill 描画のまま**操作可能**なスライダになる
 // (クリック/ドラッグ/矢印キー/パッドで値変更)。 "fill_at" は fill の配置先を
@@ -6194,11 +6241,16 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	auto* tr = get_array(o, "track");
 	auto* th = get_array(o, "thumb");
 	auto* fl = get_array(o, "fill");
+	// "thumb" はオブジェクト形式も受ける (9-slice つまみ)。
+	const picojson::object* th_obj = nullptr;
+	if (auto* tv = get_field(o, "thumb"); tv && tv->is<picojson::object>())
+		th_obj = &tv->get<picojson::object>();
 	bool fill_mode = (fl && fl->size() >= 4);
 	bool has_track = (tr && tr->size() >= 4);
+	const bool has_thumb = (th && th->size() >= 4) || (th_obj != nullptr);
 	// track は thumb 形式では省略可 (溝が背景画像側に描いてある素材)。
 	// fill 形式はゲージ描画の基準に track が必須。
-	if ((fill_mode && !has_track) || (!fill_mode && (!th || th->size() < 4))) {
+	if ((fill_mode && !has_track) || (!fill_mode && !has_thumb)) {
 		em_logf("elements_modal: atlas_slider \"%s\" needs 'thumb' "
 		        "(track optional) or 'track'+'fill' as [x, y, w, h]",
 		        atlas_name.c_str());
@@ -6253,7 +6305,39 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		};
 		shared = ce::share(std::move(sl));
 	} else {
-		ce::rect thumb_src = parse_xywh(*th);
+		// つまみ資材: 配列形式 = そのまま貼る単一矩形、
+		// オブジェクト形式 = 9-slice (キャップ付きつまみ)。
+		ce::rect thumb_src{};
+		ce::atlas_nine::insets thumb_ins;
+		bool thumb_nine = false;
+		float thumb_w = 0, thumb_h = 0;
+		if (th_obj) {
+			if (auto* r = get_array(*th_obj, "rect"); r && r->size() >= 4)
+				thumb_src = parse_xywh(*r);
+			if (auto* iv = get_array(*th_obj, "insets"); iv && iv->size() >= 4) {
+				thumb_ins.left   = static_cast<float>(int_at(*iv, 0, 0));
+				thumb_ins.top    = static_cast<float>(int_at(*iv, 1, 0));
+				thumb_ins.right  = static_cast<float>(int_at(*iv, 2, 0));
+				thumb_ins.bottom = static_cast<float>(int_at(*iv, 3, 0));
+			}
+			thumb_w = thumb_src.width();
+			thumb_h = thumb_src.height();
+			if (auto* sz = get_array(*th_obj, "size"); sz && sz->size() >= 2) {
+				thumb_w = static_cast<float>(int_at(*sz, 0, 0));
+				thumb_h = static_cast<float>(int_at(*sz, 1, 0));
+			}
+			if (thumb_src.width() <= 0 || thumb_src.height() <= 0) {
+				em_logf("elements_modal: atlas_slider \"%s\" thumb object "
+				        "needs 'rect' [x, y, w, h]", atlas_name.c_str());
+				return nullptr;
+			}
+			// insets が無ければ 9-slice にする意味がない (単一矩形と同じ)。
+			thumb_nine = !thumb_ins.empty();
+		} else {
+			thumb_src = parse_xywh(*th);
+			thumb_w = thumb_src.width();
+			thumb_h = thumb_src.height();
+		}
 		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
 		// track 省略時 (溝が背景側に描いてある素材) は見えない stretchable 要素を
 		// 敷く (widget の box いっぱいが可動域になる)。
@@ -6262,7 +6346,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// slider_base の縦横判定 (`max.x > max.y`) が必ず «縦» に倒れて、
 		// つまみが widget いっぱいに引き伸ばされる。 可動軸だけ伸びる形に
 		// して向きを宣言する。
-		const float cross = vertical ? thumb_src.width() : thumb_src.height();
+		const float cross = vertical ? thumb_w : thumb_h;
 		element_ptr track_img;
 		if (has_track) {
 			track_img = ce::share(ce::atlas_image(pm, track_src,
@@ -6273,9 +6357,19 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		} else {
 			track_img = ce::share(ce::vsize(cross, cycfi::elements::element{}));
 		}
-		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
-		                                          /*stretch_h=*/false,
-		                                          /*stretch_v=*/false));
+		// 9-slice つまみは両軸 stretchable なので、 指定サイズで固定して
+		// «伸びる胴 + 潰れないキャップ» を作る (slider は thumb の limits から
+		// 可動域を出すため、 固定しないと widget いっぱいに伸びてしまう)。
+		element_ptr thumb_img;
+		if (thumb_nine) {
+			thumb_img = ce::share(ce::fixed_size(
+				ce::point{thumb_w, thumb_h},
+				ce::atlas_nine(pm, thumb_src, thumb_ins)));
+		} else {
+			thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
+			                                      /*stretch_h=*/false,
+			                                      /*stretch_v=*/false));
+		}
 		// track 画像は "at"(#範囲) と同じ矩形で書き出されており、 枠の角丸
 		// ボーダーまで込みで widget 全域を表現する素材。 slider_base の既定
 		// track_bounds() は thumb がはみ出さないよう thumb 半分だけ内側に
@@ -7617,6 +7711,13 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	result.set_var_change_notifier =
 		[vars = builder.vars()](std::function<void(ce::element&)> f) {
 			vars->set_change_notifier(std::move(f));
+		};
+
+	// canvas 子の rect 変化 (at_var) の通知フック設置口 (詳細は json_layout.h)。
+	result.set_child_rect_notifier =
+		[slot = builder.rect_slot()](
+			std::function<void(ce::element&, ce::rect, ce::rect)> f) {
+			*slot = std::move(f);
 		};
 
 	// 変数の観測 (検証パネル用)。 現在値のスナップショット、 変化の通知フック、

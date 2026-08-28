@@ -175,6 +175,20 @@ struct parsed_layout
 	std::function<void(std::function<void(cycfi::elements::element&)>)>
 		set_var_change_notifier;
 
+	//! 部分再描画用: canvas 子の配置 rect が "at_var" で動いたときの通知先を
+	//! 仕掛ける。 引数は (canvas 要素, 変更前の rect, 変更後の rect) で、
+	//! rect は **canvas ローカル座標** ("at" と同じ原点)。 ホストは canvas の
+	//! bounds を足して view 座標へ直し、 **両方**をダーティにすること。
+	//!
+	//! 上の set_var_change_notifier では足りない: 位置が変わる要素は「変更後の
+	//! bounds」が次の layout まで確定せず、 要素ベースの通知では «移動前» しか
+	//! 出せない。 それだけをダーティにすると移動先が描かれず、 逆に移動先だけ
+	//! だと **移動前の絵が消え残る** (画面に軌跡が残る)。
+	std::function<void(std::function<void(cycfi::elements::element&,
+	                                      cycfi::elements::rect,
+	                                      cycfi::elements::rect)>)>
+		set_child_rect_notifier;
+
 	//! 変数ストアの現在値スナップショット (検証ツールの変数一覧用)。
 	std::function<std::map<std::string, std::string>()> var_snapshot;
 
