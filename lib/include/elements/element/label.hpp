@@ -47,6 +47,10 @@ namespace cycfi::elements
       virtual float           get_font_size() const;
       virtual float           get_default_font_size() const;
       virtual color           get_font_color() const;
+      // Runtime color change. The default styler has no color of its own
+      // (it answers the theme), so this is a no-op unless the label was
+      // built with .font_color(...) — see label_styler_with_font_color.
+      virtual void            set_font_color(color /*c*/) {}
       virtual int             get_text_align() const;
       virtual std::string     get_text_locale() const { return {}; }
 
@@ -161,7 +165,7 @@ namespace cycfi::elements
                               {}
 
       color                   get_font_color() const override;
-      void                    set_font_color(color color_);
+      void                    set_font_color(color color_) override;
 
    private:
 

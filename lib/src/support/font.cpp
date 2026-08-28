@@ -896,6 +896,17 @@ namespace cycfi { namespace elements
       return font_map().find(base) != font_map().end();
    }
 
+   std::vector<std::string> font_families()
+   {
+      std::vector<std::string> out;
+      std::lock_guard<std::mutex> lock(font_map_mutex());
+      out.reserve(font_map().size());
+      for (auto const& [family, entries] : font_map())
+         out.push_back(family);
+      // font_map is a std::map, so this is already sorted by family name.
+      return out;
+   }
+
    void set_default_variations(std::string const& family,
                                std::string const& axes)
    {

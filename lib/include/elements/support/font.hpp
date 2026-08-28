@@ -410,6 +410,22 @@ namespace cycfi { namespace elements
    bool font_family_available(std::string const& family);
 
    ////////////////////////////////////////////////////////////////////////////
+   // font_families — every registered family name, sorted. These are the
+   // families that can be drawn right now (the ones registered from the fonts
+   // directories / register_font). Fonts installed in the OS but not
+   // registered here are NOT included: enumerating those is the host's job.
+   //
+   // Use it to build a font picker: put these first (they are guaranteed to
+   // render), then the host's own list below.
+   //
+   // Note: a font loaded from a directory is registered under BOTH its parsed
+   // family ("Noto Sans JP") and its file stem ("NotoSansJP-VF"), so the same
+   // face can appear twice under different names. Both draw. Filter by your
+   // own rule (e.g. drop names containing '-') if a picker should show one
+   // entry per face.
+   std::vector<std::string> font_families();
+
+   ////////////////////////////////////////////////////////////////////////////
    // set_default_variations — default variable-font axes for `family`
    // ("tag=val,..."), applied when a font reference does not specify the axis
    // itself (a "#tag=val" suffix always wins per tag). Pass an empty string

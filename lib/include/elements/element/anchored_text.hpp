@@ -81,6 +81,8 @@ namespace cycfi::elements
       void                    set_anchor(point a)        { _anchor = a; }
       point                   get_anchor() const         { return _anchor; }
       void                    set_font_family(std::string f) { _family = std::move(f); }
+      void                    set_color(color c)         { _color = c; }
+      color                   get_color() const          { return _color; }
       void                    set_halign(int a)          { _halign = a; }
       // rich text (run 別書式)。 空でなければ draw は run 別描画に切替わる。
       void                    set_runs(std::vector<text_run> r) { _runs = std::move(r); }

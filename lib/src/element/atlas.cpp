@@ -16,11 +16,12 @@ namespace cycfi::elements
    // atlas_image
    //---------------------------------------------------------------------
    atlas_image::atlas_image(pixmap_ptr atlas, rect src,
-                            bool stretch_h, bool stretch_v)
+                            bool stretch_h, bool stretch_v, bool native)
     : image(std::move(atlas))
     , _src(src)
     , _stretch_h(stretch_h)
     , _stretch_v(stretch_v)
+    , _native(native)
    {}
 
    view_limits atlas_image::limits(basic_context const& /*ctx*/) const
@@ -41,6 +42,21 @@ namespace cycfi::elements
    rect atlas_image::source_rect(context const& /*ctx*/) const
    {
       return _src;
+   }
+
+   void atlas_image::draw(context const& ctx)
+   {
+      if (!_native)
+      {
+         image::draw(ctx);   // 従来: 矩形を bounds へ伸縮
+         return;
+      }
+      // native: 矩形を実寸のまま bounds 中央へ (伸縮しない)。 大きさの違う絵を
+      // rect_list で差し替えても歪まない。 空矩形は «何も描かない»。
+      if (_src.width() <= 0 || _src.height() <= 0)
+         return;
+      rect dest{0, 0, _src.width(), _src.height()};
+      ctx.canvas.draw(pixmap(), _src, center(dest, ctx.bounds));
    }
 
    //---------------------------------------------------------------------

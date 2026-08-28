@@ -34,11 +34,13 @@ namespace cycfi::elements
    public:
                               atlas_image(pixmap_ptr atlas, rect src,
                                           bool stretch_h = false,
-                                          bool stretch_v = false);
+                                          bool stretch_v = false,
+                                          bool native = false);
 
       view_limits             limits(basic_context const& ctx) const override;
       point                   size() const override;
       rect                    source_rect(context const& ctx) const override;
+      void                    draw(context const& ctx) override;
 
       rect const&             sub_rect() const { return _src; }
       void                    sub_rect(rect r) { _src = r; }
@@ -48,6 +50,10 @@ namespace cycfi::elements
       rect                    _src;
       bool                    _stretch_h;
       bool                    _stretch_v;
+      // native: 矩形を bounds へ伸縮せず、 実寸のまま bounds 中央へ描く。
+      // 大きさの違う絵を差し替える (rect_list) 用途で歪ませないためのもの。
+      // atlas_sprite の native と同じ扱い。
+      bool                    _native;
    };
 
    ////////////////////////////////////////////////////////////////////////////
