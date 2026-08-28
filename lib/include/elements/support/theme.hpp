@@ -35,6 +35,12 @@ namespace cycfi::elements
       color                slide_button_thumb_color;
       color                active_tab_color;
 
+      // cycle_picker / framed_cycle_picker / segmented_picker の地色と文字色。
+      // フォーカス時は両者を入れ替えて反転表示にする。 既定は黒地に白文字
+      // (従来の固定色と同じ)。 明るいテーマではここを差し替える。
+      color                picker_bg_color;
+      color                picker_fg_color;
+
       color                controls_color;
       float                controls_frame_stroke_width;
       color                indicator_color;

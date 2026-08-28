@@ -8,6 +8,7 @@
 
 #include <elements/support/theme.hpp>
 #include <elements/element/element.hpp>
+#include <elements/element/text.hpp>      // text_writer (i18n で本文を差し替える)
 #include <elements/support/text_utils.hpp>
 #include <string>
 #include <utility>
@@ -18,7 +19,10 @@ namespace cycfi::elements
    // toggle_selector (e.g. check_box and radio_button where the small button
    // at the left followed by some text at the right of the button.)
    ////////////////////////////////////////////////////////////////////////////
-   struct toggle_selector : element
+   // Derives from `text_writer` so the caption can be replaced at run time
+   // (a language switch replaces the string in place rather than rebuilding
+   // the control).
+   struct toggle_selector : element, text_writer
    {
                               // `scale` は 1.0 = テーマ既定サイズ。 >1.0 で
                               // ラベルフォント・インジケータ・余白を一括拡大する
@@ -31,6 +35,13 @@ namespace cycfi::elements
       view_limits             limits(basic_context const& ctx) const override;
       bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
       bool                    wants_control() const override;
+
+      // text_writer. The caption width feeds limits(), so the owner must be
+      // laid out again after this — the string store bumps the layout
+      // revision, which the host turns into a refresh.
+      void                    set_text(string_view text) override
+                              { _text = std::string(text); }
+      std::string const&      get_text() const { return _text; }
 
       std::string             _text;
       float                   _scale = 1.0f;

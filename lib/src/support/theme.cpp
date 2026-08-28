@@ -26,6 +26,8 @@ namespace cycfi::elements
     , slide_button_base_color    {rgba(127, 127, 127, 100)}
     , slide_button_thumb_color   {rgba(240, 240, 240, 200)}
     , active_tab_color           {colors::gray[50]}
+    , picker_bg_color           {colors::black}
+    , picker_fg_color           {colors::white}
 
     , controls_color             {rgba(18, 49, 85, 200)}
     , controls_frame_stroke_width{1.5}

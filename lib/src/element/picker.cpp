@@ -45,16 +45,18 @@ namespace cycfi::elements
       draw_state pick_draw_state(bool focused, bool enabled)
       {
          draw_state s;
+         auto const& thm = get_theme();
          if (focused)
          {
-            s.bg = colors::white;
-            s.fg = colors::black;
+            // Focused inverts the picker's own two colours.
+            s.bg = thm.picker_fg_color;
+            s.fg = thm.picker_bg_color;
             s.draw_frame = false;
          }
          else
          {
-            s.bg = colors::black;
-            s.fg = colors::white;
+            s.bg = thm.picker_bg_color;
+            s.fg = thm.picker_fg_color;
             s.draw_frame = true;
          }
          if (!enabled)
@@ -73,7 +75,8 @@ namespace cycfi::elements
          if (ds.draw_frame)
          {
             cnv.line_width(2.0f);
-            cnv.stroke_style(colors::white.opacity(enabled ? 1.0f : get_theme().disabled_opacity));
+            cnv.stroke_style(get_theme().picker_fg_color.opacity(
+               enabled ? 1.0f : get_theme().disabled_opacity));
             cnv.stroke_rect(r.inset(1, 1));
          }
       }
@@ -584,9 +587,16 @@ namespace cycfi::elements
       bool enabled = ctx.enabled;
       auto outer_ds = pick_draw_state(_has_focus, enabled);
 
+      // The picker's two colours come from the theme (default: black on
+      // white), so a light theme does not leave a black slab here.
+      auto const& thm = get_theme();
+      auto const a = enabled ? 1.0f : thm.disabled_opacity;
+      auto const bg = thm.picker_bg_color;
+      auto const fg = thm.picker_fg_color;
+
       cnv.line_width(2.0f);
-      cnv.stroke_style(colors::white.opacity(enabled ? 1.0f : get_theme().disabled_opacity));
-      cnv.fill_style(colors::black.opacity(enabled ? 1.0f : get_theme().disabled_opacity));
+      cnv.stroke_style(fg.opacity(a));
+      cnv.fill_style(bg.opacity(a));
       cnv.fill_rect(bounds);
       cnv.stroke_rect(bounds.inset(1, 1));
 
@@ -612,14 +622,14 @@ namespace cycfi::elements
 
          if (is_selected)
          {
-            auto a = enabled ? 1.0f : get_theme().disabled_opacity;
-            cnv.fill_style(colors::white.opacity(a));
+            // Selected segment inverts the pair.
+            cnv.fill_style(fg.opacity(a));
             cnv.fill_rect(seg.inset(2, 2));
-            cnv.fill_style(colors::black.opacity(a));
+            cnv.fill_style(bg.opacity(a));
          }
          else
          {
-            cnv.fill_style(colors::white.opacity(enabled ? 1.0f : get_theme().disabled_opacity));
+            cnv.fill_style(fg.opacity(a));
          }
 
          cnv.text_align(cnv.center | cnv.middle);
@@ -628,7 +638,7 @@ namespace cycfi::elements
          if (i + 1 < _options.size())
          {
             cnv.line_width(1.0f);
-            cnv.stroke_style(colors::white.opacity((enabled ? 1.0f : get_theme().disabled_opacity) * 0.6f));
+            cnv.stroke_style(fg.opacity(a * 0.6f));
             cnv.begin_path();
             cnv.move_to({seg.right, bounds.top + 2.0f});
             cnv.line_to({seg.right, bounds.bottom - 2.0f});

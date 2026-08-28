@@ -659,6 +659,15 @@ namespace cycfi { namespace elements
          // gw ビルドは正規化も既定もホスト (エンジン) 側で行う。
          if (m.entry->variable)
          {
+            // font_descr の weight (font_descr::bold() / PSD 由来の
+            // "NotoSansJP-Bold" 等の名前解決) を wght 軸へ落とす。 可変
+            // フォントでは登録エントリが 1 本しかないので、 これをやらないと
+            // weight 指定が「一番近いエントリ探し」で消えて黙って Regular に
+            // なる。 weight_enum は CSS 値の 1/10 (bold=70 → wght=700)。
+            // 明示 suffix > descr._weight > set_default_variations > 400。
+            if (descr._weight != font_constants::weight_normal)
+               m.suffix = merge_suffix_axes(std::move(m.suffix),
+                  "wght=" + std::to_string(int(descr._weight) * 10));
             {
                std::lock_guard<std::mutex> lock(font_map_mutex());
                auto it = default_variations_map().find(m.family);
