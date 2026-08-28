@@ -11,6 +11,7 @@
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 #include <elements/element/block_text.hpp>       // text_area (ホスト折返し + 文字送り)
+#include <elements/element/tracker.hpp>  // ドラッグ追跡 (drag_events / drag_at_var)
 #include <elements/element/image.hpp>            // ce::image (mem:// サムネ再ロード)
 #include <elements_modal/modal.h>                // refresh_mem_image 宣言
 
@@ -1522,7 +1523,12 @@ struct hover_link_wire
 class LayoutBuilder
 {
 public:
-	explicit LayoutBuilder(event_callback cb) : _cb(std::move(cb)) {}
+	explicit LayoutBuilder(event_callback cb,
+	                       std::shared_ptr<drag_callback> drag_slot = {})
+	 : _cb(std::move(cb)), _drag_slot(std::move(drag_slot)) {}
+
+	// ドラッグ通知の receiver スロット (中身はホストが後から差し替える)。
+	std::shared_ptr<drag_callback> _drag_slot;
 
 	void set_default_locale(std::string locale) { _default_locale = std::move(locale); }
 	void set_resource_base(std::string base) { _resource_base = std::move(base); }
@@ -2216,6 +2222,155 @@ private:
 
 } // anonymous (vars_on_hover)
 
+//---------------------------------------------------------------------------
+// "drag_events" / "drag_at_var" — 掴んで動かす
+//
+//   出口は 2 つあり、 どちらも同じ proxy から出る:
+//     "drag_at_var": "map_at"  … ドラッグ中の位置を "x,y" で変数へ書く。
+//         同じ変数を canvas 子の "at_var" に挿すと、 ホストの実装なしで
+//         «掴んだ絵がついてくる» が成立する。 フレーム同期なので滑らか。
+//     "drag_events": true      … ホストへ begin / move / end を通知する
+//         (overlay_session::set_drag_callback)。 «どこで離したか» のような
+//         判断をホスト側でしたいとき用。 通知は非同期になり得るので、
+//         見た目の追従は上の変数側に任せるのがよい。
+//
+//   "drag_bounds": [x, y, w, h] を書くと、 位置をその矩形内に収める
+//   (絵の左上が入る範囲。 はみ出して行方不明になるのを防ぐ)。
+//
+//   tracker が下地。 tracker::click / drag は先に中身へ転送してから追跡を
+//   始めるので、 ボタンに付けてもボタンのクリックは効く。
+//---------------------------------------------------------------------------
+namespace {
+
+struct drag_spec
+{
+	std::string id;
+	bool        events = false;
+	std::string at_var;
+	ce::rect    at{0, 0, 0, 0};        // 元の "at" (サイズと初期位置)
+	bool        has_bounds = false;
+	ce::rect    bounds{0, 0, 0, 0};
+};
+
+template <typename Subject>
+class drag_element : public ce::tracker<ce::proxy<Subject>>
+{
+public:
+
+	using base_type = ce::tracker<ce::proxy<Subject>>;
+
+	drag_element(Subject subject, drag_spec spec,
+	             std::shared_ptr<VariableStore> vars,
+	             std::shared_ptr<drag_callback> slot)
+	 : base_type(std::move(subject))
+	 , _spec(std::move(spec))
+	 , _vars(std::move(vars))
+	 , _slot(std::move(slot))
+	{}
+
+	void begin_tracking(ce::context const& /*ctx*/,
+	                    ce::tracker_info& t) override
+	{
+		// 起点は «いまの位置»。 at_var に前回の位置が残っていればそれを使う
+		// (2 回目以降のドラッグが元位置へ戻らないように)。
+		_origin_x = _spec.at.left;
+		_origin_y = _spec.at.top;
+		if (!_spec.at_var.empty() && _vars) {
+			if (auto* cur = _vars->get(_spec.at_var)) {
+				float nx = 0, ny = 0;
+				if (std::sscanf(cur->c_str(), " %f , %f", &nx, &ny) >= 2) {
+					_origin_x = nx;
+					_origin_y = ny;
+				}
+			}
+		}
+		emit(drag_event::phase::begin, t);
+	}
+
+	void keep_tracking(ce::context const& /*ctx*/,
+	                   ce::tracker_info& t) override
+	{
+		publish_at(t);
+		emit(drag_event::phase::move, t);
+	}
+
+	void end_tracking(ce::context const& /*ctx*/,
+	                  ce::tracker_info& t) override
+	{
+		publish_at(t);
+		emit(drag_event::phase::end, t);
+	}
+
+private:
+
+	void publish_at(ce::tracker_info const& t)
+	{
+		if (_spec.at_var.empty() || !_vars) return;
+		float nx = _origin_x + (t.current.x - t.start.x);
+		float ny = _origin_y + (t.current.y - t.start.y);
+		if (_spec.has_bounds) {
+			// 絵の «左上» が収まる範囲へ丸める。 幅/高さぶんを差し引くので、
+			// 絵全体が bounds の中に収まる。
+			float max_x = _spec.bounds.right - _spec.at.width();
+			float max_y = _spec.bounds.bottom - _spec.at.height();
+			if (max_x < _spec.bounds.left) max_x = _spec.bounds.left;
+			if (max_y < _spec.bounds.top)  max_y = _spec.bounds.top;
+			if (nx < _spec.bounds.left) nx = _spec.bounds.left;
+			if (ny < _spec.bounds.top)  ny = _spec.bounds.top;
+			if (nx > max_x) nx = max_x;
+			if (ny > max_y) ny = max_y;
+		}
+		char buf[64];
+		std::snprintf(buf, sizeof(buf), "%.0f,%.0f", nx, ny);
+		_vars->set(_spec.at_var, buf);
+	}
+
+	void emit(drag_event::phase ph, ce::tracker_info const& t)
+	{
+		if (!_spec.events || !_slot || !*_slot) return;
+		drag_event ev;
+		ev.id        = _spec.id;
+		ev.ph        = ph;
+		ev.x         = t.current.x;
+		ev.y         = t.current.y;
+		ev.dx        = (ph == drag_event::phase::begin)
+		                 ? 0.0f : t.current.x - t.previous.x;
+		ev.dy        = (ph == drag_event::phase::begin)
+		                 ? 0.0f : t.current.y - t.previous.y;
+		ev.start_x   = t.start.x;
+		ev.start_y   = t.start.y;
+		ev.modifiers = t.modifiers;
+		(*_slot)(ev);
+	}
+
+	drag_spec                      _spec;
+	std::shared_ptr<VariableStore> _vars;
+	std::shared_ptr<drag_callback> _slot;
+	float                          _origin_x = 0.0f;
+	float                          _origin_y = 0.0f;
+};
+
+} // anonymous (drag)
+
+element_ptr apply_drag(const picojson::object& o, element_ptr el,
+                       std::shared_ptr<VariableStore> vars,
+                       std::shared_ptr<drag_callback> slot)
+{
+	drag_spec spec;
+	spec.events = truthy_field(get_field(o, "drag_events"));
+	spec.at_var = string_or(o, "drag_at_var");
+	if ((!spec.events && spec.at_var.empty()) || !el) return el;
+	spec.id = string_or(o, "id");
+	if (auto* a = get_array(o, "at"); a && a->size() >= 4)
+		spec.at = rect_from_xywh(*a);
+	if (auto* b = get_array(o, "drag_bounds"); b && b->size() >= 4) {
+		spec.bounds = rect_from_xywh(*b);
+		spec.has_bounds = true;
+	}
+	return ce::share(drag_element(ce::hold_any(std::move(el)), std::move(spec),
+	                              std::move(vars), std::move(slot)));
+}
+
 element_ptr apply_hover_vars(const picojson::object& o, element_ptr el,
                              std::shared_ptr<VariableStore> vars)
 {
@@ -2510,6 +2665,8 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_focus_point(o, std::move(el));
 	// "vars_on_hover" 指定があれば hover 連動の変数書換 proxy で包む。
 	if (el) el = apply_hover_vars(o, std::move(el), _vars);
+	// "drag_events" / "drag_at_var" 指定があればドラッグ追跡 proxy で包む。
+	if (el) el = apply_drag(o, std::move(el), _vars, _drag_slot);
 	// "enabled_var" 指定がボタン以外に付いていたら、 無効時フェード proxy で包む。
 	// (ボタンは basic_button::enable で自前にフェードするので対象外)
 	if (el) el = apply_enabled_fade(o, std::move(el));
@@ -6989,7 +7146,8 @@ static void apply_font_languages(const picojson::object& o)
 // Top level parsing
 //---------------------------------------------------------------------------
 parsed_layout build_top_level(const picojson::value& root, event_callback cb,
-                              const std::string& resource_base)
+                              const std::string& resource_base,
+                              std::shared_ptr<drag_callback> drag_slot)
 {
 	parsed_layout result;
 	if (!root.is<picojson::object>()) {
@@ -7042,7 +7200,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		}
 	}
 
-	LayoutBuilder builder(std::move(cb));
+	LayoutBuilder builder(std::move(cb), std::move(drag_slot));
 	if (!resource_base.empty()) {
 		builder.set_resource_base(resource_base);
 	}
@@ -7414,7 +7572,8 @@ std::shared_ptr<cycfi::elements::element> parsed_layout::pick_initial_focus() co
 
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb,
-                                const std::string& resource_base)
+                                const std::string& resource_base,
+                                std::shared_ptr<drag_callback> drag_slot)
 {
 	// JSONC 前処理 (const + cbegin/cend で渡す。 non-const iterator だと
 	// picojson の template instance の都合で parse 結果が破壊されるケースがある)。
@@ -7427,7 +7586,7 @@ parsed_layout parse_from_string(const std::string& json_utf8,
 		em_logf("elements_modal: parse error: %s", err.c_str());
 		return {};
 	}
-	return build_top_level(v, std::move(cb), resource_base);
+	return build_top_level(v, std::move(cb), resource_base, std::move(drag_slot));
 }
 
 //---------------------------------------------------------------------------

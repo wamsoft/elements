@@ -205,6 +205,38 @@ using event_callback = std::function<void(
 	bool is_button_click,
 	const value_t& payload)>;
 
+//---------------------------------------------------------------------------
+//! @brief ドラッグ通知。 widget に "drag_events": true を書いた要素で、
+//!        押下 → 移動 → 離す の一連が id つきで届く。
+//!
+//!  «掴んで動かす» の **見た目** はホストを介さず組める (widget の
+//!  "drag_at_var" が "x,y" を変数へ書き、 同じ変数を "at_var" に挿すと
+//!  そのまま動く)。 このイベントは «どこで離したか» のような **判断**を
+//!  ホスト側でしたいときに使う。
+//!
+//!  座標は view logical (画面 JSON に書いた座標系)。 phase ごとの意味:
+//!    begin … 押下。 start と current は同じ
+//!    move  … ドラッグ中。 押下したまま動いた分だけ届く
+//!    end   … 離した。 current は離した位置
+//---------------------------------------------------------------------------
+struct drag_event
+{
+	enum class phase { begin, move, end };
+
+	std::string id;         //!< widget の "id"
+	phase       ph = phase::begin;
+	float       x = 0.0f;   //!< 現在位置 (view 座標)
+	float       y = 0.0f;
+	float       dx = 0.0f;  //!< 前回の通知からの差分
+	float       dy = 0.0f;
+	float       start_x = 0.0f;  //!< 掴んだ位置
+	float       start_y = 0.0f;
+	int         modifiers = 0;   //!< 押されている修飾キー
+};
+
+//! @brief drag_event の通知先。 overlay_session::set_drag_callback() で設定。
+using drag_callback = std::function<void(const drag_event&)>;
+
 //! @brief 独立 SDL_Window 経由のモーダル実行設定。
 struct config
 {
@@ -396,6 +428,10 @@ public:
 	//! 画面遷移をまたいで言語を保ちたい場合、 ホストは現在言語を保持して
 	//! 新画面の start() 後に再度呼ぶ (各画面は毎回作り直されるため)。
 	void set_language(const std::string& lang);
+
+	//! @brief ドラッグ通知の receiver を設定する ("drag_events": true の widget)。
+	//! start() の前後どちらで呼んでもよい (差し替えも可。 空で解除)。
+	void set_drag_callback(drag_callback cb);
 
 	//! @brief 現在の表示言語。 一度も set_language していない場合は JSON の
 	//! "lang"、 それも無ければ空文字列。

@@ -254,6 +254,10 @@ struct overlay_session::impl
 	// 任意の外部 callback (ホスト側の event handler ブリッジ用など)
 	event_callback external_cb;
 
+	// ドラッグ通知の receiver スロット。 build 済みの widget が «中身» を見る
+	// ので、 start() の前後どちらでも set_drag_callback() で差し替えられる。
+	std::shared_ptr<drag_callback> drag_slot = std::make_shared<drag_callback>();
+
 	// focus 変化に追従する「変数 → label set_text」の poll。 毎 render 前と
 	// 主要な入力イベント処理後に呼ぶ。 JSON 側に vars_on_focus / text_var が
 	// 一切ない場合は null。
@@ -718,7 +722,7 @@ bool overlay_session::start(const std::string& json_utf8,
 		[p](std::string_view id, bool is_btn, const value_t& v) {
 			p->fire(id, is_btn, v);
 		},
-		resource_base);
+		resource_base, p->drag_slot);
 
 	if (!layout.root) {
 		em_logf("overlay_session::start: layout parse failed");
@@ -967,6 +971,14 @@ bool apply_font_language(const std::string& lang)
 }
 
 } // namespace
+
+void overlay_session::set_drag_callback(drag_callback cb)
+{
+	if (!_impl) return;
+	// スロットの «中身» を差し替える。 build 済みの widget はスロットを
+	// 共有しているので、 start() 後に設定しても届く。
+	*_impl->drag_slot = std::move(cb);
+}
 
 void overlay_session::set_language(const std::string& lang)
 {

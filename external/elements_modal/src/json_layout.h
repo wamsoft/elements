@@ -229,9 +229,13 @@ input_defaults_data parse_input_defaults(const std::string& json_utf8);
 //!        失敗時 root=nullptr。 詳細は SDL_Log に出力。
 //! @param resource_base 画像など外部リソースの相対パスを解決するベース
 //!                       ディレクトリ (末尾 '/' 推奨)。 空のときは CWD 解決。
+//! @param drag_slot ドラッグ通知の receiver スロット。 中身は後から差し替えて
+//!                   よい (overlay_session::set_drag_callback がそうする) ので、
+//!                   build 済みの widget も最新の receiver を見る。
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb,
-                                const std::string& resource_base = {});
+                                const std::string& resource_base = {},
+                                std::shared_ptr<drag_callback> drag_slot = {});
 
 // app_manifest / parse_app_manifest() は modal.h (public) に定義済。
 
