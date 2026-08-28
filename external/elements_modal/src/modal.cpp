@@ -188,8 +188,19 @@ bool run_modal(const std::string& json_utf8,
 	// JSON の "initial_focus": true 指定の要素にフォーカスを当てる。 指定が
 	// なければ Elements 標準動作 (focus なし) のまま。 view::focus() は asio::post
 	// で次の idle に deferred されるので、 描画タイミングは気にしなくてよい。
-	if (layout.initial_focus) {
-		view_ptr->focus(layout.initial_focus);
+	// 候補の選定 (先頭候補が無効なら次の有効な候補へフォールバック) は
+	// 次 idle まで遅延する — show 直後にホストが set_var した enabled_var を
+	// 反映してから判定するため (例: cmd_enabled を show 後に注入する画面)。
+	if (!layout.initial_focus_list.empty() || layout.initial_focus) {
+		auto cands = layout.initial_focus_list;
+		auto fb    = layout.initial_focus;
+		auto* vraw = view_ptr.get();
+		view_ptr->post([vraw, cands = std::move(cands), fb = std::move(fb)]() {
+			for (auto const& e : cands) {
+				if (e && e->is_enabled()) { vraw->focus(e); return; }
+			}
+			if (fb) vraw->focus(fb);
+		});
 	}
 
 	// 2 パス目: 自然サイズ (limits.min) で SDL_Window を作る。 cfg の値は

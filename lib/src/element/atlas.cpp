@@ -178,6 +178,11 @@ namespace cycfi::elements
       }
       // native: 現 frame を実寸のまま bounds 中央へ (伸縮しない)。
       auto src = source_rect(ctx);
+      // 空 frame (幅/高さ 0) は «この状態では何も描かない» を意味する。
+      // focus_link 飾りで frames.normal を省略した場合の非フォーカス状態が
+      // これに当たる (elements_modal json_layout の build_atlas_image)。
+      if (src.width() <= 0 || src.height() <= 0)
+         return;
       rect dest{0, 0, src.width(), src.height()};
       ctx.canvas.draw(pixmap(), src, center(dest, ctx.bounds));
    }
@@ -461,8 +466,7 @@ namespace cycfi::elements
 
       if (num_options())
       {
-         auto font = get_theme().label_font;
-         font = font.size(font._size * font_size());
+         auto font = text_font();
          cnv.font(font);
          cnv.fill_style(_color);
          cnv.text_align(cnv.center | cnv.middle);

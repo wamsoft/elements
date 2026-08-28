@@ -3,6 +3,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/picker.hpp>
+#include <elements/element/anchored_text.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/support/text_utils.hpp>
 #include <elements/view.hpp>
@@ -81,6 +82,33 @@ namespace cycfi::elements
          }
       }
    }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // picker_text_font
+   ////////////////////////////////////////////////////////////////////////////
+   void picker_text_font::font_family(std::string name)
+   {
+      auto r = resolve_font_name(name);
+      _font_family = r.family;
+      _font_weight = r.weight;
+      _font_slant = r.slant;
+      _font_resolved = r.ok;
+   }
+
+   font_descr picker_text_font::text_font() const
+   {
+      font_descr f = get_theme().label_font;
+      f = f.size(f._size * _font_size);
+      if (_font_resolved && !_font_family.empty())
+      {
+         // _families is a string_view; _font_family (member) outlives the draw.
+         f._families = _font_family;
+         f._weight = _font_weight;
+         f._slant = _font_slant;
+      }
+      return f;
+   }
+
 
    // ==================================================================
    // cycle_picker
@@ -162,8 +190,7 @@ namespace cycfi::elements
       auto& cnv = ctx.canvas;
       float widest = 0.0f;
       float h = 0.0f;
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -187,8 +214,7 @@ namespace cycfi::elements
       auto ds = pick_draw_state(_has_focus, enabled);
       draw_body(cnv, bounds, ds, enabled);
 
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       cnv.font(font);
       cnv.fill_style(ds.fg);
 
@@ -328,8 +354,7 @@ namespace cycfi::elements
       auto& cnv = ctx.canvas;
       float widest = 0.0f;
       float h = 0.0f;
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -422,8 +447,7 @@ namespace cycfi::elements
       draw_left_triangle(cnv,  left_r,  ds.fg);
       draw_right_triangle(cnv, right_r, ds.fg);
 
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       cnv.font(font);
       cnv.fill_style(ds.fg);
       cnv.text_align(cnv.center | cnv.middle);
@@ -564,8 +588,7 @@ namespace cycfi::elements
       auto& cnv = ctx.canvas;
       float widest = 0.0f;
       float h = 0.0f;
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       for (auto const& s : _options)
       {
          auto sz = measure_text(cnv, s, font);
@@ -603,8 +626,7 @@ namespace cycfi::elements
       if (_options.empty())
          return;
 
-      auto font = label_font_descr();
-      font = font.size(font._size * _font_size);
+      auto font = text_font();
       cnv.font(font);
 
       float seg_w = bounds.width() / float(_options.size());

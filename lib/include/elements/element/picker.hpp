@@ -17,13 +17,42 @@
 namespace cycfi::elements
 {
    ////////////////////////////////////////////////////////////////////////////
+   // picker_text_font
+   //   Shared text-font state for the picker widgets. The option text is
+   //   drawn with the theme label font by default; font_family() overrides
+   //   the family (and its variable-font axes, e.g. "Noto Sans JP#wght=500").
+   //   An empty or unregistered name keeps the theme font.
+   ////////////////////////////////////////////////////////////////////////////
+   class picker_text_font
+   {
+   public:
+
+      void                    font_size(float s) { _font_size = s; }
+      float                   font_size() const  { return _font_size; }
+
+      void                    font_family(std::string name);
+      std::string const&      font_family() const { return _font_family; }
+
+      // Theme label font with font_size()/font_family() applied.
+      font_descr              text_font() const;
+
+   protected:
+
+      float                   _font_size = 1.0f;
+      std::string             _font_family;
+      unsigned char           _font_weight = font_constants::weight_normal;
+      unsigned char           _font_slant  = font_constants::slant_normal;
+      bool                    _font_resolved = false;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
    // cycle_picker
    //   < current option >
    //   Left/Right (and dpad_x / left_stick_x) cycle through options.
    //   Up/Down pass through to view-level focus navigation.
    //   Selection wraps around at the ends.
    ////////////////////////////////////////////////////////////////////////////
-   class cycle_picker : public element
+   class cycle_picker : public element, public picker_text_font
    {
    public:
 
@@ -57,9 +86,6 @@ namespace cycfi::elements
       std::size_t             num_options() const { return _options.size(); }
       std::string const&      option_text(std::size_t i) const { return _options[i]; }
 
-      void                    font_size(float s) { _font_size = s; }
-      float                   font_size() const  { return _font_size; }
-
       bool                    focused() const { return _has_focus; }
 
       on_change_function      on_change;
@@ -70,7 +96,6 @@ namespace cycfi::elements
       std::vector<bool>       _enabled;   // empty = all enabled
       std::size_t             _index;
       bool                    _has_focus = false;
-      float                   _font_size = 1.0f;
       bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 
@@ -84,7 +109,7 @@ namespace cycfi::elements
    //   Click on left box decrements, right box increments, center just
    //   acquires focus.
    ////////////////////////////////////////////////////////////////////////////
-   class framed_cycle_picker : public element
+   class framed_cycle_picker : public element, public picker_text_font
    {
    public:
 
@@ -113,9 +138,6 @@ namespace cycfi::elements
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
-      void                    font_size(float s) { _font_size = s; }
-      float                   font_size() const  { return _font_size; }
-
       bool                    focused() const { return _has_focus; }
 
       on_change_function      on_change;
@@ -128,7 +150,6 @@ namespace cycfi::elements
       std::vector<std::string> _options;
       std::size_t             _index;
       bool                    _has_focus = false;
-      float                   _font_size = 1.0f;
       bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 
@@ -139,7 +160,7 @@ namespace cycfi::elements
    //   Stops at the ends — does not wrap — so end-of-row Right falls
    //   through to view-level focus navigation.
    ////////////////////////////////////////////////////////////////////////////
-   class segmented_picker : public element
+   class segmented_picker : public element, public picker_text_font
    {
    public:
 
@@ -168,9 +189,6 @@ namespace cycfi::elements
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
-      void                    font_size(float s) { _font_size = s; }
-      float                   font_size() const  { return _font_size; }
-
       bool                    focused() const { return _has_focus; }
 
       on_change_function      on_change;
@@ -180,7 +198,6 @@ namespace cycfi::elements
       std::vector<std::string> _options;
       std::size_t             _index;
       bool                    _has_focus = false;
-      float                   _font_size = 1.0f;
       bool                    _pad_engaged = false;   // pad-axis hysteresis state
    };
 

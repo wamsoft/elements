@@ -237,6 +237,20 @@ struct overlay_session::impl
 	ce::point last_cursor{0.0f, 0.0f};
 	bool mouse_down = false;
 
+	// 開いた直後の「置きっぱなしポインタ」から初期フォーカスを守るゲート。
+	//
+	// hover_focus が有効だとフォーカスはポインタに追従するが、 画面を開いた
+	// 瞬間はユーザがその項目へポインタを「動かした」わけではなく、 直前の
+	// 操作でたまたまそこに残っているだけ。 そのまま追従させると宣言した
+	// initial_focus が即座に上書きされ、 開くたびに違う項目が選ばれる
+	// (どこでボタンを押したかで決まってしまう)。
+	// そこで start() で hover_focus をいったん切り、 **実際にポインタが
+	// 動いたら** 元の設定へ戻す。 hover の見た目 (hilite) は切らないので
+	// 「ポインタの下が光っているが、 選択は初期フォーカス」の状態になる。
+	bool hover_gate      = false;   // ゲート中か (hover_focus を伏せている)
+	bool hover_gate_seen = false;   // 基準位置を控えたか
+	ce::point hover_gate_pos{0.0f, 0.0f};
+
 	// 任意の外部 callback (ホスト側の event handler ブリッジ用など)
 	event_callback external_cb;
 
@@ -788,10 +802,30 @@ bool overlay_session::start(const std::string& json_utf8,
 	// 同一入力に対する明示宣言が優先される。
 	if (layout.apply_input) layout.apply_input(*_impl->view);
 
+	// 置きっぱなしのポインタで初期フォーカスが流れないようにゲートを張る
+	// (impl::hover_gate の説明を参照)。 apply_input が hover_focus の
+	// JSON 設定を当てた後でないと、 元の設定を取り違える。
+	if (_impl->view->hover_focus()) {
+		_impl->view->hover_focus(false);
+		_impl->hover_gate      = true;
+		_impl->hover_gate_seen = false;
+	}
+
 	// JSON "initial_focus": true 指定があればフォーカス。 view::focus() は
 	// asio::post で次 idle へデファードされるので順序問題なし。
-	if (layout.initial_focus) {
-		_impl->view->focus(layout.initial_focus);
+	// 候補の選定 (先頭候補が無効なら次の有効な候補へフォールバック) は
+	// 次 idle まで遅延する — show 直後にホストが set_var した enabled_var を
+	// 反映してから判定するため (例: cmd_enabled を show 後に注入する画面)。
+	if (!layout.initial_focus_list.empty() || layout.initial_focus) {
+		auto cands = layout.initial_focus_list;
+		auto fb    = layout.initial_focus;
+		auto* vraw = _impl->view.get();
+		_impl->view->post([vraw, cands = std::move(cands), fb = std::move(fb)]() {
+			for (auto const& e : cands) {
+				if (e && e->is_enabled()) { vraw->focus(e); return; }
+			}
+			if (fb) vraw->focus(fb);
+		});
 	}
 
 	// "input":{"initial_focus":"<id>"} — id 指定の初期フォーカス。 要素側
@@ -1464,6 +1498,8 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 	if (!active()) return;
 	_impl->needs_render_ = true;   // 入力は押下状態等の見た目を変え得る
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
+	// クリックは明確なマウス操作なのでナビ種別を戻す (on_mouse_move 参照)
+	_impl->last_nav_source = impl::nav_source::mouse;
 	// mouse バインド (既定: 右click→cancel)。 マッチしたら action を発火して
 	// クリック自体は消費する (widget へは流さない)。 "none" は消費のみ。
 	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
@@ -1516,7 +1552,33 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	// 合成 move が毎回無変化の全面再描画になっていた)。 drag 中の見た目変化も
 	// tracker widget が refresh(rect) を発行する契約。
 	auto p = _impl->to_view(sx, sy);
+	// カーソルが実際に動いたらナビ種別を mouse へ戻す。
+	//
+	// ここを更新しないと last_nav_source が key のまま張り付き、 一度でも
+	// キー/パッドで操作した後は **マウスで hover フォーカスが動くたびに
+	// カーソルを warp** してしまう。 warp がまた hover を動かすので、
+	// 隣接する 2 項目の間でフォーカスとポインタが振動し続け、 グリッド状の
+	// UI (ソフトウェアキーボード等) が操作不能になる。 実カーソルまで
+	// 引きずられるためアプリ外のマウス操作にも影響する。
+	// パッドの斜め入力でフォーカスが上下に振動するのも同じ経路
+	// (warp の合成 move → hover → 再 warp)。
+	if (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y)
+		_impl->last_nav_source = impl::nav_source::mouse;
 	_impl->last_cursor = p;
+
+	// 開いた直後の置きっぱなしポインタで初期フォーカスが流れないようにする
+	// ゲートを、 実際にポインタが動いた時点で外す (impl::hover_gate 参照)。
+	// 最初に届いた位置を「開いたときの位置」として控え、 そこから動いたら解除。
+	if (_impl->hover_gate) {
+		if (!_impl->hover_gate_seen) {
+			_impl->hover_gate_pos  = p;
+			_impl->hover_gate_seen = true;
+		} else if (p.x != _impl->hover_gate_pos.x ||
+		           p.y != _impl->hover_gate_pos.y) {
+			_impl->hover_gate = false;
+			_impl->view->hover_focus(true);
+		}
+	}
 	if (_impl->mouse_down) {
 		ce::mouse_button btn{
 			.down = true, .num_clicks = 1,

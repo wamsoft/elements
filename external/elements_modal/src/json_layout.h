@@ -82,9 +82,18 @@ struct parsed_layout
 	overlay_base placement_base = overlay_base::window;
 
 	//! 初期キーボードフォーカスを当てる要素 (任意)。
-	//! JSON で要素に "initial_focus": true を付けたものから単一選択。
-	//! ホストは view.content() の後に view.focus(initial_focus) を呼ぶ。
+	//! JSON で要素に "initial_focus": true を付けたものから単一選択 (先勝ち)。
+	//! ホストは view.content() の後に view.focus(pick_initial_focus()) を呼ぶ。
 	std::shared_ptr<cycfi::elements::element> initial_focus;
+
+	//! "initial_focus": true を付けた要素の一覧 (build 順)。 先頭要素が
+	//! enabled_var 等で無効なとき、 次の候補へフォールバックするために持つ
+	//! (例: SAVE が無効な場面ではその次に印を付けた MAP へ初期フォーカス)。
+	std::vector<std::shared_ptr<cycfi::elements::element>> initial_focus_list;
+
+	//! initial_focus_list から最初の有効 (is_enabled) な要素を返す。
+	//! すべて無効 / リストが空のときは従来どおり initial_focus (先勝ち要素)。
+	std::shared_ptr<cycfi::elements::element> pick_initial_focus() const;
 
 	//! view へ input 設定 / バインド / ショートカットを適用するクロージャ。
 	//! 中で view.arrow_focus_navigation / dpad_mode / bind_pad_button /

@@ -1615,6 +1615,17 @@ public:
 	// "initial_focus": true が指定された要素 (なければ nullptr)。
 	// build() 完了後、 ホストが view.focus(...) に渡すために取得する。
 	element_ptr take_initial_focus() { return std::move(_initial_focus); }
+	std::vector<element_ptr> take_initial_focus_list()
+	{
+		// 優先度 (小さいほど先)、 同値は build 順の stable sort
+		std::stable_sort(_initial_focus_list.begin(), _initial_focus_list.end(),
+			[](auto const& a, auto const& b) { return a.first < b.first; });
+		std::vector<element_ptr> ret;
+		ret.reserve(_initial_focus_list.size());
+		for (auto& p : _initial_focus_list) ret.push_back(std::move(p.second));
+		_initial_focus_list.clear();
+		return ret;
+	}
 
 	// id 付き要素 → element_ptr のマップ。 shortcut の "target": "<id>" 解決
 	// + ホスト側 focus_by_id 用。 ランタイム複数参照ありうるので shared で
@@ -1764,6 +1775,8 @@ private:
 	// widget で参照されたら同じ pixmap_ptr を共有。
 	std::map<std::string, cycfi::elements::pixmap_ptr> _atlases;
 	element_ptr _initial_focus;
+	// initial_focus 候補: {優先度, 要素} (take 時に優先度順へ整列)
+	std::vector<std::pair<int, element_ptr>> _initial_focus_list;
 	std::map<std::string, element_ptr> _id_to_element;
 	std::vector<std::pair<std::string, std::string>> _id_types;  // 登録順 id+type
 	std::set<std::string> _close_button_ids;
@@ -2712,10 +2725,23 @@ void LayoutBuilder::fire_value(const std::string& id, const value_t& payload)
 void LayoutBuilder::note_initial_focus(const picojson::object& o,
                                        const element_ptr& shared)
 {
-	if (_initial_focus) return;   // 先勝ち
-	if (truthy_field(get_field(o, "initial_focus"))) {
-		_initial_focus = shared;
+	auto* v = get_field(o, "initial_focus");
+	if (!v) return;
+	// true = 優先度 0。 数値なら明示優先度 (小さいほど優先)。 JSON の出現順に
+	// 依存せず「通常は SAVE、 SAVE が無効なら MAP」のような序列を書けるように
+	// する。 同一優先度は build 順。 選択は parsed_layout::pick_initial_focus。
+	int prio;
+	if (v->is<bool>()) {
+		if (!v->get<bool>()) return;
+		prio = 0;
+	} else if (v->is<double>()) {
+		prio = (int)v->get<double>();
+	} else {
+		if (!truthy_field(v)) return;
+		prio = 0;
 	}
+	_initial_focus_list.push_back({prio, shared});
+	if (!_initial_focus && prio == 0) _initial_focus = shared;
 }
 
 void LayoutBuilder::register_id(const picojson::object& o,
@@ -3797,6 +3823,9 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 
 	// picker は内部で `font._size * _font_size` 計算するので scale を渡す。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
+	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
+	// テーマ既定 (従来どおり)。
+	std::string picker_font = string_or(o, "font");
 
 	auto cb_id = id;
 	auto user_cb = _cb;
@@ -3815,6 +3844,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -3825,6 +3855,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::framed_cycle_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -3833,6 +3864,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
+		if (!picker_font.empty()) p->font_family(picker_font);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -4856,17 +4888,25 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 	// 行の下地のように「自分はフォーカスを取らないが、 行内のコントロールが
 	// フォーカスされていることを示したい」飾りのためのもの。 focus_link に
 	// 指定した id がフォーカスを持っている間だけ hilite を描く。
+	//
+	// "normal" は省略可 (= 非フォーカス中は何も描かない)。 素材が 1 枚しか
+	// 無いフォーカスインジケータ (「ぽっち」を当たっている項目にだけ出す) は
+	// これで組める。 省略時は空矩形を frame 0 に置き、 atlas_sprite が空
+	// frame を描画スキップする。 "hilite" は必須。
 	if (auto* fv = get_field(o, "frames");
 	    fv && fv->is<picojson::object>() && get_field(o, "focus_link")) {
 		const auto& fr = fv->get<picojson::object>();
 		auto* n_arr = get_array(fr, "normal");
 		auto* h_arr = get_array(fr, "hilite");
-		if (!n_arr || n_arr->size() < 4 || !h_arr || h_arr->size() < 4) {
+		if (n_arr && n_arr->size() < 4) n_arr = nullptr;   // 壊れた normal は無指定扱い
+		if (!h_arr || h_arr->size() < 4) {
 			em_logf("elements_modal: atlas_image \"%s\" focus_link needs "
-			        "frames.normal / frames.hilite as [x,y,w,h]",
+			        "frames.hilite as [x,y,w,h] (frames.normal is optional; "
+			        "omitting it draws nothing while unfocused)",
 			        atlas_name.c_str());
 		} else {
-			const ce::rect r_normal = parse_xywh(*n_arr);
+			// normal 無指定 = 空矩形 (描画スキップ)。
+			const ce::rect r_normal = n_arr ? parse_xywh(*n_arr) : ce::rect{};
 			const ce::rect r_hilite = parse_xywh(*h_arr);
 			// "focus_link" は id 文字列、 または id の配列 (1 行に複数の
 			// コントロールがある場合は、 そのどれかが focus されていれば hilite)。
@@ -4900,6 +4940,18 @@ element_ptr LayoutBuilder::build_atlas_image(const picojson::object& o)
 			// 行領域のどこへマウスオーバーしてもリンク先コントロールへ
 			// フォーカスが移るように、 ホバートリガのプロキシで包んで返す
 			// (SGOCT 系フィードバック: クリック可能領域の上だけだと分かりづらい)
+			//
+			// ただしこのプロキシは wants_control() = true なので、 «飾りが
+			// コントロールに重なっている» 配置 (項目の角に載せるフォーカス
+			// インジケータ等) では飾りがクリックを先に受け取ってしまい、
+			// 下のボタンが押せない死角になる。 そういう飾りは
+			// "hover_focus_link": false でプロキシを外し、 従来の
+			// «クリックを一切取らない飾り» のままにする
+			// (行の下地のように重なりが無い飾りは既定の true でよい)。
+			bool hover_link = true;
+			bool_field(get_field(o, "hover_focus_link"), hover_link);
+			if (!hover_link)
+				return img;
 			auto wire = std::make_shared<hover_link_wire>();
 			_hover_link_wires.push_back({wire, targets});
 			return ce::share(hover_focus_link_element(
@@ -5583,6 +5635,21 @@ struct em_null_thumb : cycfi::elements::element
 	}
 };
 
+// thumb 形式 atlas_slider の base。 track 画像は widget 全域 (= "at"/#範囲) を
+// そのまま埋める素材 (角丸ボーダー等の枠込み) を前提にしており、 slider_base
+// 既定の「thumb がはみ出さないよう track を thumb 半分だけ内側にインセット」
+// という挙動は不要 (むしろ枠が切り詰められて見える)。 track_bounds() を
+// widget の全域そのままに上書きする。
+struct em_slider_base : cycfi::elements::basic_slider_base
+{
+	using cycfi::elements::basic_slider_base::basic_slider_base;
+	cycfi::elements::rect
+	track_bounds(cycfi::elements::context const& ctx) const override
+	{
+		return ctx.bounds;
+	}
+};
+
 // fill 形式スライダの base。 thumb (= フォーカスカーソル) の可動域と
 // クリック/ドラッグの値マッピングを、 widget 全幅ではなくゲージ部分
 // (fill_at の範囲) に合わせる。 トラック画像の両端にラベル (0 / 100 等) が
@@ -5720,7 +5787,16 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		auto thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
 		                                          /*stretch_h=*/false,
 		                                          /*stretch_v=*/false));
-		auto sl = ce::slider(ce::hold(thumb_img), ce::hold(track_img), initial);
+		// track 画像は "at"(#範囲) と同じ矩形で書き出されており、 枠の角丸
+		// ボーダーまで込みで widget 全域を表現する素材。 slider_base の既定
+		// track_bounds() は thumb がはみ出さないよう thumb 半分だけ内側に
+		// インセットするが、 このインセットのまま track を描画するとフレーム
+		// の端 (上下/左右) が切り詰められて見える。 track は widget の全域に
+		// そのまま描画する (thumb の可動域は thumb_bounds 側で別途 widget
+		// 全域基準に計算されるため、 ここを変えても操作感は変わらない)。
+		auto sl = ce::basic_slider<
+			decltype(ce::hold(thumb_img)), decltype(ce::hold(track_img)),
+			em_slider_base>(ce::hold(thumb_img), ce::hold(track_img), initial);
 		if (!id.empty()) {
 			auto cb_id = id;
 			auto user_cb = _cb;
@@ -5947,7 +6023,8 @@ element_ptr LayoutBuilder::build_atlas_number(const picojson::object& o)
 //     "right": { "normal": [x,y,w,h], "hilite": [x,y,w,h] },
 //     "left_at": [dx,dy,w,h], "right_at": [dx,dy,w,h], "text_at": [dx,dy,w,h],
 //     "options": [..] / "options_id": [..], "initial": 0,
-//     "font_size": px, "color": [r,g,b,a], "index_var": "machine" }
+//     "font_size": px, "font": "Family[#axes]", "color": [r,g,b,a],
+//     "index_var": "machine" }
 // *_at は widget bounds 左上原点の相対 px (canvas floating "at" と併用)。
 // 選択変更時に event_callback(id, false, int64_t index)。 options_id /
 // index_var の意味は cycle_picker と同じ。
@@ -6020,6 +6097,10 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 		}
 	};
 	p->font_size(fs);
+	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
+	// テーマ既定 (従来どおり)。
+	if (auto pf = string_or(o, "font"); !pf.empty()) p->font_family(pf);
+	// 色は "@名前" / "#rrggbb" も受ける (テーマの色トークン)。
 	{ ce::color tc; if (parse_color_field(o, "color", tc)) p->text_color(tc); }
 	note_focusable(id, p);
 	subscribe_picker_options(p, opt_ids);
@@ -6951,6 +7032,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		result.root = content;
 	}
 	result.initial_focus = builder.take_initial_focus();
+	result.initial_focus_list = builder.take_initial_focus_list();
 	result.close_button_ids = builder.take_close_button_ids();
 	result.animations = builder.take_animations();
 
@@ -7123,6 +7205,18 @@ input_defaults_data parse_input_defaults(const std::string& json_utf8)
 	out.actions = parse_input_actions(o);
 	out.ok = true;
 	return out;
+}
+
+// initial_focus 候補 (優先度順) から最初の有効な要素を選ぶ。
+// enabled_var で無効化された要素はフォーカスを受けられないため、 印の付いた
+// 次の候補へフォールバックする (例: SAVE 無効の場面では MAP へ)。
+// すべて無効 / 候補なしのときは従来の先勝ち要素を返す (nullptr 可)。
+std::shared_ptr<cycfi::elements::element> parsed_layout::pick_initial_focus() const
+{
+	for (auto const& e : initial_focus_list) {
+		if (e && e->is_enabled()) return e;
+	}
+	return initial_focus;
 }
 
 parsed_layout parse_from_string(const std::string& json_utf8,
