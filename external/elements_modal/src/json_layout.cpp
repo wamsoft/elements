@@ -1261,6 +1261,11 @@ std::string preprocess_jsonc(const std::string& in)
 // 「文字が古いまま残る」という分かりにくい不具合になるので安全側に倒す。
 using layout_revision = std::shared_ptr<std::uint64_t>;
 
+// 変数 1 本の値を項目列へ分解する (改行区切り / JSON 配列)。 実体は後方で定義。
+std::vector<std::string> split_list_value(const std::string& s);
+// 「一覧が入っていない」判定 (空白のみ = 未設定)。 実体は後方で定義。
+bool blank_list_value(const std::string& s);
+
 class VariableStore
 {
 public:
@@ -1999,6 +2004,65 @@ private:
 		std::weak_ptr<ce::cycle_picker> w = p;
 		_vars->subscribe(var, [w, apply](const std::string& v) {
 			if (auto sp = w.lock()) apply(*sp, v);
+		}, p);
+	}
+
+	// options_var の fallback = 画面 JSON へ直接書かれた静的 "options"。
+	// (options_id は options_var と併用しない → parse_picker_options)
+	std::vector<std::string> picker_static_options(const picojson::object& o)
+	{
+		std::vector<std::string> out;
+		if (auto* arr = get_array(o, "options")) {
+			for (const auto& v : *arr)
+				if (v.is<std::string>()) out.push_back(v.get<std::string>());
+		}
+		return out;
+	}
+
+	// "options_var": picker の**選択肢リストそのもの**を変数連動にする
+	// (cycle_picker / framed_cycle_picker / segmented_picker /
+	// atlas_cycle_picker のすべて)。 値の書式は label の "text_list_var" と
+	// 同じで、 **改行区切り** ("A\nB\nC") か、 先頭が '[' なら
+	// **JSON 配列** (["A","B","C"])。 ホストが実行時にしか知らない一覧
+	// (インストール済みフォント名、 接続中のデバイス名等) を載せるための口。
+	//
+	// 静的な "options" / "options_id" は捨てずに残す — **変数が空文字のあいだの
+	// fallback** (兼、 オーサリングツールでのプレビュー用ダミー) になる。
+	// 「まだホストから何も来ていない」と「1 件だけの空文字が来た」を区別
+	// できないと、 起動直後の picker が «空欄 1 件» になって静的 options の
+	// 意味が無くなるので、 **空文字 (空白のみを含む) は「一覧未設定」**と
+	// 決めている。 実行時に空文字を書き戻せば静的 options へ戻る。
+	//
+	// 差し替えても選択 index は維持され (範囲外なら clamp)、 on_change は
+	// 出ない (選択の意味は変わっていないため)。 ただし clamp が起きると
+	// index_var と実選択がズレるので、 差し替えのたびに実選択を index_var へ
+	// 書き戻す (連動する text_list / rect_list の辻褄が合う)。
+	//
+	// **ホストは「リスト → index」の順で set すること**。 逆順だと index が
+	// 古いリスト長で clamp されて落ちる。
+	//
+	// なお "options_var" と "options_id" (i18n) の併用は想定していない
+	// (言語切替が動的一覧を上書きしてしまう)。 options_var があるときは
+	// parse_picker_options が opt_ids を捨てるので、 i18n 側は結線されない。
+	template <typename P>
+	void wire_picker_options_var(std::shared_ptr<P> p, const picojson::object& o,
+	                             const std::string& index_var,
+	                             std::vector<std::string> fallback)
+	{
+		std::string var = string_or(o, "options_var");
+		if (var.empty() || !p) return;
+		// 初期値の取り込みは parse_picker_options 側で済んでいる (ビルド時に
+		// 変数へ既に値が入っていればそれが options になっている) ので、
+		// ここでは以後の変化だけを見る。
+		std::weak_ptr<P> w = p;
+		auto vars = _vars;
+		_vars->subscribe(var, [w, vars, index_var, fb = std::move(fallback)]
+		                      (const std::string& v) {
+			auto sp = w.lock();
+			if (!sp) return;
+			sp->set_options(blank_list_value(v) ? fb : split_list_value(v));
+			if (!index_var.empty())
+				vars->set(index_var, std::to_string(sp->index()));
 		}, p);
 	}
 
@@ -3155,6 +3219,13 @@ std::function<void()> LayoutBuilder::take_hover_poll()
 //---------------------------------------------------------------------------
 std::vector<std::string> split_lines(const std::string& s);   // 後方で定義
 
+// 「一覧そのものが入っていない」= 空白しか無い、 の判定。 options_var の
+// fallback 切替に使う (§wire_picker_options_var)。
+bool blank_list_value(const std::string& s)
+{
+	return s.find_first_not_of(" \t\r\n") == std::string::npos;
+}
+
 // "text_list_var" の値を項目列へ分解する。 2 通り受ける:
 //   - **改行区切り** … ホストが素直に組み立てられる形 ("A\nB\nC")
 //   - **JSON 配列**   … 先頭が '[' ならこちら (["A","B","C"])。 項目に改行を
@@ -4266,13 +4337,26 @@ bool LayoutBuilder::parse_picker_options(const picojson::object& o,
 		opts.reserve(opt_ids.size());
 		for (const auto& tid : opt_ids) opts.push_back(_strings->resolve(tid));
 	}
-	if (opts.empty()) {
+	// "options_var": 一覧そのものを実行時に差し替える変数 (wire_picker_options_var)。
+	// ビルド時点で値が入っていればそれを初期 options に採り、 静的な "options" /
+	// "options_id" は「変数未設定時の fallback」に降格する。 変数指定がある画面は
+	// 一覧が空のまま build されうる (ホストが後から流し込む) ので、 その場合は
+	// 「options が無い」エラーにはしない — picker 各種は空一覧でも安全に描ける。
+	bool dynamic_opts = false;
+	if (auto ov = string_or(o, "options_var"); !ov.empty()) {
+		dynamic_opts = true;
+		opt_ids.clear();   // 動的一覧は i18n 解決の対象外 (言語切替と食い合う)
+		if (auto* cur = _vars->get(ov); cur && !blank_list_value(*cur))
+			opts = split_list_value(*cur);
+		// 空白のみ (= まだホストから来ていない) なら静的 options を使う。
+	}
+	if (opts.empty() && !dynamic_opts) {
 		em_logf("elements_modal: %s without 'options'", type_name);
 		return false;
 	}
 
 	initial = 0;
-	if (auto* v = get_field(o, "initial"); v && pj_is_num(*v)) {
+	if (auto* v = get_field(o, "initial"); v && pj_is_num(*v) && !opts.empty()) {
 		auto raw = static_cast<long long>(pj_num(*v));
 		if (raw < 0) raw = 0;
 		if (static_cast<size_t>(raw) >= opts.size()) raw = static_cast<long long>(opts.size() - 1);
@@ -4339,6 +4423,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
+		wire_picker_options_var(p, o, index_var, picker_static_options(o));
 		wire_picker_enabled_var(p, o);   // 初期 mask で index が動く可能性あり
 		actual = p->index();
 		shared = p;
@@ -4350,6 +4435,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
+		wire_picker_options_var(p, o, index_var, picker_static_options(o));
 		shared = p;
 	} else {
 		auto p = std::make_shared<ce::segmented_picker>(std::move(opts), initial);
@@ -4359,6 +4445,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
+		wire_picker_options_var(p, o, index_var, picker_static_options(o));
 		shared = p;
 	}
 	register_id(o, shared);
@@ -7355,10 +7442,11 @@ element_ptr LayoutBuilder::build_atlas_number(const picojson::object& o)
 //     "left_at": [dx,dy,w,h], "right_at": [dx,dy,w,h], "text_at": [dx,dy,w,h],
 //     "options": [..] / "options_id": [..], "initial": 0,
 //     "font_size": px, "font": "Family[#axes]", "color": [r,g,b,a],
-//     "index_var": "machine" }
+//     "index_var": "machine", "options_var": "machine_list" }
 // *_at は widget bounds 左上原点の相対 px (canvas floating "at" と併用)。
 // 選択変更時に event_callback(id, false, int64_t index)。 options_id /
-// index_var の意味は cycle_picker と同じ。
+// index_var / options_var の意味は cycle_picker と同じ
+// (options_var = 一覧そのものを変数から流し込む → wire_picker_options_var)。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 {
@@ -7436,6 +7524,7 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 	note_focusable(id, p);
 	subscribe_picker_options(p, opt_ids);
 	subscribe_picker_index_var(p, index_var);
+	wire_picker_options_var(p, o, index_var, picker_static_options(o));
 	wire_picker_enabled_var(p, o);   // 初期 mask で index が動く可能性あり
 	register_id(o, p);
 	note_initial_focus(o, p);
