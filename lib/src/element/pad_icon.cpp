@@ -73,6 +73,7 @@ namespace cycfi::elements
             // shoulders / triggers
             {"lb", "xbox_lb"}, {"rb", "xbox_rb"},
             {"lt", "xbox_lt"}, {"rt", "xbox_rt"},
+            {"l2", "xbox_lt"}, {"r2", "xbox_rt"},
             // sticks
             {"lstick", "xbox_stick_l"}, {"rstick", "xbox_stick_r"},
             {"lstick_press", "xbox_ls"}, {"rstick_press", "xbox_rs"},
@@ -169,6 +170,7 @@ namespace cycfi::elements
             // shoulders / triggers — Switch uses L/R + ZL/ZR
             {"lb", "switch_button_l"},  {"rb", "switch_button_r"},
             {"lt", "switch_button_zl"}, {"rt", "switch_button_zr"},
+            {"l2", "switch_button_zl"}, {"r2", "switch_button_zr"},
             {"l",  "switch_button_l"},  {"r",  "switch_button_r"},
             {"zl", "switch_button_zl"}, {"zr", "switch_button_zr"},
             {"sl", "switch_button_sl"}, {"sr", "switch_button_sr"},
