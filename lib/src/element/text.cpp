@@ -123,6 +123,15 @@ namespace cycfi::elements
          // before the next layout() (the editable subclass does) stay right.
          _layout.break_lines(_current_size.x, _rows);
          _needs_wrap = false;
+
+         // The row count just changed, so the height did too. layout() bails
+         // out early for "same text, same width", so it will not recompute
+         // it; without this, limits() keeps reporting the previous body's
+         // height and an enclosing scroller keeps the previous body's scroll
+         // range (a short body can then be scrolled off into blank space).
+         auto metrics = _layout.metrics();
+         _current_size.y =
+            _rows.size() * (metrics.ascent + metrics.descent + metrics.leading);
       }
       else
       {
