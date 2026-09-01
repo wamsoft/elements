@@ -262,6 +262,11 @@ struct tween
 	//! @brief 有限ループか (false なら無限)。
 	bool finite() const { return iterations > 0; }
 
+	//! @brief まだ開始遅延 (delay_ms) の中で、 再生が始まっていないか。
+	//!        同じチャンネルへ複数の演出を並べる (シーケンス) 際、 «まだ
+	//!        待っている束縛» が先行の結果を上書きしないよう判定に使う。
+	bool waiting() const { return elapsed_ms < delay_ms; }
+
 	//! @brief 全 pass を終えて停止したか。 無限ループは常に false。
 	bool done() const
 	{

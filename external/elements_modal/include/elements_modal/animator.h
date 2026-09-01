@@ -93,6 +93,9 @@ struct anim_binding
 	//! @brief 全 pass を終えたか (無限ループは常に false)。
 	bool done() const { return prog.done(); }
 
+	//! @brief まだ開始遅延の中で、 再生が始まっていないか。
+	bool waiting() const { return prog.waiting(); }
+
 	//! @brief ループ指定があるか (無限 or 複数 pass)。 解除時の扱い分けに使う。
 	bool looping() const { return prog.iterations <= 0 || prog.iterations > 1; }
 };
@@ -114,6 +117,19 @@ inline anim_binding::trigger trigger_from_string(std::string_view s)
 //! enter 束縛は start() で一斉に前進再生。 focus/select/exit 束縛は対応する
 //! 発火 (notify_focus / fire) があるまで idle (xform_state は既定の静止状態の
 //! まま)。 ループ指定 (iterations<=0 や明滅) は tween 側が面倒を見る。
+//!
+//! **同じ書き込み先の同じチャンネルに複数の束縛があるとき**は、 «いま支配して
+//! いる 1 本» だけを反映する (`governing_index`)。 別チャンネル (移動 + 拡縮 +
+//! 回転) は互いに別フィールドを書くので従来どおり合成される。 支配の決め方:
+//!
+//!   - そのチャンネルで **開始遅延を過ぎて再生を始めた束縛のうち最後のもの**
+//!   - まだどれも始まっていなければ **先頭の束縛** (単発の «遅れて出てくる
+//!     スライドイン» が delay 中に from で待つ従来の挙動を保つ)
+//!
+//! これで `"delay"` の昇順に並べるだけで折れ線 (シーケンス) になる。 以前は
+//! 全束縛が毎フレーム無条件に書いていたため、 **delay 中の後続束縛が自分の
+//! from を書き続けて先行の動きを打ち消していた**。 1 本しか無いチャンネルの
+//! 挙動は変わらない (後方互換)。
 class animator
 {
 public:
@@ -140,11 +156,11 @@ public:
 				b.reversed = false;
 				b.prog.reset();
 				b.active = true;
-				b.apply();
 			} else {
 				b.active = false;
 			}
 		}
+		apply_governing();
 		_focus_id.clear();
 		_hover_id.clear();
 		_all_done = false;
@@ -159,11 +175,16 @@ public:
 		bool all = true;
 		bool ticked = false;
 		for (auto& b : _bindings) b.finished_tick = false;
+		// 進める → 支配している束縛だけ反映 → 完了判定 の 3 段。 反映を分けて
+		// いるのは、 同一チャンネルの束縛が互いを上書きしないようにするため。
 		for (auto& b : _bindings) {
 			if (!b.active) continue;
 			ticked = true;
 			b.prog.tick(dt_ms);
-			b.apply();
+		}
+		apply_governing();
+		for (auto& b : _bindings) {
+			if (!b.active) continue;
 			if (b.prog.done()) {                  // 無限ループは done() にならない
 				b.active = false;
 				b.finished_tick = true;
@@ -184,8 +205,8 @@ public:
 			b.reversed = false;
 			b.prog.reset();
 			b.active = true;
-			b.apply();
 		}
+		apply_governing();
 	}
 
 	//! @brief 現在 focus されている id をホストから受け取り、 focus 束縛を駆動する。
@@ -227,6 +248,38 @@ private:
 			if (b.trig != t) continue;
 			if (!old.empty() && b.id == old) release_inout(b);
 			if (!id.empty()  && b.id == id)  start_inout(b);
+		}
+		// 上の apply() は «静止へ戻す» ための 1 回書きなので残し、 その後に
+		// 支配している束縛でもう一度上書きして最終値を決める。
+		apply_governing();
+	}
+
+	//! @brief 同じ書き込み先 (xform_state) の同じチャンネルの束縛のうち、
+	//!        «いま支配している 1 本» の位置。 該当なしは size()。
+	//!
+	//! 束縛数は 1 画面あたり数本なので素直な二重ループで足りる。
+	std::size_t governing_index(const xform_state* st,
+	                            anim_binding::channel ch) const
+	{
+		const std::size_t none = _bindings.size();
+		std::size_t first = none, last_started = none;
+		for (std::size_t i = 0; i < _bindings.size(); ++i) {
+			const anim_binding& b = _bindings[i];
+			if (!b.active || b.st.get() != st || b.ch != ch) continue;
+			if (first == none) first = i;
+			if (!b.waiting()) last_started = i;
+		}
+		return last_started != none ? last_started : first;
+	}
+
+	//! @brief active な束縛のうち、 チャンネルごとに支配している 1 本を反映。
+	void apply_governing()
+	{
+		for (std::size_t i = 0; i < _bindings.size(); ++i) {
+			const anim_binding& b = _bindings[i];
+			if (!b.active) continue;
+			if (governing_index(b.st.get(), b.ch) != i) continue;
+			b.apply();
 		}
 	}
 
