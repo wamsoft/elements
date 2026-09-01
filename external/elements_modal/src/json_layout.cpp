@@ -560,6 +560,75 @@ picojson::object                  g_theme_atlases;   // テーマが宣言した
 picojson::value                   g_app_theme;       // app.jsonc の "theme"
 std::string                       g_theme_override;  // --theme / "theme:名前"
 
+// ---------------------------------------------------------------------------
+// atlas pixmap のプロセス内キャッシュ。
+//
+// atlases ブロックは**画面を開くたび**に評価されるので、 そのままだと同じ
+// atlas PNG を毎回デコードし直す。 atlas は画面 1 枚ぶんをまとめた大きな
+// 画像で、 RGBA 展開で数 MB〜数十 MB になる (実測: 一覧系 3〜5MB /
+// 設定画面 20MB / マップ 31MB / ランチャー 52MB)。 これを開閉ごとに
+// 確保・解放すると汎用ヒープが激しく撹拌され、 空きは余っているのに連続
+// 領域が取れなくなって、 別の大きめの確保が std::bad_alloc で落ちる。
+//
+// 一度デコードした pixmap は使い回す。 合計が予算を超えたら参照の切れた
+// 古いものから捨てる (小さくよく開く画面はキャッシュに残り、 巨大で
+// たまにしか開かない画面は溢れて捨てられる、 という配分になる)。
+// 呼び出しは UI 構築 = メインスレッドのみなので排他は不要。
+struct AtlasCacheEntry {
+	ce::pixmap_ptr pm;
+	std::size_t    bytes   = 0;
+	std::uint64_t  used_at = 0;   // LRU 用の論理時刻
+};
+std::map<std::string, AtlasCacheEntry> g_atlas_cache;
+std::uint64_t g_atlas_clock = 0;
+std::size_t   g_atlas_cache_bytes = 0;
+// 予算 (バイト)。 0 にするとキャッシュ無効 (毎回デコード = 従来の挙動)。
+std::size_t g_atlas_cache_budget = 48u * 1024u * 1024u;
+
+void atlas_cache_trim()
+{
+	// 予算超過ぶんを、 外から参照されていない (use_count()==1) 古い順に捨てる
+	while (g_atlas_cache_bytes > g_atlas_cache_budget) {
+		auto victim = g_atlas_cache.end();
+		for (auto it = g_atlas_cache.begin(); it != g_atlas_cache.end(); ++it) {
+			if (it->second.pm.use_count() != 1) continue;   // 使用中は残す
+			if (victim == g_atlas_cache.end()
+			    || it->second.used_at < victim->second.used_at)
+				victim = it;
+		}
+		if (victim == g_atlas_cache.end()) break;   // 全部使用中なら諦める
+		g_atlas_cache_bytes -= victim->second.bytes;
+		g_atlas_cache.erase(victim);
+	}
+}
+
+// path + scale をキーに pixmap を取得する。 キャッシュに無ければデコードする。
+// デコードに失敗したら例外がそのまま呼び出し側へ伝わる (従来と同じ)。
+// (fs エイリアスはこの位置より後で宣言されるので path は文字列で受ける。
+//  ce::pixmap のコンストラクタが path へ変換する)
+ce::pixmap_ptr atlas_cache_get(const std::string& key,
+                               const std::string& full, float scale, bool* hit)
+{
+	auto it = g_atlas_cache.find(key);
+	if (it != g_atlas_cache.end()) {
+		it->second.used_at = ++g_atlas_clock;
+		if (hit) *hit = true;
+		return it->second.pm;
+	}
+	auto pm = std::make_shared<ce::pixmap>(full, scale);
+	if (hit) *hit = false;
+	if (g_atlas_cache_budget == 0) return pm;   // キャッシュ無効
+
+	AtlasCacheEntry e;
+	e.pm      = pm;
+	e.bytes   = (std::size_t)pm->pixel_width() * (std::size_t)pm->pixel_height() * 4u;
+	e.used_at = ++g_atlas_clock;
+	g_atlas_cache_bytes += e.bytes;
+	g_atlas_cache[key] = e;
+	atlas_cache_trim();
+	return pm;
+}
+
 const SkinSpec* find_skin(const std::string& name)
 {
 	if (name.empty()) return nullptr;
@@ -8396,9 +8465,16 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			}
 			auto full = builder.resolve_resource(path_str);
 			try {
-				auto pm = std::make_shared<ce::pixmap>(full, scale);
+				// 画面を開くたびの再デコードを避けてキャッシュから取る
+				// (atlas_cache_get のコメント参照)
+				char skey[32];
+				std::snprintf(skey, sizeof(skey), "@%.4f", scale);
+				const std::string key = full.string() + skey;
+				bool hit = false;
+				ce::pixmap_ptr pm = atlas_cache_get(key, full.string(), scale, &hit);
 				builder.atlases()[name] = pm;
-				em_logf("elements_modal: loaded atlas \"%s\" from \"%s\"",
+				em_logf("elements_modal: %s atlas \"%s\" from \"%s\"",
+				        hit ? "cached" : "loaded",
 				        name.c_str(), full.string().c_str());
 			} catch (std::exception const& e) {
 				em_logf("elements_modal: failed to load atlas \"%s\" "
