@@ -24,6 +24,7 @@
 #include <elements/element/grid.hpp>
 #include <elements/element/image.hpp>
 #include <elements/element/atlas.hpp>
+#include <elements/element/atlas_stepper.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/element/hidable.hpp>
 #include <elements/element/label.hpp>

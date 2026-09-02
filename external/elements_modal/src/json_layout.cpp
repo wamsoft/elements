@@ -10,6 +10,7 @@
 #include "em_platform.h"
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
+#include <elements/element/atlas_stepper.hpp>   // 増減矢印 (dec / inc) を足すプロキシ
 #include <elements/element/block_text.hpp>       // text_area (ホスト折返し + 文字送り)
 #include <elements/element/tracker.hpp>  // ドラッグ追跡 (drag_events / drag_at_var)
 #include <elements/element/image.hpp>            // ce::image (mem:// サムネ再ロード)
@@ -6345,6 +6346,137 @@ thumb_spec parse_thumb_spec(const picojson::object& o, const char* key)
 } // anonymous (thumb_spec)
 
 //---------------------------------------------------------------------------
+// 増減矢印 ("dec" / "inc") のパース。 atlas_slider / atlas_scrollbar で共有する。
+//
+//   "dec": { "normal": [x,y,w,h], "hilite": [...], "pressed": [...],
+//            "disabled": [...] }   // 配列 1 本 [x,y,w,h] は normal だけの指定
+//   "dec_at":   [dx, dy, w, h]     // widget "at" 左上原点の相対 px (必須)
+//   "inc": ... / "inc_at": ...
+//   "track_at": [dx, dy, w, h]     // 本体の領域。 省略時は矢印の外側から算出
+//   "repeat" / "repeat_delay_ms" / "repeat_rate_ms" / "flash_ms"
+//
+// 正規名は «値を減らす / 増やす» の **dec / inc**。 幾何名 (left / right / up /
+// down) もエイリアスとして受けるが、 **縦にしたときの対応は widget の種類で
+// 逆転する** (スライダは value 1.0 = 上、 スクロールバーは offset 0 = 上) ので、
+// どちらの意味論かは呼び出し側が offset_semantics で渡す。 軸の合わない幾何名が
+// 書かれていたら «書いたのに効かない» を避けるため警告する。
+//---------------------------------------------------------------------------
+namespace {
+
+// 矢印 1 個の frames。 object 形式が正規、 配列は簡易形。
+bool parse_arrow_frames(const picojson::value* fv,
+                        ce::atlas_stepper_base::arrow& out)
+{
+	if (!fv) return false;
+	if (fv->is<picojson::array>()) {
+		const auto& fa = fv->get<picojson::array>();
+		if (fa.size() >= 4 && !fa[0].is<picojson::array>()) {
+			out.normal = parse_xywh(fa);                 // [x,y,w,h] 1 枚
+			return out.normal.width() > 0;
+		}
+		// [[normal], [hilite], [pressed], [disabled]] の順番固定
+		std::vector<ce::rect> rs;
+		for (const auto& el : fa)
+			if (el.is<picojson::array>() && el.get<picojson::array>().size() >= 4)
+				rs.push_back(parse_xywh(el.get<picojson::array>()));
+		if (rs.empty()) return false;
+		out.normal = rs[0];
+		if (rs.size() > 1) out.hilite   = rs[1];
+		if (rs.size() > 2) out.pressed  = rs[2];
+		if (rs.size() > 3) out.disabled = rs[3];
+		return out.normal.width() > 0;
+	}
+	if (fv->is<picojson::object>()) {
+		const auto& fo = fv->get<picojson::object>();
+		auto rd = [&fo](const char* k, ce::rect& r) {
+			if (auto* a = get_array(fo, k); a && a->size() >= 4) r = parse_xywh(*a);
+		};
+		rd("normal", out.normal);
+		rd("hilite", out.hilite);
+		rd("pressed", out.pressed);
+		rd("disabled", out.disabled);
+		// pressed_hilite は矢印には無いので pressed の代わりとしてだけ受ける
+		if (out.pressed.width() <= 0) rd("pressed_hilite", out.pressed);
+		return out.normal.width() > 0;
+	}
+	return false;
+}
+
+// "<name>" の frames と "<name>_at" の配置を読む。
+bool read_arrow(const picojson::object& o, const char* name,
+                ce::atlas_stepper_base::arrow& out)
+{
+	auto* fv = get_field(o, name);
+	if (!fv) return false;
+	ce::atlas_stepper_base::arrow a;
+	if (!parse_arrow_frames(fv, a)) return false;
+	if (auto* at = get_array(o, (std::string(name) + "_at").c_str());
+	    at && at->size() >= 4)
+		a.at = parse_xywh(*at);
+	out = a;
+	return true;
+}
+
+// 幾何名エイリアス。 on_axis = この向き / 軸違い = 警告対象。
+struct arrow_alias
+{
+	const char* dec;
+	const char* inc;
+	const char* off_axis[2];
+};
+
+arrow_alias arrow_aliases(bool vertical, bool offset_semantics)
+{
+	if (!vertical)
+		return {"left", "right", {"up", "down"}};
+	if (offset_semantics)
+		return {"up", "down", {"left", "right"}};   // offset 0 (先頭) が上
+	return {"down", "up", {"left", "right"}};       // value 0 が下
+}
+
+// 矢印が 1 つも無ければ false (= ステッパーにしない)。
+bool parse_stepper(const picojson::object& o, bool vertical,
+                   bool offset_semantics, const char* who,
+                   ce::atlas_stepper_base::config& cfg)
+{
+	const auto al = arrow_aliases(vertical, offset_semantics);
+
+	if (!read_arrow(o, "dec", cfg.dec)) read_arrow(o, al.dec, cfg.dec);
+	if (!read_arrow(o, "inc", cfg.inc)) read_arrow(o, al.inc, cfg.inc);
+
+	for (const char* w : al.off_axis) {
+		if (!get_field(o, w)) continue;
+		em_logf("elements_modal: %s: \"%s\" は vertical=%s では軸が合いません "
+		        "(\"dec\" / \"inc\" で書くこと)",
+		        who, w, vertical ? "true" : "false");
+	}
+
+	// 絵はあっても置き場所 ("_at") が無い矢印は落とす
+	if (cfg.dec.normal.width() > 0 && !cfg.dec.valid()) {
+		em_logf("elements_modal: %s: 矢印 (dec) に配置 \"dec_at\" がありません", who);
+		cfg.dec = {};
+	}
+	if (cfg.inc.normal.width() > 0 && !cfg.inc.valid()) {
+		em_logf("elements_modal: %s: 矢印 (inc) に配置 \"inc_at\" がありません", who);
+		cfg.inc = {};
+	}
+	if (!cfg.dec.valid() && !cfg.inc.valid()) return false;
+
+	if (auto* a = get_array(o, "track_at"); a && a->size() >= 4)
+		cfg.subject_at = parse_xywh(*a);
+	cfg.vertical = vertical;
+	bool_field(get_field(o, "repeat"), cfg.repeat);
+	cfg.repeat_delay_ms = static_cast<int>(number_or(o, "repeat_delay_ms",
+	                                                 cfg.repeat_delay_ms));
+	cfg.repeat_rate_ms  = static_cast<int>(number_or(o, "repeat_rate_ms",
+	                                                 cfg.repeat_rate_ms));
+	cfg.flash_ms        = static_cast<int>(number_or(o, "flash_ms",
+	                                                 cfg.flash_ms));
+	return true;
+}
+} // anonymous (stepper)
+
+//---------------------------------------------------------------------------
 // atlas_slider — track + thumb (または fill) をアトラスの sub-rect で構築する
 // 0..1 スライダ。
 //   { "type": "atlas_slider", "atlas": "ui", "id": "vol",
@@ -6381,6 +6513,27 @@ thumb_spec parse_thumb_spec(const picojson::object& o, const char* key)
 //     "track": [...], "thumb": [...], "value_var": "vol",
 //     "display_var": "vol_text",
 //     "display": { "min": 0, "max": 100, "step": 1, "digits": 0, "suffix": "%" } }
+//
+// 両端の増減矢印 (ステッパー): "dec" (値を下げる) / "inc" (値を上げる) に絵を、
+// "dec_at" / "inc_at" に widget "at" 左上原点の相対 px で置き場所を書くと、
+// **矢印 + スライダが 1 パーツ**になる。 本体の領域は "track_at"、 省略時は
+// 矢印の外側から自動算出する。
+//   { "type": "atlas_slider", "atlas": "ui", "id": "vol", "at": [...],
+//     "dec": { "normal": [x,y,w,h], "hilite": [...], "pressed": [...] },
+//     "inc": { "normal": [...], "hilite": [...] },
+//     "dec_at": [0, 0, 32, 32], "inc_at": [288, 0, 32, 32],
+//     "track_at": [40, 8, 240, 16],
+//     "track": [...], "thumb": [...],
+//     "step": 0.05, "repeat": true }
+// 1 クリックの増減は "step" (0..1)。 省略時は "display" の 1 目盛
+// (step / (max - min))、 それも無ければ 5%。 押し続けで自動リピートし
+// ("repeat" / "repeat_delay_ms" / "repeat_rate_ms")、 キー / パッドで値が
+// 動いたときは向きの矢印が "flash_ms" だけ光る。
+//
+// **矢印の名前は左右上下ではなく «減 (dec) / 増 (inc)»**。 縦 ("vertical": true)
+// のスライダは value 0 が下なので dec の絵は下端に置くことになるが、 それは
+// "dec_at" が決めるのでキー名は変わらない。 幾何名 ("left"/"right"、 縦なら
+// "down"/"up") もエイリアスとして受ける。
 //---------------------------------------------------------------------------
 namespace {
 // fill 形式スライダの見えない thumb (0x0)。 slider_base は thumb の大きさを
@@ -6593,9 +6746,48 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		}
 		shared = ce::share(std::move(sl));
 	}
-	register_id(o, shared);
-	note_initial_focus(o, shared);
-	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
+	auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared);
+
+	// 増減矢印 (任意)。 あれば «矢印 + 本体» を 1 パーツとして包む。 矢印は
+	// フォーカスを取らないので、 フォーカス / キー / パッド / 変数連動はすべて
+	// 内側のスライダのまま (下の登録も sb を見ている)。
+	element_ptr part = shared;
+	if (ce::atlas_stepper_base::config scfg;
+	    sb && parse_stepper(o, vertical, /*offset_semantics=*/false,
+	                        "atlas_slider", scfg)) {
+		// 1 クリックの増減量 (0..1)。 "step" 明示 → "display" の 1 目盛 →
+		// 5% (arrow_button の make_step_arrows_for_slider と同じ既定)。
+		double stp = number_or(o, "step", 0.0);
+		if (stp <= 0.0) {
+			const auto disp = parse_value_display(o);
+			const double span = disp.max - disp.min;
+			if (disp.step > 0.0 && span != 0.0)
+				stp = disp.step / (span < 0.0 ? -span : span);
+		}
+		if (stp <= 0.0) stp = 0.05;
+
+		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(shared)));
+		std::weak_ptr<ce::basic_slider_base> w = sb;
+		st->on_step = [w, stp](int dir) {
+			auto t = w.lock();
+			if (!t) return;
+			double v = t->value() + dir * stp;
+			if (v < 0.0) v = 0.0;
+			if (v > 1.0) v = 1.0;
+			// edit_value = ユーザ操作の経路。 on_change から value_var /
+			// display_var / onAction まで既存の配線がそのまま流れる。
+			if (v != t->value()) t->edit_value(v);
+		};
+		st->value_of = [w]() {
+			auto t = w.lock();
+			return t ? t->value() : 0.0;
+		};
+		part = st;
+	}
+
+	register_id(o, part);
+	note_initial_focus(o, part);
+	if (sb) {
 		note_focusable(id, sb);
 		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
@@ -6605,7 +6797,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	}
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
-	return shared;
+	return part;
 }
 
 //---------------------------------------------------------------------------
@@ -7011,6 +7203,8 @@ element_ptr LayoutBuilder::build_list(const picojson::object& o)
 //                "insets": [l, t, r, b] },
 //     "index_offset_var": "top",                // 一覧の先頭 index へ直結
 //     "count_var": "n", "visible": 8 }          // 総件数 / 見えている行数
+//                                               // (行数を変数で渡すなら
+//                                               //  "visible_count_var")
 //
 // 一覧の «窓» (index + index_offset_var) と組にすると、 行を自前で並べる一覧に
 // «溝・つまみ・ページ送り・ホイール・ドラッグ» をホスト実装なしで足せる。
@@ -7019,8 +7213,10 @@ element_ptr LayoutBuilder::build_list(const picojson::object& o)
 //   - **index モード** ("index_offset_var"): つまみは先頭 index を指す。
 //     つまみの長さは «見えている行数 / 総件数» に比例する (可変長)。
 //     count / visible は数値直書き ("count" / "visible") でも変数
-//     ("count_var" / "visible_var") でもよい。 変数なら件数が変わると
-//     つまみの長さも追従する。
+//     ("count_var" / "visible_count_var") でもよい。 変数なら件数が変わると
+//     つまみの長さも追従する («見えている行数» の変数名が "visible_var" では
+//     なく "visible_count_var" なのは、 "visible_var" が全 widget 共通の
+//     «表示 / 非表示» キーとして先に使われているため)。
 //   - **value モード** ("value_var"): 0..1 の位置。 本文が scroller に載って
 //     いる画面では scroller の "pos_var" と同じ変数を挿すと連動する。
 //     count / visible があればつまみは可変長、 無ければ素材の原寸。
@@ -7028,6 +7224,13 @@ element_ptr LayoutBuilder::build_list(const picojson::object& o)
 // 操作: つまみドラッグ / 溝クリックでページ送り ("page"、 既定 = visible) /
 // ホイール ("wheel_step" 行、 既定 1)。 変化は変数へ書かれ、 id があれば
 // onAction にも流れる (index モードは行 index の整数、 value モードは 0..1)。
+//
+// 両端の増減ボタン: atlas_slider と同じ "dec" / "inc" (+ "dec_at" / "inc_at" /
+// "track_at" / "repeat*") を書くと «両端にボタンのあるスクロールバー» になる。
+// 送り量はホイールと同じ ("wheel_step" 行 / value モードは 5%)。
+// **縦のときの向きの対応がスライダと逆**である点に注意: offset 0 は先頭 = 上
+// なので、 **dec (減) の絵は上端**、 inc (増) の絵は下端に置くことになる
+// ("dec_at" / "inc_at" がそれを決めるので、 キー名は縦横で変わらない)。
 //---------------------------------------------------------------------------
 namespace {
 class atlas_scrollbar_element : public ce::element
@@ -7138,6 +7341,12 @@ public:
 	{
 		return true;   // カーソルが乗っている間はこの要素が受け持つ
 	}
+
+	// 増減矢印 (atlas_stepper) から呼ぶ 1 ステップ送りと現在位置。 送り量の
+	// 意味 (index モード = 行数 / value モード = 0..1) は既存のホイールと同じ
+	// なので、 矢印とホイールで挙動が食い違わない。
+	void   step_by(int dir) { move_by_step(dir); }
+	double pos() const      { return pos01(); }
 
 private:
 
@@ -7293,7 +7502,10 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 	sp.value_var   = string_or(o, "value_var");
 	sp.offset_var  = string_or(o, "index_offset_var");
 	sp.count_var   = string_or(o, "count_var");
-	sp.visible_var = string_or(o, "visible_var");
+	// «見えている行数» の変数。 汎用の "visible_var" (表示 / 非表示) と衝突する
+	// ので別名にしてある (行数が "0" になった瞬間にスクロールバーが消える、
+	// という事故を避けるため)。
+	sp.visible_var = string_or(o, "visible_count_var");
 	sp.count       = static_cast<int>(number_or(o, "count", 0));
 	sp.visible     = static_cast<int>(number_or(o, "visible", 0));
 	sp.page        = static_cast<int>(number_or(o, "page", 0));
@@ -7305,21 +7517,42 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 		        atlas_name.c_str());
 	}
 
-	element_ptr el = ce::share(atlas_scrollbar_element(pm, sp, _vars, _cb));
+	auto sb = std::make_shared<atlas_scrollbar_element>(pm, sp, _vars, _cb);
+	element_ptr el = sb;
+
+	// 増減矢印 (任意)。 «両端にボタンのあるスクロールバー» はこれで組む。
+	// 送りの実体は既存の move_by_step() に委ねるので、 矢印・ホイール・溝
+	// クリックが同じ規則で動く。
+	element_ptr part = el;
+	if (ce::atlas_stepper_base::config scfg;
+	    parse_stepper(o, sp.vertical, /*offset_semantics=*/true,
+	                  "atlas_scrollbar", scfg)) {
+		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(el)));
+		std::weak_ptr<atlas_scrollbar_element> w = sb;
+		st->on_step = [w](int dir) {
+			if (auto t = w.lock()) t->step_by(dir);
+		};
+		st->value_of = [w]() {
+			auto t = w.lock();
+			return t ? t->pos() : 0.0;
+		};
+		part = st;
+	}
 
 	// ホストや他 widget が変数を書き換えたときに描き直す。 コールバックは
 	// 空でよい (値は draw 時に読む)。 owner を渡すのは部分再描画の
-	// ダーティ範囲を «このスクロールバーの矩形» に絞るため。
+	// ダーティ範囲を «このスクロールバーの矩形» に絞るため (矢印付きなら
+	// 矢印まで含めた外側を渡す)。
 	if (_vars) {
 		for (const auto* n : { &sp.value_var, &sp.offset_var,
 		                       &sp.count_var, &sp.visible_var }) {
 			if (n->empty()) continue;
-			_vars->subscribe(*n, [](const std::string&) {}, el);
+			_vars->subscribe(*n, [](const std::string&) {}, part);
 		}
 	}
 
-	register_id(o, el);
-	return el;
+	register_id(o, part);
+	return part;
 }
 
 //---------------------------------------------------------------------------

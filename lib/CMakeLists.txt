@@ -15,6 +15,7 @@ set(ELEMENTS_SOURCES
    src/element/anchored_text.cpp
    src/element/arrow_button.cpp
    src/element/atlas.cpp
+   src/element/atlas_stepper.cpp
    src/element/block_text.cpp
    src/element/button.cpp
    src/element/child_window.cpp
