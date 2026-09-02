@@ -610,6 +610,13 @@
       // nearest the *opposite* edge — i.e. moving Down past the bottom
       // lands on the topmost widget — biased toward staying in the same
       // perpendicular band, mirroring pick_directional's scoring.
+      //
+      // Candidates whose center sits at the same primary-axis position as
+      // the current widget are ignored: in a single-column (or single-row)
+      // layout every candidate ties on the primary axis, so the score
+      // degenerates to the perpendicular distance and a Left/Right press
+      // would jump to the vertical neighbour instead. There is nothing to
+      // wrap to on that axis — treat it as a no-op.
       element* pick_wrapped(
          std::vector<focusable_entry> const& list,
          element const* current,
@@ -638,6 +645,10 @@
                case arrow_dir::down:  primary =  c.y; secondary = std::abs(c.x - cur_c.x); break;
                default: return nullptr;
             }
+            bool const horizontal = dir == arrow_dir::left || dir == arrow_dir::right;
+            float const primary_delta = horizontal ? c.x - cur_c.x : c.y - cur_c.y;
+            if (std::abs(primary_delta) <= 0.5f)   // same threshold as pick_directional
+               continue;
             float score = primary + secondary * 4.0f;
             if (score < best_score)
             {
