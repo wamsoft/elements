@@ -252,6 +252,11 @@ namespace cycfi::elements
       escape_function         on_escape;
       enter_function          on_end_focus;
 
+      // Maximum text length in Unicode codepoints (0 = unlimited).
+      // Typing into a full box is ignored; pastes are trimmed to fit.
+      void                    max_length(std::size_t n)  { _max_length = n; }
+      std::size_t             max_length() const         { return _max_length; }
+
    private:
 
       void                    paste(view& v, int start, int end) override;
@@ -261,6 +266,7 @@ namespace cycfi::elements
       std::string             _placeholder;
       clip_action             _clip_action : 2;
       bool                    _is_hovering : 1;
+      std::size_t             _max_length = 0;
    };
 
    //--------------------------------------------------------------------------

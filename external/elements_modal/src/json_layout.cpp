@@ -4257,6 +4257,15 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 	if (initial.empty()) initial = string_or(o, "value");
 
 	auto pair = ce::input_box(placeholder, size);
+	// "max_chars" (別名 "maxlength"): 入力の最大文字数 (Unicode codepoint 単位、
+	// 0 = 無制限)。 満杯での打鍵は無視、 paste は収まる分だけ入る。
+	// 初期値 ("text"/"value") はプログラム的投入なので制限しない。
+	{
+		double mx = number_or(o, "max_chars", 0.0);
+		if (mx <= 0.0) mx = number_or(o, "maxlength", 0.0);
+		if (mx > 0.0)
+			pair.second->max_length(static_cast<std::size_t>(mx));
+	}
 	if (!id.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
@@ -4269,6 +4278,10 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 		// 初期値も結果に載るよう明示的にコールバックへ流す。
 		pair.second->set_text(initial);
 		if (!id.empty() && _cb) _cb(id, /*is_button_click=*/false, value_t{initial});
+		// 既定値は全選択にしておく — initial_focus でそのまま打ったとき
+		// 「置き換え」になる (OS の入力ダイアログと同じ挙動)。クリックで
+		// フォーカスした場合はクリック位置がキャレットになるので影響しない。
+		pair.second->select_all();
 	}
 	auto shared = ce::share(std::move(pair.first));
 	register_id(o, shared);

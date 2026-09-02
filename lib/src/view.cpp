@@ -320,13 +320,50 @@
 
    namespace
    {
+      // Prime the focus chain INSIDE an element: point each nested
+      // composite at its first focusable child. Needed when focusing a
+      // wrapper (e.g. an input_box, which is layer(margin(scroller(...))))
+      // that was never focused before: begin_focus(restore_previous) bails
+      // out at a composite whose _focus and _saved_focus are both -1, so
+      // the focus never reaches the editable leaf until the user clicks.
+      void descend_focus_first(element& current)
+      {
+         if (auto* c = dynamic_cast<composite_base*>(&current))
+         {
+            for (std::size_t i = 0; i != c->size(); ++i)
+            {
+               if (c->at(i).wants_focus())
+               {
+                  c->focus(i);
+                  descend_focus_first(c->at(i));
+                  return;
+               }
+            }
+            return;
+         }
+
+         if (auto* p = dynamic_cast<proxy_base*>(&current))
+         {
+            descend_focus_first(p->subject());
+            return;
+         }
+
+         if (auto* i = dynamic_cast<indirect_base*>(&current))
+            descend_focus_first(i->get());
+      }
+
       // Depth-first descent: if 'target' lives anywhere under 'current',
       // call focus(index) on every composite_base on the path so that a
       // subsequent begin_focus(restore_previous) walk reaches the target.
       bool descend_set_focus(element& current, element const* target)
       {
          if (&current == target)
+         {
+            // The target itself may be a wrapper around the focusable
+            // leaf — prime the chain below it too (see above).
+            descend_focus_first(current);
             return true;
+         }
 
          if (auto* c = dynamic_cast<composite_base*>(&current))
          {

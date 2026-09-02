@@ -201,7 +201,7 @@ int main()
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
 - `slide_switch` — `"id"` + `"value"`。
-- `input_box` — `"placeholder"` + `"id"` + `"size"` (相対サイズ)。
+- `input_box` — `"placeholder"` + `"id"` + `"size"` (相対サイズ) + `"text"`/`"value"` (初期値。 全選択で入るので initial_focus からそのまま打つと置き換え) + `"max_chars"` (別名 `"maxlength"`。 最大文字数、 Unicode codepoint 単位、 0/省略 = 無制限。 満杯の打鍵は無視、 paste は収まる分だけ)。
 - `selection_menu` — `"id"` + `"options": [...]` + `"selected"` (初期 index)。
 
 #### console / pad 系 widget

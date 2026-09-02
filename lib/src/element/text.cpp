@@ -1120,8 +1120,27 @@ namespace cycfi::elements
       }
    }
 
+   namespace
+   {
+      // Count Unicode codepoints in a UTF-8 string (continuation bytes
+      // excluded). Used for max_length enforcement.
+      std::size_t utf8_codepoint_count(std::string_view s)
+      {
+         std::size_t n = 0;
+         for (unsigned char c : s)
+            if ((c & 0xC0) != 0x80)
+               ++n;
+         return n;
+      }
+   }
+
    bool basic_input_box::text(context const& ctx, text_info info)
    {
+      // max_length: typing into a full box (nothing selected that the
+      // insertion would replace) is consumed and ignored.
+      if (_max_length && select_start() == select_end()
+         && utf8_codepoint_count(get_text()) >= _max_length)
+         return true;
       bool r = basic_text_box::text(ctx, info);
       if (r && on_text)
          on_text(get_text());
@@ -1208,6 +1227,24 @@ namespace cycfi::elements
             if (is_newline(uint8_t(*p)))
                break;
             ins += *p;
+         }
+
+         // max_length: trim the insertion (at a codepoint boundary) so the
+         // resulting text does not exceed the limit.
+         if (_max_length)
+         {
+            auto kept = utf8_codepoint_count(_text)
+               - utf8_codepoint_count({_text.data()+start_, std::size_t(end_-start_)});
+            auto budget = (_max_length > kept) ? _max_length - kept : 0;
+            char const* q = ins.data();
+            char const* q_last = q + ins.size();
+            std::size_t i = 0;
+            while (q != q_last && i < budget)
+            {
+               q = next_utf8(q_last, q);
+               ++i;
+            }
+            ins.resize(q - ins.data());
          }
 
          _text.replace(start_, end_-start_, ins);
