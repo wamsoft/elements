@@ -330,6 +330,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
+  - **両端の増減矢印** (`"dec"` / `"inc"`): アトラス素材の矢印ボタンを両脇に置いて **矢印 + スライダを 1 パーツ**にできる。 `"dec"` / `"inc"` はフレーム指定 (`{ "normal": [x,y,w,h], "hilite": …, "pressed": …, "disabled": … }`、 配列 1 本なら normal のみ)、 置き場所は `"dec_at"` / `"inc_at"` (widget `at` 左上原点の相対 px、 必須)。 本体の領域は `"track_at"` (省略時は矢印の外側から自動算出)。 1 クリックの増減は `"step"` (0..1。 省略時は `display` の 1 目盛、 それも無ければ 5%)、 押し続けの自動リピートは `"repeat"` / `"repeat_delay_ms"` / `"repeat_rate_ms"`、 キー / パッドで値が動いたときは向きの矢印が `"flash_ms"` だけ光る。 **名前は左右上下ではなく «減 (dec) / 増 (inc)»** — 縦にしたときの増える側が widget の種類で逆になるため。 幾何名 (`left`/`right`、 縦なら `down`/`up`) もエイリアスで受ける。 矢印はフォーカスを取らず、 クリック時はフォーカスを本体へ渡す。 送りの実体は値編集そのものなので既存の `value_var` / `display_var` / `onAction` 配線にそのまま乗る。
 - `atlas_number` — **数字素材 (0-9 の sub-rect) で数値を描く**表示専用パーツ。 フォントではなく «絵の数字» を出したいスコア / 残数 / 音量表示用。
 
   ```jsonc
@@ -351,10 +352,11 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - `set_text()` を持つ (`text_writer`) ので、 ホストから直接書き換えることもできる。
 
 - `atlas_scrollbar` — **溝 + つまみのスクロールバー**。 `"atlas": name` + `"thumb"` (atlas_slider と同じ 2 形式。 9-slice でキャップ付き資材も可) + `"track": [x,y,w,h]` (省略可 = 溝が背景側に描いてある素材) + `"vertical": bool` (既定 true) + `"id"`。 **行を自前で並べる一覧** (下記「一覧の «窓»」) に、 溝・つまみ・ページ送り・ホイール・ドラッグをホスト実装なしで足すためのもの (本文が `scroller` に載っているなら `scroller` の `pos_var` で足りる)。 つなぎ方は 2 通り:
-  - **index モード** (`"index_offset_var": "top"`): つまみが «一覧の先頭 index» を指す。 総件数 `"count"` / `"count_var"`、 見えている行数 `"visible"` / `"visible_var"` を渡すと、 **つまみの長さが «見えている行数 ÷ 総件数» に比例**する (件数が変われば長さも追従)。 «窓» の行と同じ `index_offset_var` を挿すだけで一覧が動く。
+  - **index モード** (`"index_offset_var": "top"`): つまみが «一覧の先頭 index» を指す。 総件数 `"count"` / `"count_var"`、 見えている行数 `"visible"` / `"visible_count_var"` を渡すと、 **つまみの長さが «見えている行数 ÷ 総件数» に比例**する (件数が変われば長さも追従)。 «窓» の行と同じ `index_offset_var` を挿すだけで一覧が動く。 (行数の変数キーが `visible_var` でないのは、 `visible_var` が全 widget 共通の «表示 / 非表示» キーとして先に使われているため — 行数 0 でスクロールバーごと消える衝突を避けて `visible_count_var` へ改名した。)
   - **value モード** (`"value_var": "pos"`): 0..1 の位置。 `scroller` の `pos_var` と同じ変数を挿せば本文と連動する。 count / visible があればつまみは可変長、 無ければ素材の原寸で固定長。
   - 操作: つまみドラッグ / **溝クリックでページ送り** (`"page"` 行、 既定 = visible) / **ホイール** (`"wheel_step"` 行、 既定 1)。 `"thumb_min"` (既定 16) でつまみの最小長 px。
   - 値が変わると変数へ書かれ、 `id` があれば `onAction` にも流れる (index モードは行 index の整数、 value モードは 0..1 の double)。
+  - **両端の増減ボタン**: atlas_slider と同じ `"dec"` / `"inc"` (+ `"dec_at"` / `"inc_at"` / `"track_at"` / `"repeat*"` / `"flash_ms"`) を書くと «両端にボタンのあるスクロールバー» になる。 送り量はホイールと同じ (`"wheel_step"` 行、 value モードは 5%)。 送りの実体は既存のスクロール処理に委ねるので、 矢印・ホイール・溝クリックが同じ規則で動く。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
 
@@ -618,7 +620,7 @@ bool on = elements_modal::focus_ring_enabled();
 | `at_var` | canvas の任意の子 | 読み | `"x,y"` または `"x,y,w,h"` (10 進 px) |
 | `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
 | `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
-| `count_var` / `visible_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
+| `count_var` / `visible_count_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
 | `hover_var` / `select_var` | list | 書き (行に乗った / 行を選んだ) | 10 進整数のデータ index (hover 無しは `"-1"`) |
 | `row_hover_var` / `row_select_var` | list | 書き (行ごと) | `"1"` / `""` (`#index` で行番号へ展開) |
 | `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
