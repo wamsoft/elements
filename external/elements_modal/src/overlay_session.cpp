@@ -1384,6 +1384,11 @@ void overlay_session::invalidate()
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 }
 
+void overlay_session::set_pad_nav_active(bool on)
+{
+	if (_impl->view) _impl->view->suspend_pad_nav(!on);
+}
+
 bool overlay_session::render_to_buffer(std::uint32_t* pixel_buffer,
                                        int buffer_w_px, int buffer_h_px,
                                        int surface_w, int surface_h,

@@ -189,6 +189,14 @@ namespace cycfi::elements
       int                     axis_repeat_delay() const;
       int                     axis_repeat_rate() const;
 
+      // Suspend pad-axis navigation (dpad/stick focus moves + repeats).
+      // Used by hosts that stack multiple views: only the top input view
+      // should self-navigate from a held pad. While suspended, process_pad_axes
+      // resets held-axis state and does nothing, so a covered view does not
+      // keep moving its focus from a pad direction held when it was covered.
+      void                    suspend_pad_nav(bool on);
+      bool                    pad_nav_suspended() const { return _pad_nav_suspended; }
+
       // Time elapsed (seconds) between the previous poll() and the
       // current one. Used by widgets implementing pad_axis to scale the
       // per-frame value step.
@@ -358,6 +366,7 @@ namespace cycfi::elements
       float                   _stick_value_speed = 1.0f;
       int                     _axis_repeat_delay_ms = 400;
       int                     _axis_repeat_rate_ms  = 0;   // 0 = magnitude-scaled
+      bool                    _pad_nav_suspended    = false;
       float                   _frame_dt          = 0.0f;
       std::chrono::steady_clock::time_point _last_poll_time{};
 

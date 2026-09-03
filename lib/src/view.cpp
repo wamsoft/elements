@@ -1368,10 +1368,29 @@
       this->key(ki_release);
    }
 
+   void view::suspend_pad_nav(bool on)
+   {
+      _pad_nav_suspended = on;
+   }
+
    void view::process_pad_axes(std::chrono::steady_clock::time_point now)
    {
       if (_content.empty())
          return;
+
+      // Suspended (this view is covered by a higher input view): drop any
+      // held-axis state so a pad direction held while it was covered does not
+      // keep navigating this view's focus, and skip synthesis entirely.
+      if (_pad_nav_suspended)
+      {
+         for (auto& st : _axis_states)
+         {
+            st.dir = 0;
+            st.next_repeat = {};
+            st.value_active = false;
+         }
+         return;
+      }
 
       constexpr float threshold       = 0.5f;
       auto const initial_delay        = std::chrono::milliseconds(_axis_repeat_delay_ms);
