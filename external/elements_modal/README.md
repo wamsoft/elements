@@ -165,6 +165,7 @@ int main()
   フォーカス停止点になるのを避けるため。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 - `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
+- `locale_variant` — 現在言語に一致する子だけを表示するデッキ (`"children"` の各要素に `"lang"` を付ける)。 詳細は「i18n」節。
 - `canvas` — `"width"` / `"height"` (任意、 省略時は親 view extent) + `"children": [...]`。 子要素は通常の dispatch object に `"at": [x, y, w, h]` を加えるだけで、 内部の composite が **親 bounds の origin に rect をオフセット** して子を配置する (= 親 bounds の左上を基準とする相対座標)。 root に置けば bounds origin = (0, 0) なので絶対座標に見えるが、 別 canvas にネストすると外側 canvas が割り当てた領域の中で相対配置になる (排他グループの分離等で nested canvas を使う場面で重要)。 PSD ベース UI の主役。 追加オプション:
   - `"choice_nav": true` — この canvas の selectable な直接子 (atlas_choice / radio_button) をまとめて **1 フォーカスの左右トグルグループ**にする (後述「choice_nav」節)。
   - 子要素の `"at_var": "varname"` — 配置 rect を変数 store で駆動 (後述「変数 store」節)。
@@ -213,6 +214,7 @@ int main()
   - `"font": "Family[#axes]"` — 表示テキストのフォント指定 (`label` と同じ書式。 可変フォントの軸指定込み)。 省略時・未登録 family のときはテーマ既定へフォールバック。 `cycle_picker` / `framed_cycle_picker` / `segmented_picker` / `atlas_cycle_picker` 共通で、 PSD 由来のウェイト指定を持つ UI でピッカーの選択テキストだけ既定フォントに残るのを防ぐ。
   - `"index_var": "varname"` — 選択 index を変数 store と**双方向**連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。 さらに**変数→picker の追従** (ホストの set_var 一発で表示と依存 widget が揃って切り替わる。 quiet = on_change 非発火なのでエコーバックしない)。 範囲外/パース不能な値は無視。
   - `"enabled_var": "varname"` (cycle_picker / atlas_cycle_picker のみ) — 選択肢の有効/無効 mask を変数連動にする。 値は index 順の `'0'`/`'1'` 文字列 (例 `"10111011"` = index 1 と 4 を無効)。 mask より後ろの index は有効扱い。 step / click / pad は無効 index をスキップ (wrap 継続)、 現在選択が無効化されたら最寄りの有効 index へ進めて on_change 発火 (依存 widget が追従)。 隠し要素 (未開放の機種など) の動的出し分けに使う。
+  - `"options_var": "varname"` — **選択肢リストそのもの**を変数連動にする (4 種の picker 共通)。 値の書式は label の `text_list_var` と同じ (改行区切り、 先頭が `[` なら JSON 配列)。 インストール済みフォント名や接続中デバイス名のように、 画面を作った時点では中身が決まらない一覧をホストが実行時に流し込む用途 (`enabled_var` は「一覧は固定で出し分けだけ」、 こちらは一覧の実体を差し替える)。 静的な `"options"` は変数が空のあいだの fallback。 `"options_id"` (i18n) との併用は不可 (言語切替が動的一覧を上書きするため、 options_var があるときはそちらが勝つ)。
 - `framed_cycle_picker` — `[<] [ value ] [>]` の 3 ボックス框付き。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `segmented_picker` — `[ A | B | C ]` 形式 (選択 segment 反転)。 端で **clamp** (wrap しない)。 フィールドは `cycle_picker` と同じ (`font_size` / `options_id` / `index_var` も対応)。
 - `atlas_cycle_picker` — 画像矢印ボタン式の cycle_picker (アトラス素材、 「アトラス共有」節参照)。
@@ -264,6 +266,7 @@ PSD でデザインされた固定サイズ / 固定位置のビットマップ 
 
 - `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 frame が 4 未満のときは欠けた状態をフォールバックする (pressed+hilite→pressed→normal) ので、 **3 frame (normal/hilite/pressed)** だけでも可。 その場合マウス押下 (hilite 中) もキーボード押下も同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
+- `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 ロゴや一枚絵をレイアウトへそのまま置く用途、 およびセーブサムネイル等の動的画像に使う。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 mem:// のバイトを差し替えたら、 ホストが `refresh_mem_image(name)` を呼ぶと**表示中の構築済み widget も再デコードされて即時反映**される (krkrz は `ElementsDialog.registerImage` が自動で呼ぶ)。 登録前に build した widget は空表示のままなので、 初回は画面を開く前に登録する。
 
 - `atlas_nine` (別名 `atlas_gizmo`) — アトラスの矩形を **9-patch** で伸縮して描く
   (ウィンドウ枠 / パネル)。 `"atlas"` + `"rect"` + `"insets": [l,t,r,b]`、
@@ -319,7 +322,6 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - `"rect_list": [[x,y,w,h], ...]` + `"index_var": "varname"` — ソース矩形リストを**変数 store の index で切替**える (rect より優先)。 picker の `index_var` と同名にすると選択連動 (機種別スクリーンショット等)。 範囲外/パース不能な値は無視 (現状維持)。 limits は現在矩形基準なので全 rect 同寸法を推奨 (canvas の `at` 固定配置で使う)。 寸法の違う絵を並べたいときは `"native": true` を併記する (伸縮せず中央に置かれるので歪まない)。
   - `"focus_link": "id"` / `["id", ...]` + `"frames": { "normal": [x,y,w,h], "hilite": [x,y,w,h] }` — **自分はフォーカスを取らない飾り**が、 リンク先 id のフォーカス状態で frame を切り替える。 行の下地や「当たっている項目にぽっちを出す」インジケータ用。 配列で複数 id を書くと、 そのいずれかがフォーカス中なら hilite。 `hilite` は必須で、 **`normal` は省略可** (省略時は非フォーカス中に何も描かない = 素材 1 枚でフォーカスインジケータが組める)。
   - `"hover_focus_link": false` (既定 true) — 上の飾りは既定で「飾りの上へ hover するとリンク先へフォーカスを移す」プロキシに包まれる (行のどこへマウスを乗せても選択が動く)。 プロキシはクリックも先に受け取るので、 **飾りがコントロールに重なる配置** (項目の角に載せるインジケータ等) では下のボタンが押せない死角になる。 その場合は `false` を指定して「クリックを一切取らない飾り」へ戻す (重なりの無い行の下地は既定のままでよい)。
-- `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 pixmap は build 時に一度読むので、 実行時差し替えは画像を再登録して画面を開き直す。 セーブサムネイル等の動的画像に使う (ホスト側は自前で PNG 等にエンコードして注入する)。
 - `atlas_button` — `"atlas": name` + `"frames": ...` + `"id"`。 frames は **object** (`{normal, hilite, pressed, pressed_hilite, disabled}` の順で値があるところまで使う) または **array** (`[[x,y,w,h], ...]` 順番固定) のどちらか。 sprite_button_styler で frame 自動切替 (4 frame で normal/hilite/pressed/pressed_hilite を仮定、 disabled を含めれば 5)。 frame が 4 未満なら欠けた状態をフォールバック (pressed+hilite→pressed→normal) するので **3 frame (normal/hilite/pressed)** でも可。 PSD 由来の「通常 / オーバー / 押し下げ」 3 状態ボタンはこの形になり、 マウス押下とキーボード押下が同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
   - `"enabled_var": "varname"` — ボタンの有効/無効を変数 store と連動 (`button` / `invert_button` / `ring_button` も同様)。 値 `"0"` で無効、 それ以外 (既定) で有効。 無効中はクリック/キー決定が効かず、 描画は `disabled` frame があればそれ、 無ければ半透明フォールバック。 ホストの `set_var` 一発で切り替わるので、 進行状況で開放されるメニュー項目 (未クリアなら「おまけ」を灰色にする等) に使う。
 - `atlas_toggle` (別名 `atlas_check`) — 2 値保持型。 frames は object `{off_normal, off_hilite, on_normal, on_hilite, disabled}` または array (順番固定)。 `"initial": bool` で初期値、 `"id"` + 値変化で `value_t{bool}` を発火。 `"value_var": "name"` (任意) で変数 store と連動: 変数に既存値があれば初期状態を上書き (`"0"`/`"false"`/空 = off)、 クリックで `"0"`/`"1"` を書き戻し、 変数変更は状態へ反映のみ (イベント非発火)。
@@ -358,6 +360,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - 値が変わると変数へ書かれ、 `id` があれば `onAction` にも流れる (index モードは行 index の整数、 value モードは 0..1 の double)。
   - **両端の増減ボタン**: atlas_slider と同じ `"dec"` / `"inc"` (+ `"dec_at"` / `"inc_at"` / `"track_at"` / `"repeat*"` / `"flash_ms"`) を書くと «両端にボタンのあるスクロールバー» になる。 送り量はホイールと同じ (`"wheel_step"` 行、 value モードは 5%)。 送りの実体は既存のスクロール処理に委ねるので、 矢印・ホイール・溝クリックが同じ規則で動く。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
+- `animated_sprite` — **アトラスのフレーム列を fps で自動送りするスプライトアニメ** (パラパラ / スプライトシート再生)。 `"atlas": name` + `"frames": [[u,v,w,h], ...]` (配列順 = 再生順) + `"fps": double` (既定 12) + `"loop": bool` (既定 true。 false は最終フレームで停止) + `"native_frames": bool` (実寸のまま中央へ)。 アニメアイコン、 スピナー、 待機ループ等の表示専用パーツ。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
 
   ```jsonc
@@ -481,7 +484,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 |---|---|---|
 | `id` | string | event_callback / result.values のキー、 shortcut の `target` 参照先 |
 | `initial_focus` | bool / number | 起動時フォーカスの候補。 **複数の要素に指定でき**、 先頭候補が無効 (`enabled_var` で disabled) なら次の有効な候補へ落ちる。 数値を書くと明示優先度 (小さいほど優先。 `true` = 0)、 同値は build 順。 候補の確定は表示直後の idle まで遅延するので、 ホストが `set_var` で有効/無効を流し込んでから判定される |
-| `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / `Dialog.onAction`) を発火するだけ |
+| `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / krkrz の `ElementsDialog.onAction`) を発火するだけ |
 | `vars_on_focus` | `{name: string, ...}` | この要素が focus を得たときに変数 store に書き込む値の dict。 同じ変数を `text_var` で見ている label に自動反映 (focus 連動ヘルプテキスト等) |
 
 ### フォーカスリング表示 (アプリ全体設定)
@@ -612,6 +615,7 @@ bool on = elements_modal::focus_ring_enabled();
 | `rect_list` + `index_var` | atlas_image | 読み | 10 進 index |
 | `index_var` | picker 系 (cycle / framed / segmented / atlas_cycle_picker) | **双方向** (選択変更で書き + 変数変更で quiet 追従 / 既値があれば initial 採用) | 10 進 index |
 | `enabled_var` | cycle_picker / atlas_cycle_picker | 読み (選択肢の有効/無効 mask) | `'0'`/`'1'` 文字列 (`"10111011"`) |
+| `options_var` | picker 系 4 種 | 読み (選択肢リストそのもの) | 改行区切り、 先頭 `[` なら JSON 配列 (`text_list_var` と同書式) |
 | `enabled_var` | button 系 (`button` / `atlas_button` / `invert_button` / `ring_button`) | 読み (要素そのものの有効/無効) | `"0"` = 無効 / それ以外 = 有効 |
 | `selected_var` (+`selected_value`) | atlas_choice / radio_button | **双方向** (var == selected_value で選択 / クリックで var へ selected_value を書き戻し) | 任意 string (`selected_value` 既定 `"1"`) |
 | `value_var` | atlas_slider / atlas_progress | slider: 読み (通知のみ、 イベント非発火) / progress: 読み | 10 進小数 (`"0.75"`) |
@@ -754,7 +758,7 @@ sess.set_var("list_top",   "3");   // → 窓が D..H + 空行 1 行になる
 hover / 選択の色は 2 通りの受け方がある。 画面 JSON の中で閉じるなら
 `row_hover_var` / `row_select_var` (行ごとのフラグを `visible_var` /
 `color_var` で受ける)、 **絵がホスト側のレイヤ**にあるなら `hover_var` /
-`select_var` を `Dialog.onVar` で拾ってホストが差し替える。
+`select_var` を `ElementsDialog.onVar` で拾ってホストが差し替える。
 
 スクロールは `atlas_scrollbar` に同じ `index_offset_var` / `count_var` を挿すだけ
 (上記)。 一覧側にホイールを付けたい場合もスクロールバーが受ける。
@@ -831,6 +835,12 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 - 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
 - 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
 - その画面が**どの言語を出せるか**は `overlay_session::languages()` (`strings` の lang キーの和集合)。 ホストが言語切替 UI を組むのに使う。
+- **widget 丸ごとの言語別出し分けは `locale_variant`** — 現在言語に一致する子だけを表示するデッキ:
+  ```jsonc
+  { "type": "locale_variant", "at": [x,y,w,h], "default": "en",
+    "children": [ { "lang": "ja", <widget> }, { "lang": "en", <widget> } ] }
+  ```
+  各 child は `"lang"` 付きの通常 widget オブジェクト。 言語切替で deck の表示が切り替わる (全 child は同一 box を占める)。 一致する lang が無ければ `"default"`、 それも無ければ先頭。 タイトルロゴ画像の言語別差し替えなど、 文字列テーブルでは表せない出し分けに使う。
 
 ### 画面遷移 (`transitions` + マニフェスト)
 
