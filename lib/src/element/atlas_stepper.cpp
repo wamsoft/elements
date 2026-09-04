@@ -151,11 +151,17 @@ namespace cycfi::elements
       if (value_of && _cfg.flash_ms > 0)
       {
          double v = value_of();
+         int dir = 0;
          if (_has_last_value && v != _last_value
              && _focused && _held_dir == 0 && !_subject_pressed)
-            flash(ctx, v > _last_value ? +1 : -1);
+            dir = v > _last_value ? +1 : -1;
+         // «前回値» は flash() を呼ぶ**前**に更新しておく。 flash() は
+         // view::refresh + タイマ予約を伴うので、 そこから描画が再入した場合に
+         // 古い _last_value のまま同じ変化を拾って多重に点灯させないため。
          _last_value = v;
          _has_last_value = true;
+         if (dir != 0)
+            flash(ctx, dir);
       }
 
       draw_arrow(ctx, -1);
