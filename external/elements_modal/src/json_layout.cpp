@@ -128,6 +128,68 @@ cycfi::fs::path resolve_resource_with_base(const std::string& path,
 } // namespace
 
 //---------------------------------------------------------------------------
+// 差し替え可能アトラス ("atlases" の "swappable": true)
+//
+// CG 鑑賞のグループタブのように «同じ画面・違う絵の束» を出し分けたいとき、
+// 絵の束をグループごとの 1 枚にしておいて、実行時に中身だけ入れ替える。
+// 全 widget が同じ pixmap を共有しているので、中身を差し替えれば全部が
+// 追従する (widget を作り直さない = レイアウトもフォーカスもそのまま)。
+//
+// そのために **キャッシュへは乗せない**。 通常のアトラスはパス単位で使い回す
+// ので、中身を書き換えると同じ絵を使う他の画面まで巻き添えになる。
+//
+// 差し替え先は **同じ矩形割り** であること (widget が持つ frames / rect は
+// 変わらない)。 tools/image_atlas.py の --uniform がそのための詰め方。
+//---------------------------------------------------------------------------
+namespace {
+
+std::mutex& swap_atlas_mutex() { static std::mutex m; return m; }
+
+struct SwapAtlas
+{
+	ce::pixmap_ptr pm;
+	std::string    base;    // 相対パス解決の起点 (画面の resource_base)
+	float          scale = 1.0f;
+};
+std::map<std::string, SwapAtlas>& swap_atlas_map()
+{
+	static std::map<std::string, SwapAtlas> m;
+	return m;
+}
+
+} // namespace
+
+bool set_atlas_image(const std::string& name, const std::string& path)
+{
+	std::lock_guard<std::mutex> lk(swap_atlas_mutex());
+	auto it = swap_atlas_map().find(name);
+	if (it == swap_atlas_map().end() || !it->second.pm) {
+		em_logf("elements_modal: set_atlas_image: \"%s\" は差し替え可能な "
+		        "アトラスではありません (\"swappable\": true が要ります)",
+		        name.c_str());
+		return false;
+	}
+	auto full = resolve_resource_with_base(path, it->second.base);
+	try {
+		*it->second.pm = ce::pixmap(full, it->second.scale);
+	} catch (std::exception const& e) {
+		em_logf("elements_modal: set_atlas_image \"%s\" <- \"%s\": %s",
+		        name.c_str(), full.string().c_str(), e.what());
+		return false;
+	}
+	return true;
+}
+
+std::vector<std::string> swappable_atlases()
+{
+	std::lock_guard<std::mutex> lk(swap_atlas_mutex());
+	std::vector<std::string> out;
+	for (const auto& kv : swap_atlas_map()) out.push_back(kv.first);
+	return out;
+}
+
+
+//---------------------------------------------------------------------------
 // JSON 文字列 → Elements enum 変換
 //
 // JSON の入力バインドで使う語彙 ("enter" / "dpad_up" / "shift" 等) の変換表。
@@ -1732,6 +1794,9 @@ public:
 	{
 		return resolve_resource_with_base(path, _resource_base);
 	}
+
+	//! 相対パス解決の起点 (差し替え可能アトラスが後から使う)。
+	const std::string& resource_base() const { return _resource_base; }
 
 	// リソースフォルダのテキストファイルを丸ごと読む (UTF-8)。 BOM を落とし、
 	// CRLF を LF に均す (折返しは CR を独立した空白として数えるため、 残すと
@@ -5610,11 +5675,24 @@ namespace
 	{
 		if (!fv) return false;
 		if (fv->is<picojson::object>()) {
+			// 状態名 → frame index は **並び順で決まる** (lib の sprite が
+			// index で引くため)。 途中の状態を書いていなくても後ろの状態が
+			// 効くように、 «書いてある最後の状態» までを埋めて並べる
+			//   例: {normal, hilite, disabled} は pressed 系を書いていないが、
+			//       disabled を効かせたい。 途中で打ち切ると届かない。
+			// 埋め草は «直前に書いてあった状態» (無ければ最初の状態)。
 			const auto& fo = fv->get<picojson::object>();
+			std::vector<const picojson::array*> found;
+			int last = -1;
 			for (auto p = state_names; *p; ++p) {
 				auto it = fo.find(*p);
-				if (it == fo.end() || !it->second.is<picojson::array>()) break;
-				out.push_back(parse_xywh(it->second.get<picojson::array>()));
+				bool ok = (it != fo.end() && it->second.is<picojson::array>());
+				found.push_back(ok ? &it->second.get<picojson::array>() : nullptr);
+				if (ok) last = static_cast<int>(found.size()) - 1;
+			}
+			for (int i = 0; i <= last; ++i) {
+				if (found[i]) out.push_back(parse_xywh(*found[i]));
+				else if (!out.empty()) out.push_back(out.back());
 			}
 			return !out.empty();
 		}
@@ -8936,18 +9014,30 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 				        name.c_str());
 				continue;
 			}
+			bool swappable = spec.is<picojson::object>()
+			    && truthy_field(get_field(spec.get<picojson::object>(), "swappable"));
 			auto full = builder.resolve_resource(path_str);
 			try {
-				// 画面を開くたびの再デコードを避けてキャッシュから取る
-				// (atlas_cache_get のコメント参照)
-				char skey[32];
-				std::snprintf(skey, sizeof(skey), "@%.4f", scale);
-				const std::string key = full.string() + skey;
+				ce::pixmap_ptr pm;
 				bool hit = false;
-				ce::pixmap_ptr pm = atlas_cache_get(key, full.string(), scale, &hit);
+				if (swappable) {
+					// 中身を実行時に差し替えるので **キャッシュに乗せない**
+					// (同じ絵を使う他の画面を巻き添えにしないため)。
+					pm = std::make_shared<ce::pixmap>(full, scale);
+					std::lock_guard<std::mutex> lk(swap_atlas_mutex());
+					swap_atlas_map()[name] =
+					    SwapAtlas{ pm, builder.resource_base(), scale };
+				} else {
+					// 画面を開くたびの再デコードを避けてキャッシュから取る
+					// (atlas_cache_get のコメント参照)
+					char skey[32];
+					std::snprintf(skey, sizeof(skey), "@%.4f", scale);
+					const std::string key = full.string() + skey;
+					pm = atlas_cache_get(key, full.string(), scale, &hit);
+				}
 				builder.atlases()[name] = pm;
 				em_logf("elements_modal: %s atlas \"%s\" from \"%s\"",
-				        hit ? "cached" : "loaded",
+				        swappable ? "swappable" : (hit ? "cached" : "loaded"),
 				        name.c_str(), full.string().c_str());
 			} catch (std::exception const& e) {
 				em_logf("elements_modal: failed to load atlas \"%s\" "

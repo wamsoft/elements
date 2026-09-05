@@ -77,7 +77,9 @@ endif()
 
 # MSVC: UTF-8 ソース指定
 if (MSVC)
-	target_compile_options(elements_modal PRIVATE /utf-8)
+	# json_layout.cpp は widget 種別ぶんの build_* が 1 本へ集まるので、
+	# COFF の既定セクション上限を超える。 分割してもよいがまず /bigobj で通す。
+	target_compile_options(elements_modal PRIVATE /utf-8 /bigobj)
 endif()
 
 add_library(elements_modal::elements_modal ALIAS elements_modal)
