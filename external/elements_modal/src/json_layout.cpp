@@ -54,6 +54,54 @@ void set_resource_resolver(resource_resolver fn)
 	resolver_slot() = std::move(fn);
 }
 
+//---------------------------------------------------------------------------
+// セッション共有変数 ("shared_vars") — 画面をまたいで保つ値。
+// 変数ストアは画面ごとに作り直されるので、 設定タブを渡り歩くと «さっき
+// 動かした値» が既定へ戻ってしまう。 ここに退避しておき、 次の画面を組むとき
+// 初期値として流し込む。 詳細は modal.h の «セッション共有変数» 節。
+//---------------------------------------------------------------------------
+namespace {
+
+std::mutex& shared_var_mutex() { static std::mutex m; return m; }
+std::map<std::string, std::string>& shared_var_map()
+{
+	static std::map<std::string, std::string> m;
+	return m;
+}
+
+// パターンは完全一致か、 末尾 '*' の前方一致。
+bool shared_var_match(const std::vector<std::string>& pats, const std::string& name)
+{
+	for (const auto& p : pats) {
+		if (!p.empty() && p.back() == '*') {
+			if (name.compare(0, p.size() - 1, p, 0, p.size() - 1) == 0) return true;
+		} else if (p == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
+void set_shared_var(const std::string& name, const std::string& value)
+{
+	std::lock_guard<std::mutex> lk(shared_var_mutex());
+	shared_var_map()[name] = value;
+}
+
+std::map<std::string, std::string> shared_vars()
+{
+	std::lock_guard<std::mutex> lk(shared_var_mutex());
+	return shared_var_map();
+}
+
+void clear_shared_vars()
+{
+	std::lock_guard<std::mutex> lk(shared_var_mutex());
+	shared_var_map().clear();
+}
+
 const resource_resolver& get_resource_resolver()
 {
 	return resolver_slot();
@@ -1399,6 +1447,7 @@ public:
 		}
 		// 観測フック: 「どの変数がどう変わったか」を外へ出す。 subscriber の
 		// 有無に関係なく発火するので、 誰も見ていない変数の変化も拾える。
+		if (_mirror) _mirror(name, cur);
 		if (_watcher) _watcher(name, cur);
 		return true;
 	}
@@ -1422,6 +1471,12 @@ public:
 	{
 		_watcher = std::move(f);
 	}
+	// 内部用: セッション共有ストアへの書き戻し ("shared_vars")。 ホストが
+	// 使う _watcher とは別枠にしてある (どちらか一方が他方を潰さないように)。
+	void set_mirror(std::function<void(const std::string&, const std::string&)> f)
+	{
+		_mirror = std::move(f);
+	}
 
 private:
 	struct sub
@@ -1433,6 +1488,7 @@ private:
 	std::map<std::string, std::vector<sub>> _subs;
 	std::function<void(ce::element&)> _on_changed;
 	std::function<void(const std::string&, const std::string&)> _watcher;
+	std::function<void(const std::string&, const std::string&)> _mirror;
 	layout_revision _rev;
 };
 
@@ -8797,6 +8853,32 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			if (kv.second.is<std::string>()) {
 				vars->set_initial(kv.first, kv.second.get<std::string>());
 			}
+		}
+	}
+
+	// "shared_vars": [パターン…] — セッション共有ストアと双方向にする変数。
+	// 共有側に値があれば画面の "vars" 既定より優先して流し込み (= 前の画面で
+	// 動かした値が生きる)、 以後の変化は共有側へ書き戻す。 "vars" の後に
+	// 置くのは «共有側が勝つ» ため。
+	if (auto* v = get_field(o, "shared_vars"); v && v->is<picojson::array>()) {
+		std::vector<std::string> pats;
+		for (const auto& e : v->get<picojson::array>())
+			if (e.is<std::string>() && !e.get<std::string>().empty())
+				pats.push_back(e.get<std::string>());
+		if (!pats.empty()) {
+			auto vars = builder.vars();
+			{
+				std::lock_guard<std::mutex> lk(shared_var_mutex());
+				for (const auto& kv : shared_var_map())
+					if (shared_var_match(pats, kv.first))
+						vars->set_initial(kv.first, kv.second);
+			}
+			vars->set_mirror([pats](const std::string& name,
+			                        const std::string& value) {
+				if (!shared_var_match(pats, name)) return;
+				std::lock_guard<std::mutex> lk(shared_var_mutex());
+				shared_var_map()[name] = value;
+			});
 		}
 	}
 

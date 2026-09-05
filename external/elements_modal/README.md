@@ -104,6 +104,7 @@ int main()
 | `content` | element | ルート要素 |
 | `input` | object | キー / パッドナビゲーション設定 (後述) |
 | `vars` | `{name: string, ...}` | 変数 store 初期値。 `label.text_var` の読み手、 focusable の `vars_on_focus` の書き手が共通参照する (後述) |
+| `shared_vars` | `[pattern, ...]` | **画面をまたいで保つ変数**のパターン配列 (例 `["cfg_*", "ui_lang"]`)。 一致した変数はセッション共有ストアと双方向になる (後述「変数 store」節)。 パターンは完全一致か末尾 `*` の前方一致 |
 | `strings` | `{id: {lang: string}}` | i18n 文字列テーブル (StringStore)。 `text_id` / `options_id` の解決元 (後述「i18n」節) |
 | `lang` | `"ja"` 等 | i18n の初期表示言語。 実行中の切替はホストの `set_language()` |
 | `font_languages` | `{lang: {map, fallback}}` | **言語連動フォント置換表** (任意)。 `map` = family (または registerFont の別名) → 置換先 family。 widget の `"font"` 指定と theme 既定チェーンの各 family トークンへ適用され、 `"#tag=val"` 軸サフィックスは温存される (JP/SC/TC の同軸 VF ならウェイトが揃う)。 `fallback` = その言語のときに theme 既定 families チェーンを置き換える並び (任意、 エントリの無い言語では swap 前の並びへ戻る)。 適用言語は widget 明示 `"locale"` > `set_language()` の現在言語。 表はプロセスグローバルに言語単位でマージ登録され、 画面 JSON と `app.jsonc` (マニフェスト) の両方で宣言できる (後読みが言語単位で上書き。 全画面同一表の運用を想定 — 異なる表の画面の同時表示は非対応)。 ⚠ `text_area` はビルド時にフォントを固定するため、 表示中の言語切替には追従しない (開き直しで反映) |
@@ -586,6 +587,35 @@ bool on = elements_modal::focus_ring_enabled();
   (→「外から覗く・触る」)。 「この画面がどの変数を何に使っているか」も取れる。
 - ホストからも `overlay_session::set_var(name, value)` で書ける (focus poll 以外の書き手。 ソフトウェアキーボードの入力文字列表示のような「ホスト状態 → label」の動的反映に使う)。 反映は次フレームの `render_to_buffer`。
 - 初期 focus の widget の `vars_on_focus` は次回 render 前に poll される (= `vars` の初期値は最初の poll までだけ表示される。 通常は初期 focus の値と同じにしておく)。
+
+#### 画面をまたいで保つ (`shared_vars`)
+
+変数 store は**画面ごとに作り直される**ので、 設定をタブで渡り歩くと «さっき
+動かしたスライダー» が既定値へ戻る。 引き継ぎたい値をトップレベルで宣言すると、
+その変数は**セッション共有ストアと双方向**になる。
+
+```jsonc
+"shared_vars": ["cfg_*", "ui_lang"]
+```
+
+- パターンは**完全一致**か、 **末尾 `*` の前方一致**。
+- 画面を組むとき共有側の値で初期化する (画面の `vars` 既定より**共有側が優先**)。
+- 以後その変数が変わるたび共有側へ書き戻す。 「どの値を持ち回るか」は画面が
+  決めるので、 **ホスト側の実装は要らない**。
+- 共有側へ行くのは «変化として書かれた» 値だけで、 widget の初期値
+  (`initial` / `value`) は出ない。 «誰も触っていない項目» が最初に開いた画面の
+  既定で固定されるのを避けるため。 スライダーの `display_var` のように
+  «組んだ時点で計算して書く» 値は共有側にも出る。
+- 書き戻しはホストの `set_var_watcher()` とは別枠なので、 どちらか一方が
+  他方を潰さない。
+
+ゲーム本体のセーブデータへ落とす / ロード後に流し込むのはホストの仕事:
+
+| API | 用途 |
+|---|---|
+| `set_shared_var(name, value)` | 共有変数を書く (画面が未構築でも可) |
+| `shared_vars()` | 現在値を全件返す (セーブ用) |
+| `clear_shared_vars()` | 捨てる (タイトルへ戻る / ロード直前など) |
 
 #### hover 連動 (`vars_on_hover`)
 
