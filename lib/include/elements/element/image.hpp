@@ -40,6 +40,7 @@ namespace cycfi::elements
                               image(fs::path const& path, float scale = 1);
                               image(fs::path const& path, fit_enum);
                               image(pixmap_ptr pixmap_);
+                              image(pixmap_ptr pixmap_, fit_enum);
 
       virtual point           size() const;
       view_limits             limits(basic_context const& ctx) const override;
@@ -47,6 +48,7 @@ namespace cycfi::elements
       virtual rect            source_rect(context const& ctx) const;
 
       void                    set_image(fs::path const& path, float scale = 1);
+      void                    set_image(pixmap_ptr pixmap_);
       pixmap_ptr              get_image() const { return _pixmap; }
 
    protected:

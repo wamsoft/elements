@@ -35,6 +35,14 @@ namespace cycfi::elements
          throw std::runtime_error{"Error: Invalid image."};
    }
 
+   image::image(pixmap_ptr pixmap_, fit_enum)
+    : _pixmap(pixmap_)
+    , _fit{true}
+   {
+      if (!_pixmap)
+         throw std::runtime_error{"Error: Invalid image."};
+   }
+
    point image::size() const
    {
       return _pixmap->size();
@@ -92,6 +100,15 @@ namespace cycfi::elements
       _pixmap = std::make_shared<elements::pixmap>(path, scale);
       if (!_pixmap)
          throw std::runtime_error{"Error: Invalid image."};
+   }
+
+   // 既に持っている pixmap を差し替える (fit 指定は変えない)。 実行時に絵を
+   // 入れ替える用途 — 空の 1x1 pixmap を渡せば「何も描かない」状態にできる。
+   void image::set_image(pixmap_ptr pixmap_)
+   {
+      if (!pixmap_)
+         throw std::runtime_error{"Error: Invalid image."};
+      _pixmap = std::move(pixmap_);
    }
 
    ////////////////////////////////////////////////////////////////////////////

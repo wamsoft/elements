@@ -202,6 +202,12 @@ int main()
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
 - `slide_switch` — `"id"` + `"value"`。
+- 上の 2 値トグル 3 種は `"value_var"` で変数 store と**双方向**連動する
+  (`atlas_toggle` と同じ規約)。 変数が未設定なら `"value"` を `"0"`/`"1"` と
+  して種まきし、 既に値があればそれで初期状態を上書きする
+  (`""` / `"0"` / `"false"` = off)。 クリックで書き戻し、 ホストの `set_var`
+  で状態が追従する (追従では `on_click` は発火しない)。 これで «設定画面の
+  ON/OFF» をホストのコールバック実装なしで変数だけで扱える。
 - `input_box` — `"placeholder"` + `"id"` + `"size"` (相対サイズ) + `"text"`/`"value"` (初期値。 全選択で入るので initial_focus からそのまま打つと置き換え) + `"max_chars"` (別名 `"maxlength"`。 最大文字数、 Unicode codepoint 単位、 0/省略 = 無制限。 満杯の打鍵は無視、 paste は収まる分だけ)。
 - `selection_menu` — `"id"` + `"options": [...]` + `"selected"` (初期 index)。
 
@@ -267,6 +273,7 @@ PSD でデザインされた固定サイズ / 固定位置のビットマップ 
 - `sprite_button` — 縦 strip スプライト (4 〜 5 frame: normal / hilite / pressed / pressed_hilite / disabled) で状態切替する momentary button。 `"image": "path"` + `"frame_height": px` + `"scale": float` (任意) + `"id"`。 frame は上から順に縦並びを仮定。 frame が 4 未満のときは欠けた状態をフォールバックする (pressed+hilite→pressed→normal) ので、 **3 frame (normal/hilite/pressed)** だけでも可。 その場合マウス押下 (hilite 中) もキーボード押下も同じ pressed frame を表示する。 `initial_focus` / `close_on_click` / `vars_on_focus` 対応。
 - `gizmo_image` — 9-patch / 3-patch 画像。 `"image": "path"` + `"axis": "9" | "h" | "v"` (既定 `"9"`) + `"scale": float`。 親 layout が与える bounds に合わせて中央部分が伸縮する (lib の `gizmo` / `hgizmo` / `vgizmo`)。 frame / background 等の伸縮素材向け。
 - `image` — **単一画像ファイルをパス指定で読み込み**、 与えられた bounds にアスペクト比維持で fit 描画する (atlas 非依存)。 `"image": "path"` (resource_loader 経由で解決、 JPEG/PNG/WEBP 対応 = ThorVG。 BMP は非対応) + `"scale": float` (任意、 指定時は fit でなく native×scale 固定サイズ)。 ロゴや一枚絵をレイアウトへそのまま置く用途、 およびセーブサムネイル等の動的画像に使う。 パスが **`"mem://<name>"`** ならファイル VFS でなく**ホスト注入画像ストア** (実行時に登録した名前→画像バイト) から読む。 読込失敗 (未登録 / ファイル無し / デコード失敗) は空要素になる (レイアウト維持・無描画)。 mem:// のバイトを差し替えたら、 ホストが `refresh_mem_image(name)` を呼ぶと**表示中の構築済み widget も再デコードされて即時反映**される (krkrz は `ElementsDialog.registerImage` が自動で呼ぶ)。 登録前に build した widget は空表示のままなので、 初回は画面を開く前に登録する。
+  - `"image_var": "varname"` — **絵そのものを変数で差し替える**。 変数の値がそのまま画像パス (`"resources/x.png"` / `"mem://thumb_3"` / 空 = 何も描かない) になる。 構築時は変数の値が静的 `"image"` より優先され、 変数が未設定なら `"image"` を種として書く (`set_initial`)。 実行時は `set_var` のたびに読み直すので、 **セーブ一覧のページ送りでサムネが変わる / CG ビュワーの絵を送る**が画面再構築なしで書ける。 差し替え先が `mem://` なら登録もその key へ付け替わるので、 以後の `registerImage` → `refresh_mem_image` も届く。 空文字や読めないパスでは «何も描かない» になるが **widget は残る**ので、 次に正しいパスを入れれば絵が戻る (静的 `"image"` が読めなくても `image_var` があれば同じ)。
 
 - `atlas_nine` (別名 `atlas_gizmo`) — アトラスの矩形を **9-patch** で伸縮して描く
   (ウィンドウ枠 / パネル)。 `"atlas"` + `"rect"` + `"insets": [l,t,r,b]`、

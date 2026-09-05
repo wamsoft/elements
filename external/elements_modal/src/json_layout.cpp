@@ -59,6 +59,26 @@ const resource_resolver& get_resource_resolver()
 	return resolver_slot();
 }
 
+namespace {
+// 相対パス → fs::path。 絶対ならそのまま。 ホストが resolver を設定していれば
+// そちらへ委譲 (origin = 画面の resource_base)、 未設定なら base 前置。
+// LayoutBuilder::resolve_resource の実体。 free 関数にしてあるのは、
+// "image_var" の変数追従 (builder より長生きする) が base を値で持って
+// 同じ解決を再現できるようにするため。
+cycfi::fs::path resolve_resource_with_base(const std::string& path,
+                                           const std::string& base)
+{
+	if (path.empty()) return {};
+	bool absolute = (path[0] == '/' || path[0] == '\\'
+	                 || (path.size() > 1 && path[1] == ':'));
+	if (absolute) return cycfi::fs::path(path);
+	if (const auto& r = get_resource_resolver())
+		return cycfi::fs::path(r(path, base));
+	if (base.empty()) return cycfi::fs::path(path);
+	return cycfi::fs::path(base + path);
+}
+} // namespace
+
 //---------------------------------------------------------------------------
 // JSON 文字列 → Elements enum 変換
 //
@@ -1654,19 +1674,7 @@ public:
 	// (origin = この画面の resource_base)。 未設定なら resource_base 前置。
 	cycfi::fs::path resolve_resource(const std::string& path) const
 	{
-		if (path.empty()) return {};
-		bool absolute = (path[0] == '/' || path[0] == '\\'
-		                 || (path.size() > 1 && path[1] == ':'));
-		if (absolute) {
-			return cycfi::fs::path(path);
-		}
-		if (const auto& r = get_resource_resolver()) {
-			return cycfi::fs::path(r(path, _resource_base));
-		}
-		if (_resource_base.empty()) {
-			return cycfi::fs::path(path);
-		}
-		return cycfi::fs::path(_resource_base + path);
+		return resolve_resource_with_base(path, _resource_base);
 	}
 
 	// リソースフォルダのテキストファイルを丸ごと読む (UTF-8)。 BOM を落とし、
@@ -4172,6 +4180,50 @@ element_ptr LayoutBuilder::build_text_area(const picojson::object& o)
 	return out;
 }
 
+//---------------------------------------------------------------------------
+// 2 値トグル (checkbox / toggle_button / slide_switch / atlas_toggle) の
+// "value_var" 連動をまとめて仕込む。
+//
+//   var -> widget : 構築時に変数へ既存値があれば初期状態をそれで上書きし
+//                   ("0" / "false" / 空 = off)、 以後の外部変更も状態へ反映
+//                   する (on_click は発火しない)。
+//   widget -> var : クリックで "0" / "1" を書き戻す。
+//
+// 変数が未設定なら JSON の初期値を種として書く (set_initial = subscriber を
+// 起こさない)。 これでホストは «変数一覧» の時点で全トグルの初期状態を読める。
+// スライダの wire_slider_vars と同じ規約。
+//---------------------------------------------------------------------------
+namespace {
+bool toggle_var_truthy(const std::string& v)
+{
+	return !(v.empty() || v == "0" || v == "false");
+}
+
+// 構築前に呼ぶ: 変数側に値があればそれを初期状態として返し、 無ければ JSON の
+// 初期値を種まきする。
+bool toggle_var_initial(const std::shared_ptr<VariableStore>& vars,
+                        const std::string& value_var, bool init)
+{
+	if (!vars || value_var.empty()) return init;
+	if (auto* cur = vars->get(value_var)) return toggle_var_truthy(*cur);
+	vars->set_initial(value_var, init ? "1" : "0");
+	return init;
+}
+
+// 構築後に呼ぶ: 変数 -> トグル状態の一方向同期。
+void wire_toggle_var(const std::shared_ptr<VariableStore>& vars,
+                     const element_ptr& shared, const std::string& value_var)
+{
+	if (!vars || value_var.empty()) return;
+	auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared);
+	if (!bp) return;
+	std::weak_ptr<ce::basic_button> w = bp;
+	vars->subscribe(value_var, [w](const std::string& v) {
+		if (auto sp = w.lock()) sp->value(toggle_var_truthy(v));
+	}, shared);
+}
+} // anonymous
+
 element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 {
 	auto text = string_or(o, "text");
@@ -4179,19 +4231,26 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	bool init = false;
 	bool_field(get_field(o, "value"), init);
 
+	std::string value_var = string_or(o, "value_var");
+	init = toggle_var_initial(_vars, value_var, init);
+
 	auto cb = ce::check_box(text, effective_font_scale(o));
 	cb.value(init);
-	if (!id.empty()) {
+	if (!id.empty() || !value_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		cb.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		cb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(cb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);          // focus 追跡 (focused_id / 演出トリガ)
+	wire_toggle_var(_vars, shared, value_var);
 	subscribe_button_text_id(o, shared); // "text_id" で多言語キャプション
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);           // フォーカスでヘルプ変数を書く
@@ -4205,19 +4264,26 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	bool init = false;
 	bool_field(get_field(o, "value"), init);
 
+	std::string value_var = string_or(o, "value_var");
+	init = toggle_var_initial(_vars, value_var, init);
+
 	auto tb = ce::toggle_button(text, effective_font_scale(o));
 	tb.value(init);
-	if (!id.empty()) {
+	if (!id.empty() || !value_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		tb.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		tb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(tb));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);
+	wire_toggle_var(_vars, shared, value_var);
 	subscribe_button_text_id(o, shared);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
@@ -4230,19 +4296,26 @@ element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
 	bool init = false;
 	bool_field(get_field(o, "value"), init);
 
+	std::string value_var = string_or(o, "value_var");
+	init = toggle_var_initial(_vars, value_var, init);
+
 	auto sw = ce::slide_switch();
 	sw.value(init);
-	if (!id.empty()) {
+	if (!id.empty() || !value_var.empty()) {
 		auto cb_id = id;
 		auto user_cb = _cb;
-		sw.on_click = [cb_id, user_cb](bool state) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/false, value_t{state});
+		auto vars = _vars;
+		sw.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
+			if (user_cb && !cb_id.empty())
+				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
 		};
 	}
 	auto shared = ce::share(std::move(sw));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);
+	wire_toggle_var(_vars, shared, value_var);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return apply_row_height(shared);
@@ -5767,6 +5840,42 @@ void mem_image_registry_add(const std::string& key,
 	mem_image_map()[key].push_back(MemImageEntry{ img, src, scale });
 }
 
+// image_var で絵が差し替わったとき、 この widget の mem:// 登録を新しい key へ
+// 付け替える (古い key の行は消し、 新しい key へ足す)。 これをしないと
+// 「差し替え後の mem:// キーで registerImage → refresh_mem_image」が届かない。
+void mem_image_registry_rebind(const std::shared_ptr<ce::image>& img,
+                               const std::string& new_key,
+                               const cycfi::fs::path& src, float scale)
+{
+	std::lock_guard<std::mutex> lk(mem_image_mutex());
+	auto& m = mem_image_map();
+	for (auto it = m.begin(); it != m.end(); ) {
+		auto& vec = it->second;
+		for (auto e = vec.begin(); e != vec.end(); ) {
+			auto p = e->widget.lock();
+			if (!p || p == img) e = vec.erase(e);   // 失効 / 自分の古い登録
+			else ++e;
+		}
+		if (vec.empty()) it = m.erase(it); else ++it;
+	}
+	if (!new_key.empty()) m[new_key].push_back(MemImageEntry{ img, src, scale });
+}
+
+// 空の (何も描かない) 1x1 pixmap。 image_var 付きで絵が読めないとき
+// (空スロット等) に、 widget を保ったまま «何も描かない» を表す。
+ce::pixmap_ptr blank_pixmap()
+{
+	return std::make_shared<ce::pixmap>(ce::point{1, 1});
+}
+
+// 同上を image widget として作る。 fit 指定は本物の絵と揃えておく
+// (後から set_image で実画像が入ったとき収まり方が変わらないように)。
+std::shared_ptr<ce::image> make_blank_image(bool fit)
+{
+	return fit ? ce::share(ce::image(blank_pixmap(), ce::image::fit))
+	           : ce::share(ce::image(blank_pixmap()));
+}
+
 } // namespace
 
 //---------------------------------------------------------------------------
@@ -5776,42 +5885,91 @@ void mem_image_registry_add(const std::string& key,
 // 返す (レイアウトは維持、 何も描かない)。 pixmap は build 時に一度読むが、
 // mem:// は登録し直して refresh_mem_image() を呼べばその場で差し替わる。
 //   "scale": float (任意) — 指定時は fit でなく native×scale 固定サイズ。
+//
+// "image_var" (任意) — **絵そのものを実行時に差し替える**。 変数の値が
+// そのまま画像パス ("resources/x.png" / "mem://thumb_3" / 空 = 何も描かない)。
+//   - 構築時: 変数に値があればそれを使い、 無ければ静的な "image" を種として
+//     書く (set_initial)。 ホストは «変数一覧» で初期の絵を読める。
+//   - 実行時: set_var のたびに set_image で読み直す。 mem:// の登録もその key
+//     へ付け替えるので、 差し替え後も registerImage → refresh_mem_image が届く。
+//   - 読めないパスを渡されたときは空 (透明) にする。 セーブ一覧のページ送りで
+//     «絵の無いスロット» を跨いでも widget は残るので、 次のページで戻る。
+// ページ送りでサムネが変わるセーブ一覧・CG ビュワーの想定。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_image(const picojson::object& o)
 {
 	auto path = string_or(o, "image");
-	if (path.empty()) {
+	std::string image_var = string_or(o, "image_var");
+
+	// 変数の現在値は静的な "image" より優先。 未設定なら静的パスを種まきする。
+	if (!image_var.empty() && _vars) {
+		if (auto* cur = _vars->get(image_var)) path = *cur;
+		else if (!path.empty()) _vars->set_initial(image_var, path);
+	}
+	if (path.empty() && image_var.empty()) {
 		em_logf("elements_modal: image without 'image' path");
 		return ce::share(ce::element{});
 	}
+
+	const double scale = number_or(o, "scale", 0.0);
+	const float reload_scale = (scale > 0.0) ? static_cast<float>(scale) : 1.0f;
+
+	// "mem://" はホスト注入ストアのキーなので resource_base を前置しない。
+	// それ以外は通常のリソースパス解決 (resource_base 起点)。
+	auto to_path = [](const std::string& p, const std::string& base) {
+		return (p.rfind("mem://", 0) == 0) ? cycfi::fs::path(p)
+		                                   : resolve_resource_with_base(p, base);
+	};
+
+	std::shared_ptr<ce::image> img;
+	cycfi::fs::path fp = to_path(path, _resource_base);
 	try {
-		// "mem://" はホスト注入ストアのキーなので resource_base を前置しない。
-		// それ以外は通常のリソースパス解決 (resource_base 起点)。
-		cycfi::fs::path fp = (path.rfind("mem://", 0) == 0)
-			? cycfi::fs::path(path)
-			: resolve_resource(path);
-		double scale = number_or(o, "scale", 0.0);
-		std::shared_ptr<ce::image> img;
-		if (scale > 0.0) {
+		if (path.empty()) {
+			img = make_blank_image(scale <= 0.0);
+		} else if (scale > 0.0) {
 			img = ce::share(ce::image(fp, static_cast<float>(scale)));
 		} else {
 			// 既定: 与えられた bounds にアスペクト維持で収める
 			img = ce::share(ce::image(fp, ce::image::fit));
 		}
-		register_id(o, img);
-		// "mem://" は実行時に registerImage でバイトが差し替わりうる。 差し替え
-		// 時に refresh_mem_image() で set_image できるよう widget を登録しておく
-		// (セーブ直後のサムネイル即時反映)。
-		if (std::string key; parse_mem_key(path, key)) {
-			float reload_scale = (scale > 0.0) ? static_cast<float>(scale) : 1.0f;
-			mem_image_registry_add(key, img, fp, reload_scale);
-		}
-		return img;
 	} catch (...) {
 		// pixmap 読込失敗 (未登録 mem:// / ファイル無し / デコード失敗)。
-		// 空スロット等では想定内なので空要素で継続。
-		return ce::share(ce::element{});
+		// 空スロット等では想定内なので空要素で継続 — ただし image_var 付きは
+		// «後から絵が入る» ので、 空画像で widget を保つ。
+		if (image_var.empty()) return ce::share(ce::element{});
+		img = make_blank_image(scale <= 0.0);
 	}
+
+	register_id(o, img);
+	// "mem://" は実行時に registerImage でバイトが差し替わりうる。 差し替え
+	// 時に refresh_mem_image() で set_image できるよう widget を登録しておく
+	// (セーブ直後のサムネイル即時反映)。
+	if (std::string key; parse_mem_key(path, key))
+		mem_image_registry_add(key, img, fp, reload_scale);
+
+	// 変数 → 絵の差し替え。 base は値で持つ (builder はここで死ぬ)。
+	if (!image_var.empty() && _vars) {
+		std::weak_ptr<ce::image> w = img;
+		std::string base = _resource_base;
+		_vars->subscribe(image_var,
+			[w, base, reload_scale, to_path](const std::string& v) {
+				auto sp = w.lock();
+				if (!sp) return;
+				cycfi::fs::path np = to_path(v, base);
+				std::string key;
+				bool is_mem = parse_mem_key(v, key);
+				try {
+					// 空 → 透明にして «絵が無い» を表す (空スロット)。
+					if (v.empty()) sp->set_image(blank_pixmap());
+					else           sp->set_image(np, reload_scale);
+				} catch (...) {
+					sp->set_image(blank_pixmap());   // 読めないパス
+				}
+				mem_image_registry_rebind(sp, is_mem ? key : std::string{},
+				                          np, reload_scale);
+			}, img);
+	}
+	return img;
 }
 
 //---------------------------------------------------------------------------
@@ -6139,9 +6297,7 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 //     },
 //     "text": "MUSIC", "text_size": 22 }   // overlay 同様
 // 値変化で value_t{bool} を発火。
-// "value_var" (任意) で VariableStore と連動: 変数に既存値があれば初期状態を
-// 上書き ("0" / "false" / 空 = off)、 クリックで "0"/"1" を書き戻し、 変数の
-// 変更は状態へ反映のみ (on_click は発火しない)。 atlas_slider と同じ規約。
+// "value_var" (任意) で VariableStore と連動 (規約は wire_toggle_var 参照)。
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 {
@@ -6169,12 +6325,7 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	if (!bool_field(get_field(o, "initial"), init))
 		bool_field(get_field(o, "value"), init);
 	std::string value_var = string_or(o, "value_var");
-	auto var_truthy = [](const std::string& v) {
-		return !(v.empty() || v == "0" || v == "false");
-	};
-	if (!value_var.empty()) {
-		if (auto* cur = _vars->get(value_var)) init = var_truthy(*cur);
-	}
+	init = toggle_var_initial(_vars, value_var, init);
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames),
 	                               truthy_field(get_field(o, "native_frames")));
@@ -6195,14 +6346,8 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
-		if (!value_var.empty()) {
-			// 変数 → トグル状態の一方向同期 (on_click は発火しない)。
-			std::weak_ptr<ce::basic_button> w = bp;
-			_vars->subscribe(value_var, [w, var_truthy](const std::string& v) {
-				if (auto sp = w.lock()) sp->value(var_truthy(v));
-			}, bp);
-		}
 	}
+	wire_toggle_var(_vars, shared, value_var);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
