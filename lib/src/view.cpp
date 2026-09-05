@@ -64,13 +64,33 @@
       _tasks.stop();
    }
 
+   namespace detail
+   {
+      namespace
+      {
+         std::unique_ptr<scratch_context> _shared_scratch;
+      }
+
+      scratch_context& shared_scratch()
+      {
+         if (!_shared_scratch)
+            _shared_scratch = std::make_unique<scratch_context>();
+         return *_shared_scratch;
+      }
+
+      void release_shared_scratch()
+      {
+         _shared_scratch.reset();
+      }
+   }
+
    void view::set_limits()
    {
       if (_content.empty())
          return;
 
       // Use a scratch context for off-screen measurement
-      static detail::scratch_context scratch;
+      auto& scratch = detail::shared_scratch();
       canvas cnv{scratch.buffer(), 4, 4};
 
       // Update the limits and constrain the window size to the limits
@@ -113,7 +133,7 @@
       void with_context_do(F f, This& self, rect _current_bounds)
       {
          // Use a scratch context for off-screen operations
-         static detail::scratch_context scratch;
+         auto& scratch = detail::shared_scratch();
          canvas cnv{scratch.buffer(), 4, 4};
          context ctx{self, cnv, &self.main_element(), _current_bounds};
 

@@ -7,6 +7,7 @@
 #define ELEMENTS_DETAIL_SCRATCH_CONTEXT_SEPTEMBER_26_2016
 
 #include <thorvg.h>
+#include <memory>
 #include <vector>
 #include <cstdint>
 
@@ -40,6 +41,16 @@ namespace cycfi { namespace elements { namespace detail
       tvg::SwCanvas*          _canvas;
       std::vector<uint32_t>   _buffer;
    };
+   // 測定用 scratch canvas は関数内 static だとプロセス終了まで生き残り、
+   // tvg::Initializer::term() が «まだ canvas がある» と言って早期 return する
+   // (SwRenderer::term が false を返す)。 その結果 LoaderMgr::term() に届かず、
+   // フォントローダが ThorVG の静的リストに残ったまま atexit で破棄されて、
+   // 破棄済みのフォントマネージャを触って落ちる。
+   //
+   // «いつでも作り直せる» 一時領域なので、 終了前に明示的に捨てられるように
+   // しておく。 次に必要になれば作り直される。
+   scratch_context& shared_scratch();
+   void release_shared_scratch();
 }}}
 
 #endif

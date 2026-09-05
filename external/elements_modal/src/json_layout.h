@@ -226,6 +226,16 @@ struct parsed_layout
 	input_action_config actions;
 };
 
+//! @brief アトラス由来の pixmap をすべて手放す。 shutdown() が
+//!        tvg::Initializer::term() の **前** に呼ぶ。
+//!
+//!        pixmap は ThorVG の Picture を握っているので、 term() の後まで
+//!        生きていると静的デストラクタが «終了済みの ThorVG» を叩いて落ちる。
+//!        アトラスのキャッシュはプロセス終了まで残る作りなので、 これを
+//!        呼ばないとまさにそれが起きる (出力を書いた後の終了処理で、
+//!        実行ごとに落ちたり落ちなかったりする)。
+void release_atlas_resources();
+
 //! @brief input_defaults.jsonc (top-level が画面別 "input" ブロックと同形) の
 //! 解析結果。 apply_settings は arrow_focus_nav / axis mode 等の view settings
 //! 適用クロージャ (画面別 apply_input より先に呼ぶ = 画面別が勝つ)。

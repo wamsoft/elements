@@ -760,6 +760,20 @@ ce::pixmap_ptr atlas_cache_get(const std::string& key,
 	return pm;
 }
 
+// アトラス由来の pixmap をすべて手放す。 shutdown() が
+// tvg::Initializer::term() を呼ぶ **前** に呼ぶこと。
+//
+// pixmap は ThorVG の Picture を握っているので、 term() の後まで生きていると
+// 静的デストラクタが «終了済みの ThorVG» を叩いて落ちる。 キャッシュは
+// プロセス終了まで残る作りなので、 まさにそれが起きていた
+// (出力を書いた後の終了処理で、 実行ごとに落ちたり落ちなかったりする形。
+//  絵を持たないベクタのみの画面では再現しない)。
+void release_atlas_pixmaps()
+{
+	g_atlas_cache.clear();
+	g_atlas_cache_bytes = 0;
+}
+
 const SkinSpec* find_skin(const std::string& name)
 {
 	if (name.empty()) return nullptr;
@@ -9233,6 +9247,16 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 // ので匿名 namespace の外=この公開 API 区画に置く)。
 // ※呼出側は ImageStore のロックを解放してから呼ぶこと (set_image が
 //   resource_loader 経由で ImageStore を読むため、 保持したままだと再入する)。
+// アトラス由来の pixmap を全部手放す (shutdown が term の前に呼ぶ)。
+// 実体は匿名 namespace の release_atlas_pixmaps。 差し替え可能アトラスも
+// 同じく pixmap を握っているので一緒に捨てる。
+void release_atlas_resources()
+{
+	release_atlas_pixmaps();
+	std::lock_guard<std::mutex> lk(swap_atlas_mutex());
+	swap_atlas_map().clear();
+}
+
 void refresh_mem_image(const std::string& mem_key)
 {
 	std::lock_guard<std::mutex> lk(mem_image_mutex());

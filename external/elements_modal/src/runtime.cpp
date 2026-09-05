@@ -10,6 +10,8 @@
 #include "elements_modal/modal.h"
 
 #include "em_platform.h"
+#include "json_layout.h"   // release_atlas_resources
+#include <elements/support/detail/scratch_context.hpp>  // release_shared_scratch
 
 #include <elements/support/theme.hpp>
 #include <thorvg.h>
@@ -48,6 +50,15 @@ bool init(const std::string& /*font_directory*/, bool /*load_default_fonts*/)
 void shutdown()
 {
 	std::lock_guard<std::mutex> lock(s_init_mutex);
+	// ThorVG を畳む前にアトラスの pixmap を手放す。 残したままだと静的
+	// デストラクタが «終了済みの ThorVG» を叩いて落ちる (json_layout.h の
+	// release_atlas_resources 参照)。
+	release_atlas_resources();
+	// 測定用 scratch canvas も捨てる。 生きていると SwRenderer::term() が
+	// 弾かれ、 Initializer::term() が LoaderMgr::term() の手前で早期 return
+	// する → フォントローダが ThorVG の静的リストに残り、 atexit で破棄済みの
+	// フォントマネージャを触って落ちる。
+	cycfi::elements::detail::release_shared_scratch();
 	if (s_tvg_initialized) {
 		tvg::Initializer::term();
 		s_tvg_initialized = false;
