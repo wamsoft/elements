@@ -33,13 +33,22 @@ namespace cycfi::elements
       void                    font_family(std::string name);
       std::string const&      font_family() const { return _font_family; }
 
-      // Theme label font with font_size()/font_family() applied.
+      // Language of the option text, used by the language-driven font
+      // substitution (see set_font_language_table). Empty = follow the
+      // current language (set_font_language); a value here pins the text to
+      // that language, which is how a Latin-only value (a machine name, say)
+      // keeps one font across UI languages. Same role as a label's "locale".
+      void                    font_locale(std::string lang) { _font_locale = std::move(lang); }
+      std::string const&      font_locale() const { return _font_locale; }
+
+      // Theme label font with font_size()/font_family()/font_locale() applied.
       font_descr              text_font() const;
 
    protected:
 
       float                   _font_size = 1.0f;
       std::string             _font_family;
+      std::string             _font_locale;
       unsigned char           _font_weight = font_constants::weight_normal;
       unsigned char           _font_slant  = font_constants::slant_normal;
       bool                    _font_resolved = false;
