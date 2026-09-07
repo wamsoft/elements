@@ -4470,6 +4470,9 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
 	// テーマ既定 (従来どおり)。
 	std::string picker_font = string_or(o, "font");
+	// "locale": 言語連動フォント置換で使う言語 (label と同じ)。 英数字だけの
+	// 表示値を 1 つのフォントに固定したいときに指定する。
+	std::string picker_locale = string_or(o, "locale", _default_locale);
 
 	auto cb_id = id;
 	auto user_cb = _cb;
@@ -4489,6 +4492,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		if (!picker_font.empty()) p->font_family(picker_font);
+		if (!picker_locale.empty()) p->font_locale(picker_locale);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -4501,6 +4505,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		if (!picker_font.empty()) p->font_family(picker_font);
+		if (!picker_locale.empty()) p->font_locale(picker_locale);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -4511,6 +4516,7 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 		p->on_change = std::move(on_change);
 		p->font_size(fs);
 		if (!picker_font.empty()) p->font_family(picker_font);
+		if (!picker_locale.empty()) p->font_locale(picker_locale);
 		note_focusable(id, p);
 		subscribe_picker_options(p, opt_ids);
 		subscribe_picker_index_var(p, index_var);
@@ -7588,6 +7594,10 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 	// "font": 表示テキストの family[#axes] (label と同じ書式)。 省略時は
 	// テーマ既定 (従来どおり)。
 	if (auto pf = string_or(o, "font"); !pf.empty()) p->font_family(pf);
+	// "locale": 言語連動フォント置換で使う言語 (label と同じ)。 英数字だけの
+	// 表示値を 1 つのフォントに固定したいときに指定する。
+	if (auto pl = string_or(o, "locale", _default_locale); !pl.empty())
+		p->font_locale(pl);
 	// 色は "@名前" / "#rrggbb" も受ける (テーマの色トークン)。
 	{ ce::color tc; if (parse_color_field(o, "color", tc)) p->text_color(tc); }
 	note_focusable(id, p);

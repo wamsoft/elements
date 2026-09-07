@@ -106,6 +106,9 @@ namespace cycfi::elements
          f._weight = _font_weight;
          f._slant = _font_slant;
       }
+      // _lang is a string_view too; _font_locale (member) outlives the draw.
+      if (!_font_locale.empty())
+         f._lang = _font_locale;
       return f;
    }
 
