@@ -93,6 +93,13 @@ namespace cycfi::elements
       cnv.fill_style(_color);
       for (auto& row : _rows)
       {
+         // Rows entirely below the current clip are invisible: stop here
+         // instead of shaping and filling every remaining row. A long body
+         // inside a scroller has bounds far taller than the viewport, so
+         // without this cut-off every redraw walked all of its lines (a
+         // 26KB license text = ~600 rows, ~0.8s per frame on console).
+         if (y - metrics.ascent > clip_extent.bottom)
+            break;
          if (y + metrics.descent > clip_extent.top)
             row.draw({x, y}, cnv);
          y += line_height;
