@@ -498,6 +498,19 @@ struct overlay_session::impl
 	bool  warp_pending = false;
 	float warp_sx = 0.0f;
 	float warp_sy = 0.0f;
+	// 直近に要求した warp の着地点 (view 座標)。 warp が生む合成 mouse move は
+	// ここへ届くので、 それを「実マウスが動いた」と誤認して last_nav_source を
+	// mouse に戻さないための照合用。 実マウスの移動 (不一致) が来たら解除。
+	bool      warp_issued = false;
+	ce::point warp_target{};
+	void note_warp(ce::point hp, float sx, float sy)
+	{
+		warp_sx = sx;
+		warp_sy = sy;
+		warp_pending = true;
+		warp_issued  = true;
+		warp_target  = hp;
+	}
 
 	// 合成キーイベントを view へ送る (press + release)。 named-action の
 	// accept/nav/focus/page はネイティブキー経路の再利用としてこれで実装する。
@@ -1152,9 +1165,7 @@ void overlay_session::notify_input_focus_gained()
 	if (!_impl->view->focused_hot_point(hp)) return;
 	if (_impl->last_nav_source == impl::nav_source::key) {
 		// キー/パッド操作中はカーソルを隠しているので warp してよい
-		_impl->warp_sx = hp.x + _impl->last_rect.x;
-		_impl->warp_sy = hp.y + _impl->last_rect.y;
-		_impl->warp_pending = true;
+		_impl->note_warp(hp, hp.x + _impl->last_rect.x, hp.y + _impl->last_rect.y);
 	} else {
 		// マウス操作中はカーソルを動かさず hover だけ合わせる
 		_impl->last_cursor = hp;
@@ -1290,9 +1301,7 @@ bool overlay_session::update()
 				ce::point hp{};
 				if (_impl->view->focused_hot_point(hp)) {
 					// view-local → surface logical (直近の描画矩形基準)
-					_impl->warp_sx = hp.x + _impl->last_rect.x;
-					_impl->warp_sy = hp.y + _impl->last_rect.y;
-					_impl->warp_pending = true;
+					_impl->note_warp(hp, hp.x + _impl->last_rect.x, hp.y + _impl->last_rect.y);
 				}
 			}
 		}
@@ -1625,7 +1634,23 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	// 引きずられるためアプリ外のマウス操作にも影響する。
 	// パッドの斜め入力でフォーカスが上下に振動するのも同じ経路
 	// (warp の合成 move → hover → 再 warp)。
-	if (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y)
+	//
+	// ただし cursor-warp 自身が生む合成 move (着地点 = 直近の warp 先) は
+	// 実マウスの移動ではないので mouse に戻さない。 戻してしまうと、 パッド
+	// 長押し中に view 内部のオートリピートで動くフォーカスへは warp が掛からず
+	// (host のキーイベントが来た瞬間だけ warp する)、 説明文などフォーカス連動の
+	// 表示だけが先に進んでハイライト (hover) が置いていかれる。 実マウスの
+	// 移動 (着地点と不一致) が来たら照合を解除して通常どおり mouse へ戻す。
+	bool synthetic_warp_move = false;
+	if (_impl->warp_issued) {
+		if (std::abs(p.x - _impl->warp_target.x) <= 2.0f &&
+		    std::abs(p.y - _impl->warp_target.y) <= 2.0f)
+			synthetic_warp_move = true;
+		else
+			_impl->warp_issued = false;
+	}
+	if (!synthetic_warp_move &&
+	    (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y))
 		_impl->last_nav_source = impl::nav_source::mouse;
 	_impl->last_cursor = p;
 
