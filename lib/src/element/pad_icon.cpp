@@ -262,6 +262,8 @@ namespace cycfi::elements
       std::mutex   g_mutex;
       pad_theme    g_current_theme = pad_theme::none;
       std::string  g_base_dir;
+      // host 指定の alias (論理名 → Kenney basename)。 theme 別。 既定表より優先。
+      std::unordered_map<std::string, std::string> g_alias[kNumThemes];
       // Per-theme codepoint maps + registered family name.
       struct theme_runtime
       {
@@ -366,6 +368,17 @@ namespace cycfi::elements
       // or "mouse_", return it verbatim as the basename (passthrough).
       std::string resolve_kenney_basename(std::string_view name, pad_theme t)
       {
+         {
+            int idx = theme_index(t);
+            if (idx >= 0) {
+               std::lock_guard<std::mutex> lk(g_mutex);
+               auto const& al = g_alias[idx];
+               if (!al.empty()) {
+                  auto it = al.find(std::string(name));
+                  if (it != al.end()) return it->second;
+               }
+            }
+         }
          auto const& nm = name_map_for(t);
          if (auto it = nm.find(name); it != nm.end()) {
             return std::string(it->second);
@@ -442,6 +455,25 @@ namespace cycfi::elements
    {
       std::lock_guard<std::mutex> lk(g_mutex);
       g_base_dir = std::move(path);
+   }
+
+   void set_pad_icon_alias(pad_theme t, std::string logical_name, std::string basename)
+   {
+      int idx = theme_index(t);
+      if (idx < 0 || logical_name.empty()) return;
+      std::lock_guard<std::mutex> lk(g_mutex);
+      if (basename.empty())
+         g_alias[idx].erase(logical_name);
+      else
+         g_alias[idx][std::move(logical_name)] = std::move(basename);
+   }
+
+   void clear_pad_icon_aliases(pad_theme t)
+   {
+      int idx = theme_index(t);
+      if (idx < 0) return;
+      std::lock_guard<std::mutex> lk(g_mutex);
+      g_alias[idx].clear();
    }
 
    const std::string& get_pad_icon_base_dir()
@@ -584,15 +616,21 @@ namespace cycfi::elements
     , _target_height(target_height)
     , _colored(colored)
     , _outline(outline)
-    , _theme_at_construct(get_pad_theme())
    {}
 
    void pad_icon::ensure_loaded() const
    {
-      if (_tried) return;
+      // theme は構築時ではなく描画時のものを使う。 setPadTheme("auto") で
+      // パッドの抜き差しに追従して global theme が変わったとき、 出しっぱなしの
+      // 画面 (常駐ガイド等) も次の描画で絵が差し替わるように、 theme が変わって
+      // いたら解決し直す。
+      auto theme = get_pad_theme();
+      if (_tried && theme == _theme_loaded) return;
       _tried = true;
+      _theme_loaded = theme;
+      _pixmap = nullptr;
 
-      auto path = resolve_pad_icon_svg_path(_name, _theme_at_construct);
+      auto path = resolve_pad_icon_svg_path(_name, theme);
       if (path.empty()) return;
 
       // colored: 同じディレクトリで "_button_<x>" → "_button_color_<x>" に
