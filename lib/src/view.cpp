@@ -1436,6 +1436,12 @@
       {
          for (auto& st : _axis_states)
          {
+            // 押下値も消す。 覆われている間に来た「離し」は前面 view にしか
+            // 届かないので、 ここで残すと復帰した瞬間から押しっぱなし扱いで
+            // フォーカスが回り続ける (dpad を押したまま前面を開き、 離してから
+            // 戻るケース)。 まだ押されていれば host が repeat down を届けて
+            // 再び立つので、 消しても長押しの継続は損なわない。
+            st.current = 0.0f;
             st.dir = 0;
             st.next_repeat = {};
             st.value_active = false;
