@@ -43,6 +43,16 @@ namespace cycfi::elements
    const std::string& get_pad_icon_base_dir();
 
    ////////////////////////////////////////////////////////////////////////////
+   // Per-theme alias override — host が「論理名 → Kenney basename」の既定表を
+   // 差し替えるための口。 例: キーボード表示でキャンセルが Esc ではなく
+   // BackSpace のタイトルなら set_pad_icon_alias(keyboard, "b",
+   // "keyboard_backspace")。 既定表より優先。 basename 空で個別解除、
+   // clear で theme 単位に全解除。
+   ////////////////////////////////////////////////////////////////////////////
+   void set_pad_icon_alias(pad_theme t, std::string logical_name, std::string basename);
+   void clear_pad_icon_aliases(pad_theme t);
+
+   ////////////////////////////////////////////////////////////////////////////
    // Register all 4 theme TTFs with the elements font system. Looks for files
    // under base_dir/<theme>/<font>.ttf using the Kenney pack convention.
    // No-op if base_dir is empty or files are missing for a theme; returns true
@@ -142,7 +152,9 @@ namespace cycfi::elements
       float                   _target_height;
       bool                    _colored;
       bool                    _outline;
-      pad_theme               _theme_at_construct;
+      // 最後に SVG を解決したときの theme。 global theme が変わっていたら
+      // ensure_loaded が解決し直す (画面を開き直さなくても絵が追従する)。
+      mutable pad_theme       _theme_loaded = pad_theme::none;
       mutable pixmap_ptr      _pixmap;
       mutable bool            _tried = false;
    };
