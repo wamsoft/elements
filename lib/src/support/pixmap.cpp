@@ -153,9 +153,16 @@ namespace cycfi { namespace elements
          return;
       }
 
+      // Both decoders failing does not only mean bad data: a large atlas needs
+      // one contiguous RGBA buffer (tens of MB), and that allocation can fail on
+      // a heap that has been running for hours.  stb_image reports "outofmem" in
+      // that case, so pass its reason through -- without it the log blames the
+      // image data and the real cause stays hidden.
+      const char* why = stbi_failure_reason();
       throw failed_to_load_pixmap{
-         "Failed to decode pixmap (unsupported or corrupt image data): " + name
-         + " (" + std::to_string(bytes.size()) + " bytes, ext '" + mime + "')"};
+         "Failed to decode pixmap: " + name
+         + " (" + std::to_string(bytes.size()) + " bytes, ext '" + mime + "', "
+         + (why ? why : "no reason reported") + ")"};
    }
 
    pixmap::~pixmap()

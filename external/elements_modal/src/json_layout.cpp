@@ -583,7 +583,16 @@ std::map<std::string, AtlasCacheEntry> g_atlas_cache;
 std::uint64_t g_atlas_clock = 0;
 std::size_t   g_atlas_cache_bytes = 0;
 // 予算 (バイト)。 0 にするとキャッシュ無効 (毎回デコード = 従来の挙動)。
-std::size_t g_atlas_cache_budget = 48u * 1024u * 1024u;
+//
+// 画面ぶんの atlas は**全部載せたまま**にできる大きさにしておく。 一度
+// デコードしたら手放さないので、 プレイ中に大きな確保をやり直すことが
+// なくなる。 長時間プレイで汎用ヒープが断片化したあと 20〜30MB の連続
+// 領域が取れずにデコードが失敗し、 画像なしで画面が組まれる (文字だけが
+// 出て板や枠が透ける) のを防ぐため (SGOCT-260)。
+// 実測 (RGBA 展開): ランチャー 52.3 / マップ 31.1 / 設定 19.4 /
+// セーブ・ロード 10.5 ずつ / 背景 7.9 / 残り 0〜4.6、 合計 167MB。
+// リージョンで使う設定画面は 1 つなので実際に載るのは 150MB 程度。
+std::size_t g_atlas_cache_budget = 192u * 1024u * 1024u;
 
 void atlas_cache_trim()
 {
@@ -602,6 +611,21 @@ void atlas_cache_trim()
 	}
 }
 
+// 使われていない atlas を全部手放す。 デコードの確保に失敗したときの最後の
+// 手段として使う (予算内でもヒープの空きが足りないことはある)。
+// 解放できたバイト数を返す。
+std::size_t atlas_cache_release_unused()
+{
+	std::size_t freed = 0;
+	for (auto it = g_atlas_cache.begin(); it != g_atlas_cache.end(); ) {
+		if (it->second.pm.use_count() != 1) { ++it; continue; }   // 使用中は残す
+		freed += it->second.bytes;
+		g_atlas_cache_bytes -= it->second.bytes;
+		it = g_atlas_cache.erase(it);
+	}
+	return freed;
+}
+
 // path + scale をキーに pixmap を取得する。 キャッシュに無ければデコードする。
 // デコードに失敗したら例外がそのまま呼び出し側へ伝わる (従来と同じ)。
 // (fs エイリアスはこの位置より後で宣言されるので path は文字列で受ける。
@@ -615,7 +639,21 @@ ce::pixmap_ptr atlas_cache_get(const std::string& key,
 		if (hit) *hit = true;
 		return it->second.pm;
 	}
-	auto pm = std::make_shared<ce::pixmap>(full, scale);
+	// 読む前に予算超過ぶんを落としておく。 読んでから捨てると、 直前の画面の
+	// atlas と新しい atlas が同時に載る瞬間ができてしまう。
+	atlas_cache_trim();
+	ce::pixmap_ptr pm;
+	try {
+		pm = std::make_shared<ce::pixmap>(full, scale);
+	} catch (...) {
+		// 確保に失敗した可能性がある。 使っていない atlas を全部手放して
+		// 一度だけ読み直す (捨てられるものが無ければそのまま投げる)。
+		const std::size_t freed = atlas_cache_release_unused();
+		if (freed == 0) throw;
+		em_logf("elements_modal: atlas load retry after releasing %zu KB of cache",
+		        freed / 1024u);
+		pm = std::make_shared<ce::pixmap>(full, scale);
+	}
 	if (hit) *hit = false;
 	if (g_atlas_cache_budget == 0) return pm;   // キャッシュ無効
 
