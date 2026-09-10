@@ -10,6 +10,7 @@
 #include <elements/support/context.hpp>
 #include <elements/element/traversal.hpp>
 #include <elements/view.hpp>
+#include <algorithm>
 #include <utility>
 
 namespace cycfi::elements
@@ -158,7 +159,19 @@ namespace cycfi::elements
     , _read_only{false}
     , _enabled{true}
     , _scroll_into_view{false}
+    , _has_caret_bounds{false}
+    , _caret_device_bounds{}
+    , _area_device_bounds{}
    {}
+
+   bool basic_text_box::caret_bounds(rect& caret, rect& area) const
+   {
+      if (!_has_caret_bounds || !_is_focus || !editable())
+         return false;
+      caret = _caret_device_bounds;
+      area = _area_device_bounds;
+      return true;
+   }
 
    basic_text_box::~basic_text_box()
    {
@@ -625,10 +638,16 @@ namespace cycfi::elements
          _this_handle = std::make_shared<basic_text_box*>(this);
 
       if (!editable() || _select_start == -1)
+      {
+         _has_caret_bounds = false;
          return;
+      }
 
       if (!_is_focus) //No caret if not focused
+      {
+         _has_caret_bounds = false;
          return;
+      }
 
       auto& canvas = ctx.canvas;
       auto const& theme = get_theme();
@@ -674,6 +693,36 @@ namespace cycfi::elements
 
          has_caret = true;
          caret_bounds = rect{caret.left - 0.5f, caret.top, caret.left + width + 0.5f, caret.bottom};
+      }
+
+      // IME の変換 / 候補ウィンドウを寄せるため、 キャレットとテキスト領域を
+      // device 座標で控えておく (ホストが caret_bounds() で読む)。
+      if (has_caret)
+      {
+         auto ctl = ctx.canvas.user_to_device(caret_bounds.top_left());
+         auto cbr = ctx.canvas.user_to_device(caret_bounds.bottom_right());
+         _caret_device_bounds = {ctl.x, ctl.y, cbr.x, cbr.y};
+
+         // テキスト要素の bounds は scroller 配下だと極端に広い (input_box なら
+         // 幅 100 万 px 規模) ので、 実際に見えている範囲でクリップする。
+         // クリップ結果が潰れたらキャレット矩形そのものを領域として使う。
+         auto  clip = ctx.canvas.clip_extent();
+         rect  area = {
+            std::max(ctx.bounds.left,   clip.left),
+            std::max(ctx.bounds.top,    clip.top),
+            std::min(ctx.bounds.right,  clip.right),
+            std::min(ctx.bounds.bottom, clip.bottom)
+         };
+         if (area.right <= area.left || area.bottom <= area.top)
+            area = caret_bounds;
+         auto atl = ctx.canvas.user_to_device(area.top_left());
+         auto abr = ctx.canvas.user_to_device(area.bottom_right());
+         _area_device_bounds = {atl.x, atl.y, abr.x, abr.y};
+         _has_caret_bounds = true;
+      }
+      else
+      {
+         _has_caret_bounds = false;
       }
 
       if (has_caret && !_caret_started)

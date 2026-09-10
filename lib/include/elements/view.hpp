@@ -122,6 +122,14 @@ namespace cycfi::elements
       // while typing (see focus_consumes_text()).
       bool                    focus_wants_text_input() { return focus_consumes_text(); }
 
+      // Returns the caret rectangle and the surrounding text area of the
+      // focused editable text element, in view (device) coordinates. Hosts
+      // use this to place the platform IME composition / candidate window at
+      // the text insertion point instead of the OS default corner.
+      // Values come from the last draw, so this returns false until the
+      // focused text element has been drawn at least once.
+      bool                    focus_text_caret(rect& caret, rect& area);
+
       // Move keyboard focus to a specific element already in the view tree
       // (addressed by raw pointer). No-op if the element is not found.
       void                    focus(element& e);

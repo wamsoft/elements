@@ -562,6 +562,18 @@ public:
 		int h = 0;
 	};
 
+	//! @brief 編集フォーカスのあるテキスト要素のキャレット位置。
+	//!        IME の変換ウィンドウ / 変換候補ウィンドウを入力位置へ寄せるために
+	//!        ホストが読む (Win32 なら ImmSetCompositionWindow /
+	//!        ImmSetCandidateWindow、 SDL なら SDL_SetTextInputArea へ流す)。
+	//!        座標は surface 論理座標
+	//!        (render_to_buffer が返す矩形と同じ空間)。
+	//!        直近の描画結果から取るので、 focus した直後の 1 フレームは偽を返す。
+	//! @param out_caret キャレット (細い縦棒) の矩形
+	//! @param out_area  テキスト領域の矩形 (候補窓が避けるべき範囲)
+	//! @return 有効な値が取れたら真
+	bool focus_text_caret(render_rect& out_caret, render_rect& out_area) const;
+
 	//! @brief 毎フレームの状態更新 (変数/hover poll・focus/hover 変化検出・
 	//!        演出 tick・退場演出の完了検出・view の遅延タスク実行)。
 	//!        render_to_buffer から分離された「描画しないフレームでも止めては

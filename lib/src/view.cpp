@@ -10,6 +10,7 @@
 #include <elements/element/focus.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/element/proxy.hpp>
+#include <elements/element/text.hpp>
 #include <elements/support/context.hpp>
 #include <elements/support/detail/scratch_context.hpp>
 #include <algorithm>
@@ -1185,6 +1186,36 @@
                   result = true;
                   break;
                }
+         },
+         *this, _current_bounds
+      );
+      return result;
+   }
+
+   // Caret rectangle of the focused editable text element, for IME window
+   // placement. Same focus-path walk as focus_consumes_text(), but stops at
+   // the first element that can report a caret.
+   bool view::focus_text_caret(rect& caret, rect& area)
+   {
+      bool result = false;
+      with_context_do(
+         [&result, &caret, &area](auto const& /*ctx*/, auto& _main_element)
+         {
+            std::vector<element*> path;
+            walk_focus_path(_main_element, path);
+            for (element* e : path)
+            {
+               if (!e->consumes_text())
+                  continue;
+               if (auto* tb = dynamic_cast<basic_text_box*>(e))
+               {
+                  if (tb->caret_bounds(caret, area))
+                  {
+                     result = true;
+                     break;
+                  }
+               }
+            }
          },
          *this, _current_bounds
       );

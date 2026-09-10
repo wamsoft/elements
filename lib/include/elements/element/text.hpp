@@ -151,6 +151,15 @@ namespace cycfi::elements
       void                    enable(bool e) override       { _enabled = e; };
 
       void                    scroll_into_view(context const& ctx, bool save_x);
+
+      //! 直近の draw で算出したキャレット矩形とテキスト領域 (device 座標)。
+      //! IME の変換ウィンドウ / 変換候補ウィンドウを入力位置へ寄せるために
+      //! ホストが読む。 draw されて初めて値が入るので、 focus 直後の 1 フレームは
+      //! 偽を返しうる。
+      //! @param caret キャレット (細い縦棒) の矩形
+      //! @param area  テキスト領域の矩形 (候補窓が避けるべき範囲)
+      //! @return 編集フォーカスがあり値が有効なら真
+      bool                    caret_bounds(rect& caret, rect& area) const;
       virtual void            delete_(bool forward);
       virtual void            cut(view& v, int start, int end);
       virtual void            copy(view& v, int start, int end);
@@ -189,7 +198,10 @@ namespace cycfi::elements
       bool                    _read_only : 1;
       bool                    _enabled : 1;
       bool                    _scroll_into_view : 1;
+      bool                    _has_caret_bounds : 1;
       this_handle             _this_handle;
+      rect                    _caret_device_bounds;
+      rect                    _area_device_bounds;
    };
 
    /**

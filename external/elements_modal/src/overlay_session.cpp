@@ -937,6 +937,24 @@ bool overlay_session::focus_consumes_text() const
 	return _impl->view->focus_wants_text_input();
 }
 
+bool overlay_session::focus_text_caret(render_rect& out_caret,
+                                       render_rect& out_area) const
+{
+	if (!_impl || !_impl->view) return false;
+	cycfi::elements::rect caret, area;
+	if (!_impl->view->focus_text_caret(caret, area)) return false;
+	auto to_rect = [](const cycfi::elements::rect& r) {
+		const int l = static_cast<int>(std::floor(r.left));
+		const int t = static_cast<int>(std::floor(r.top));
+		const int rr = static_cast<int>(std::ceil(r.right));
+		const int b = static_cast<int>(std::ceil(r.bottom));
+		return render_rect{ l, t, rr - l, b - t };
+	};
+	out_caret = to_rect(caret);
+	out_area  = to_rect(area);
+	return true;
+}
+
 void overlay_session::focus_by_id(const std::string& id)
 {
 	if (!_impl || !_impl->view || id.empty()) return;
