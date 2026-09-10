@@ -505,11 +505,47 @@ struct overlay_session::impl
 	ce::point warp_target{};
 	void note_warp(ce::point hp, float sx, float sy)
 	{
+		if (em_nav_log()) {
+			em_navlogf("  note_warp view=(%.1f,%.1f) surface=(%.1f,%.1f) rect=(%.1f,%.1f)"
+			           " prev_pending=%d prev_target=(%.1f,%.1f) focus=%s",
+			           hp.x, hp.y, sx, sy, (float)last_rect.x, (float)last_rect.y,
+			           warp_pending ? 1 : 0, warp_target.x, warp_target.y,
+			           focused_id_slot ? focused_id_slot->c_str() : "");
+			// hot point が「フォーカス要素の実際の矩形」に入っているかを見る。
+			// 入っていなければ warp 先が別ボタンになり hover が横取りする。
+			if (view && focused_id_slot) {
+				auto it = id_map.find(*focused_id_slot);
+				if (it != id_map.end() && it->second) {
+					ce::rect b{}; ce::extent nat{0, 0};
+					if (view->element_bounds(*it->second, b, nat)) {
+						const bool in = (hp.x >= b.left && hp.x <= b.right &&
+						                 hp.y >= b.top  && hp.y <= b.bottom);
+						em_navlogf("    hot_point %s bounds=(%.1f,%.1f)-(%.1f,%.1f) %s",
+						           focused_id_slot->c_str(),
+						           b.left, b.top, b.right, b.bottom,
+						           in ? "IN" : "** OUT (warp 先が別要素になる) **");
+					}
+				}
+			}
+		}
 		warp_sx = sx;
 		warp_sy = sy;
 		warp_pending = true;
 		warp_issued  = true;
 		warp_target  = hp;
+
+		// hover をその場で warp 先へ合わせる。
+		//
+		// 実カーソルの移動 (ホストの SetCursorPos) が生む合成 mouse move は
+		// OS を一往復するので «次フレーム» にしか届かない。 それを待つと
+		// フォーカス枠は今フレームで動くのに hover のハイライトだけ 1 フレーム
+		// 遅れ、 連続移動中は「1 つ前の位置に残像」に見える (実際 2 か所が
+		// 光っている)。 hover は view のローカル状態なのでここで先に合わせて
+		// おける。 次フレームに届く合成 move は同じ座標なので何も起こさない。
+		if (view) {
+			last_cursor = hp;
+			view->cursor(hp, ce::cursor_tracking::hovering);
+		}
 	}
 
 	// 合成キーイベントを view へ送る (press + release)。 named-action の
@@ -1182,6 +1218,7 @@ bool overlay_session::take_key_focus_move(float& out_surface_x,
 	_impl->warp_pending = false;
 	out_surface_x = _impl->warp_sx;
 	out_surface_y = _impl->warp_sy;
+	em_navlogf("  take_warp surface=(%.1f,%.1f)", _impl->warp_sx, _impl->warp_sy);
 	return true;
 }
 
@@ -1227,10 +1264,31 @@ bool overlay_session::update()
 {
 	if (!_impl->view || !_impl->started || _impl->finished_) return false;
 
+	// elements 本体側のナビ診断ログを em の nav ログに合わせて差す/外す。
+	if (em_nav_log() != ce::view::nav_log_enabled()) {
+		ce::view::nav_log_sink(em_nav_log()
+			? +[](const char* line) { em_navlogf("%s", line); }
+			: nullptr);
+	}
+
 	// focus poll: 変数連動 label の text を更新する (focus 変化時のみ書込。
 	// 実際に値が変わった label の見た目変化は下の focus 変化ダーティで拾う)。
+
+	// ★ 先に view の遅延タスク (focus 適用) を消化してから focus を採取する。
+	//
+	//   view::focus() は «post» なので、 hover / ナビによるフォーカス移動は
+	//   この poll で初めて実要素に反映される。 これを後回しにすると、 下の
+	//   focus 変化検出と focused_hot_point() が «1 手前のフォーカス» を見て
+	//   cursor-warp を出してしまう。 warp 先には 1 手前の要素があるので
+	//   hover がそこへフォーカスを戻し、 次フレームは逆側へ… と 2 状態が
+	//   毎フレーム入れ替わり続ける (SGOCT-265: カーソルが 2 つ見えて画面内を
+	//   往復し続ける)。 ここで先に適用しておけば、 warp 先 = いまのフォーカス
+	//   になり hover は同じ要素を指すので収束する。
+	_impl->view->poll();
+
 	if (_impl->focus_poll) _impl->focus_poll();
 	if (_impl->hover_poll) _impl->hover_poll();
+
 
 	// focus / hover の変化 → 再描画 (フォーカス枠 / hilite が変わる)。
 	// SE 用 se_last_focused とは別に初観測も含めて追跡する。
@@ -1291,6 +1349,14 @@ bool overlay_session::update()
 		}
 		if (!cur.empty()) _impl->focus_ever_seen = true;
 
+		if (em_nav_log() && _impl->se_focus_seen && cur != _impl->se_last_focused)
+			em_navlogf("  focus %s -> %s (src=%s warp=%s)",
+			           _impl->se_last_focused.c_str(), cur.c_str(),
+			           _impl->last_nav_source == impl::nav_source::key ? "key"
+			             : (_impl->last_nav_source == impl::nav_source::mouse ? "mouse" : "none"),
+			           (_impl->cursor_warp_enabled
+			            && _impl->last_nav_source == impl::nav_source::key)
+			             ? "post" : "skip");
 		if (_impl->se_focus_seen && cur != _impl->se_last_focused
 		    && !cur.empty()) {
 			_impl->play_se("nav");
@@ -1649,8 +1715,24 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 		else
 			_impl->warp_issued = false;
 	}
-	if (!synthetic_warp_move &&
-	    (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y))
+	const bool nav_was_key = (_impl->last_nav_source == impl::nav_source::key);
+	const bool moved_ = (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y);
+	if (em_nav_log()) {
+		em_navlogf("  sess.move surface=(%.1f,%.1f) view=(%.1f,%.1f) last=(%.1f,%.1f)"
+		           " warp_issued=%d target=(%.1f,%.1f) d=(%.1f,%.1f) synthetic=%d"
+		           " moved=%d src=%s focus=%s",
+		           sx, sy, p.x, p.y, _impl->last_cursor.x, _impl->last_cursor.y,
+		           _impl->warp_issued ? 1 : 0,
+		           _impl->warp_target.x, _impl->warp_target.y,
+		           p.x - _impl->warp_target.x, p.y - _impl->warp_target.y,
+		           synthetic_warp_move ? 1 : 0, moved_ ? 1 : 0,
+		           nav_was_key ? "key" : "mouse",
+		           _impl->focused_id_slot ? _impl->focused_id_slot->c_str() : "");
+		if (nav_was_key && !synthetic_warp_move && moved_)
+			em_navlogf("  ** nav_source key -> mouse (実マウス扱い: 以後 hover が"
+			           " フォーカスを動かし warp は掛からない)");
+	}
+	if (!synthetic_warp_move && moved_)
 		_impl->last_nav_source = impl::nav_source::mouse;
 	_impl->last_cursor = p;
 
@@ -1667,6 +1749,8 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 			_impl->view->hover_focus(true);
 		}
 	}
+	const std::string focus_before_ =
+		(em_nav_log() && _impl->focused_id_slot) ? *_impl->focused_id_slot : std::string();
 	if (_impl->mouse_down) {
 		ce::mouse_button btn{
 			.down = true, .num_clicks = 1,
@@ -1678,6 +1762,11 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	} else {
 		_impl->view->cursor(p, ce::cursor_tracking::hovering);
 	}
+	if (em_nav_log() && _impl->focused_id_slot &&
+	    *_impl->focused_id_slot != focus_before_)
+		em_navlogf("  ** hover moved focus %s -> %s (synthetic=%d)",
+		           focus_before_.c_str(), _impl->focused_id_slot->c_str(),
+		           synthetic_warp_move ? 1 : 0);
 }
 
 void overlay_session::on_mouse_wheel(float dx, float dy,
@@ -1723,6 +1812,8 @@ bool overlay_session::on_key_down(ce::key_code key, int mods)
 	// 矩形として届く (デスクトップの damage 駆動描画と同じ契約)。 無条件に
 	// 立てると「変化なしのキー入力ごとに全面再描画」になり renderCount が
 	// 操作中に過剰となる。
+	if (em_nav_log() && _impl->last_nav_source != impl::nav_source::key)
+		em_navlogf("  nav_source -> key (key down)");
 	_impl->last_nav_source = impl::nav_source::key;
 	// ESC の直接 begin_finish (hard-code) は撤廃。 既定バインド
 	// escape→cancel が view の key shortcut (force=true) として登録されて

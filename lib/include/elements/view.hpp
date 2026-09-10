@@ -114,6 +114,13 @@ namespace cycfi::elements
       void                    hover_focus(bool on);
       bool                    hover_focus() const;
 
+      // ナビ診断ログ (既定は無効)。 ホストが sink を差すと focus 要求 /
+      // 適用の経路が 1 行ずつ出る。 フォーカスが「誰に」動かされたかの
+      // 切り分け用で、 常用しない。
+      static void             nav_log_sink(void (*sink)(const char*));
+      static bool             nav_log_enabled();
+      static void             nav_logf(const char* fmt, ...);
+
       // Returns true if the element that currently holds keyboard focus
       // consumes text input (i.e. an editable input_box / text box is
       // focused). Hosts use this to drive the platform on-screen keyboard:
