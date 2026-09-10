@@ -34,6 +34,16 @@ void em_logf(const char* fmt, ...);
 using em_log_sink = void (*)(const char* line);
 void em_set_log_sink(em_log_sink sink);
 
+//! @brief ナビ診断ログ (cursor-warp / hover / フォーカス移動の追跡) の有効化。
+//!        既定は無効で em_navlogf は何もしない。 ホストが起動オプション
+//!        (krkrz なら -navlog) で有効にする。 カーソル振動の
+//!        調査用で、 有効時は入力イベントごとに 1 行出るため常用しない。
+void em_set_nav_log(bool enable);
+bool em_nav_log();
+
+//! @brief em_navlogf: 有効時のみ em_logf と同じ経路へ "nav: " 付きで出す。
+void em_navlogf(const char* fmt, ...);
+
 } // namespace elements_modal
 
 #endif // ELEMENTS_MODAL_EM_PLATFORM_H

@@ -4,6 +4,8 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/view.hpp>
+#include <cstdarg>
+#include <cstdio>
 #include <elements/window.hpp>
 #include <elements/element/button.hpp>
 #include <elements/element/composite.hpp>
@@ -763,6 +765,33 @@
       return _focus_skip_disabled;
    }
 
+   namespace
+   {
+      void (*g_nav_log_sink)(const char*) = nullptr;
+   }
+
+   void view::nav_log_sink(void (*sink)(const char*))
+   {
+      g_nav_log_sink = sink;
+   }
+
+   bool view::nav_log_enabled()
+   {
+      return g_nav_log_sink != nullptr;
+   }
+
+   void view::nav_logf(const char* fmt, ...)
+   {
+      if (!g_nav_log_sink)
+         return;
+      char buf[512];
+      va_list ap;
+      va_start(ap, fmt);
+      std::vsnprintf(buf, sizeof(buf), fmt, ap);
+      va_end(ap);
+      g_nav_log_sink(buf);
+   }
+
    void view::hover_focus(bool on)
    {
       _hover_focus = on;
@@ -825,6 +854,15 @@
       // so it is safe to call from inside an event dispatch — e.g. from
       // basic_button::cursor() while the cursor walk is still in progress.
       element* ep = &e;
+      if (nav_log_enabled())
+      {
+         rect b{}; extent nat{0, 0};
+         if (element_bounds(e, b, nat))
+            nav_logf("      view::focus posted -> elem=%p bounds=(%.0f,%.0f)-(%.0f,%.0f)",
+                     (void*)ep, b.left, b.top, b.right, b.bottom);
+         else
+            nav_logf("      view::focus posted -> elem=%p (bounds 不明)", (void*)ep);
+      }
       _tasks.post(
          [this, ep]()
          {
@@ -843,6 +881,16 @@
                   refresh(*prev_path.back());
                refresh(*ep);
                _is_focus = _main_element.focus();
+               if (nav_log_enabled())
+               {
+                  rect b{}; extent nat{0, 0};
+                  if (element_bounds(*ep, b, nat))
+                     nav_logf("      view::focus applied -> elem=%p"
+                              " bounds=(%.0f,%.0f)-(%.0f,%.0f)",
+                              (void*)ep, b.left, b.top, b.right, b.bottom);
+                  else
+                     nav_logf("      view::focus applied -> elem=%p", (void*)ep);
+               }
             }
          }
       );
@@ -1030,6 +1078,21 @@
 
                   if (!target || target == cur_collected)
                      return;
+
+                  if (nav_log_enabled())
+                  {
+                     rect cb{}, tb{};
+                     for (auto const& f : list)
+                     {
+                        if (f.el == cur_collected) cb = f.bounds;
+                        if (f.el == target)        tb = f.bounds;
+                     }
+                     nav_logf("      view::nav dir=%d cur=%p (%.0f,%.0f)-(%.0f,%.0f)"
+                              " -> target=%p (%.0f,%.0f)-(%.0f,%.0f)",
+                              (int)d, (void*)cur_collected,
+                              cb.left, cb.top, cb.right, cb.bottom,
+                              (void*)target, tb.left, tb.top, tb.right, tb.bottom);
+                  }
 
                   // Refresh only the outgoing and incoming focus rects — a
                   // whole-view refresh defeats partial redraw on hosts that
