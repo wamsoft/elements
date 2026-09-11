@@ -219,6 +219,7 @@ int main()
 - `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。 picker 系共通の追加フィールド:
   - `"options_id": [...]` — i18n。 各要素を StringStore の textID として現在言語で解決 (`options` より優先)。 言語切替で選択 index を維持したまま表示文字列だけ差し替わる (後述「i18n」節)。
   - `"font": "Family[#axes]"` — 表示テキストのフォント指定 (`label` と同じ書式。 可変フォントの軸指定込み)。 省略時・未登録 family のときはテーマ既定へフォールバック。 `cycle_picker` / `framed_cycle_picker` / `segmented_picker` / `atlas_cycle_picker` 共通で、 PSD 由来のウェイト指定を持つ UI でピッカーの選択テキストだけ既定フォントに残るのを防ぐ。
+  - `"locale": "ja-JP"` — 表示テキストの言語 (`label` と同じ)。 言語連動フォント置換でどの言語として扱うかを固定する。 省略時は画面既定の `locale`。 数字や英字だけの表示値 (音量の `"100"` 等) を言語切替に関わらず 1 つのフォントで出したいときに使う。 `font` と同じく `cycle_picker` / `framed_cycle_picker` / `segmented_picker` / `atlas_cycle_picker` 共通。
   - `"index_var": "varname"` — 選択 index を変数 store と**双方向**連動。 build 時に初期 index を書き込み (text_list ラベルや rect_list 画像と初期表示を揃える)、 選択変更のたびに set する。 変数に既に値があれば initial として採用。 さらに**変数→picker の追従** (ホストの set_var 一発で表示と依存 widget が揃って切り替わる。 quiet = on_change 非発火なのでエコーバックしない)。 範囲外/パース不能な値は無視。
   - `"enabled_var": "varname"` (cycle_picker / atlas_cycle_picker のみ) — 選択肢の有効/無効 mask を変数連動にする。 値は index 順の `'0'`/`'1'` 文字列 (例 `"10111011"` = index 1 と 4 を無効)。 mask より後ろの index は有効扱い。 step / click / pad は無効 index をスキップ (wrap 継続)、 現在選択が無効化されたら最寄りの有効 index へ進めて on_change 発火 (依存 widget が追従)。 隠し要素 (未開放の機種など) の動的出し分けに使う。
   - `"options_var": "varname"` — **選択肢リストそのもの**を変数連動にする (4 種の picker 共通)。 値の書式は label の `text_list_var` と同じ (改行区切り、 先頭が `[` なら JSON 配列)。 インストール済みフォント名や接続中デバイス名のように、 画面を作った時点では中身が決まらない一覧をホストが実行時に流し込む用途 (`enabled_var` は「一覧は固定で出し分けだけ」、 こちらは一覧の実体を差し替える)。 静的な `"options"` は変数が空のあいだの fallback。 `"options_id"` (i18n) との併用は不可 (言語切替が動的一覧を上書きするため、 options_var があるときはそちらが勝つ)。
@@ -385,6 +386,21 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   ```
 
   値変化で `value_t{int64_t index}` を発火。 `options_id` / `index_var` / `initial_focus` / `vars_on_focus` の意味は cycle_picker と同じ。
+
+##### アトラスのデコードキャッシュ
+
+アトラス画像は `path + scale` をキーに**デコード済み pixmap をキャッシュ**して
+使い回す。 予算は既定 **192MB** (RGBA 展開後のバイト数) で、 画面を切り替えても
+一度デコードしたアトラスは手放さない設計。 これは長時間プレイで汎用ヒープが
+断片化したあと、 20〜30MB の連続領域が取れずにデコードが失敗し、 画像なしで
+画面が組まれてしまう (文字だけが出て板や枠が透ける) のを避けるため。
+
+- 読み込みは**先に予算超過ぶんを落としてからデコード**する (読んでから捨てると、
+  前の画面のアトラスと新しいアトラスが同時に載る瞬間ができてしまうため)。
+- それでも確保に失敗したときは、 **誰も参照していないアトラスを全部解放して
+  1 回だけ読み直す**。 解放できるものが無ければ例外をそのまま投げる
+  (`atlas load retry after releasing N KB of cache` をログへ出す)。
+- 予算を 0 にするとキャッシュ無効 = 毎回デコード (従来の挙動)。
 
 ##### atlas_button / atlas_toggle / atlas_choice の text overlay
 
