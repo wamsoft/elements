@@ -7296,10 +7296,17 @@ public:
 			_prev_size = {width, height};
 			layout(ctx);
 		}
+		// composite_base::draw を上書きしているので、 可視判定は自分で行う。
+		// これが無いと部分再描画中 (draw_bounds = 小さなダーティ矩形) でも
+		// 全行を描いてしまい、 一覧の外で起きた小さな変化のたびに一覧全体が
+		// 再ラスタされる (行数に比例してコストが伸びる)。
+		auto const port = ce::get_port_bounds(ctx);
 		for (std::size_t i = 0; i < size(); ++i) {
 			if (!row_has_data(int(i))) continue;   // 件数不足の行は描かない
+			auto const b = bounds_of(ctx, i);
+			if (!ce::intersects(b, port)) continue;
 			auto& e = at(i);
-			ce::context ectx{ctx, &e, bounds_of(ctx, i)};
+			ce::context ectx{ctx, &e, b};
 			e.draw(ectx);
 		}
 	}
