@@ -498,10 +498,15 @@ struct overlay_session::impl
 	bool  warp_pending = false;
 	float warp_sx = 0.0f;
 	float warp_sy = 0.0f;
-	// 直近に要求した warp の着地点 (view 座標)。 warp が生む合成 mouse move は
-	// ここへ届くので、 それを「実マウスが動いた」と誤認して last_nav_source を
-	// mouse に戻さないための照合用。 実マウスの移動 (不一致) が来たら解除。
-	bool      warp_issued = false;
+	// 直近に要求した warp の着地点 (view 座標)。 診断ログ専用。
+	//
+	// かつてはここへ届く合成 mouse move を「着地点と ±2px 以内か」で判定して
+	// 実マウスと区別していたが、 **同じ判定をホスト側も持っていて** (engine の
+	// warp_expect_*)、 しかも片方はレイヤ座標・こちらは view 座標という
+	// 倍率の違う座標系で同じ ±2 を当てていた。 present_scale != 1 の画面では
+	// 両者の判定が食い違い、 ホストは「合成」・こちらは「実マウス」と見なす窓が
+	// できる (その状態が、 フォーカスとポインタが 2 項目間で振動する原因)。
+	// 現在は on_mouse_move の synthetic 引数でホストから明示的に受け取る。
 	ce::point warp_target{};
 	void note_warp(ce::point hp, float sx, float sy)
 	{
@@ -531,8 +536,7 @@ struct overlay_session::impl
 		warp_sx = sx;
 		warp_sy = sy;
 		warp_pending = true;
-		warp_issued  = true;
-		warp_target  = hp;
+		warp_target  = hp;   // 診断ログ用
 
 		// hover をその場で warp 先へ合わせる。
 		//
@@ -1699,7 +1703,7 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 	_impl->view->click(btn);
 }
 
-void overlay_session::on_mouse_move(float sx, float sy, int mods)
+void overlay_session::on_mouse_move(float sx, float sy, int mods, bool synthetic)
 {
 	if (!active()) return;
 	// hover の hilite 変化は hovered_id_slot の変化 (update の矩形ダーティ) と
@@ -1725,22 +1729,17 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 	// (host のキーイベントが来た瞬間だけ warp する)、 説明文などフォーカス連動の
 	// 表示だけが先に進んでハイライト (hover) が置いていかれる。 実マウスの
 	// 移動 (着地点と不一致) が来たら照合を解除して通常どおり mouse へ戻す。
-	bool synthetic_warp_move = false;
-	if (_impl->warp_issued) {
-		if (std::abs(p.x - _impl->warp_target.x) <= 2.0f &&
-		    std::abs(p.y - _impl->warp_target.y) <= 2.0f)
-			synthetic_warp_move = true;
-		else
-			_impl->warp_issued = false;
-	}
+	// 合成かどうかはホストが知っている (SetCursorPos した直後)。 ここで座標を
+	// 突き合わせて推測しない — ホストとこちらでは座標系の倍率が違うため、
+	// 同じ許容幅を当てると present_scale != 1 で判定が割れる。
+	const bool synthetic_warp_move = synthetic;
 	const bool nav_was_key = (_impl->last_nav_source == impl::nav_source::key);
 	const bool moved_ = (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y);
 	if (em_nav_log()) {
 		em_navlogf("  sess.move surface=(%.1f,%.1f) view=(%.1f,%.1f) last=(%.1f,%.1f)"
-		           " warp_issued=%d target=(%.1f,%.1f) d=(%.1f,%.1f) synthetic=%d"
+		           " target=(%.1f,%.1f) d=(%.1f,%.1f) synthetic=%d"
 		           " moved=%d src=%s focus=%s",
 		           sx, sy, p.x, p.y, _impl->last_cursor.x, _impl->last_cursor.y,
-		           _impl->warp_issued ? 1 : 0,
 		           _impl->warp_target.x, _impl->warp_target.y,
 		           p.x - _impl->warp_target.x, p.y - _impl->warp_target.y,
 		           synthetic_warp_move ? 1 : 0, moved_ ? 1 : 0,

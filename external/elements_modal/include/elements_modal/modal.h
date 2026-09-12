@@ -696,7 +696,13 @@ public:
 	                   cycfi::elements::mouse_button::what button, int mods);
 	void on_mouse_up  (float surface_x, float surface_y,
 	                   cycfi::elements::mouse_button::what button, int mods);
-	void on_mouse_move(float surface_x, float surface_y, int mods);
+	//! @param synthetic true = この move は**ホスト自身が出した cursor-warp の
+	//!        折返し**で、実マウスの移動ではない。ホストは SetCursorPos した
+	//!        直後だと知っているので、session 側で座標を突き合わせて推測する
+	//!        のではなく、ここで明示的に伝える (推測すると倍率の違う座標系で
+	//!        判定がホストと食い違う)。
+	void on_mouse_move(float surface_x, float surface_y, int mods,
+	                   bool synthetic = false);
 	void on_mouse_wheel(float dx, float dy,
 	                    float surface_mouse_x, float surface_mouse_y);
 	void on_mouse_leave();
