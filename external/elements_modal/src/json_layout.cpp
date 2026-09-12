@@ -8807,6 +8807,38 @@ std::function<void(ce::view&)> build_input_applier(
 		if (cfg->deadzone_set)    view_.stick_deadzone(cfg->deadzone);
 		if (cfg->speed_set)       view_.stick_value_speed(cfg->value_speed);
 
+		// フェイスボタンの «刻印基準» (a/b/x/y) と «位置基準» (face_*) を
+		// 同じ画面で両方使っていたら注意を出す。
+		//
+		// ホストによっては 1 回の物理押下で **両系統の入力が届く** ことがある
+		// (krkrz は VK_PAD1..4 と VK_PAD_FACE_* を両方投げる)。 その場合、
+		// 同じ物理ボタンに両系統を割り当てると 1 押しで 2 回発火する。
+		// どの刻印がどの位置かはコントローラ依存 (任天堂系は A が右・B が下)
+		// なので「a と face_south が同じ」とは限らず、 静的には «両方使っている»
+		// ことまでしか言えない — なので断定せず注意に留める。
+		{
+			bool labeled = false, positional = false;
+			auto note = [&](ce::pad_button b) {
+				switch (b) {
+					case ce::pad_button::a: case ce::pad_button::b:
+					case ce::pad_button::x: case ce::pad_button::y:
+						labeled = true; break;
+					case ce::pad_button::face_south: case ce::pad_button::face_east:
+					case ce::pad_button::face_west:  case ce::pad_button::face_north:
+						positional = true; break;
+					default: break;
+				}
+			};
+			for (auto const& b : cfg->pad_bindings)  note(b.btn);
+			for (auto const& s : cfg->pad_shortcuts) note(s.btn);
+			if (labeled && positional) {
+				em_logf("elements_modal: pad bind: フェイスボタンの刻印基準 "
+				        "(a/b/x/y) と位置基準 (face_*) を同じ画面で併用している。 "
+				        "ホストが両系統を投げる構成では、 同じ物理ボタンに両方を "
+				        "割り当てると 1 押しで 2 回発火する。 どちらかに揃えること。");
+			}
+		}
+
 		for (auto const& b : cfg->pad_bindings) {
 			view_.bind_pad_button(b.btn, b.key, b.mods);
 		}

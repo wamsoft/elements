@@ -1220,6 +1220,13 @@ action に再宣言しても登録はスキップされる (キー合成の自�
 - `key`: `"enter"` / `"escape"` (`"esc"`) / `"tab"` / `"space"` / `"backspace"` / `"delete"` / `"insert"` / `"left"` / `"right"` / `"up"` / `"down"` / `"page_up"` (`"pgup"`) / `"page_down"` (`"pgdn"`) / `"home"` / `"end"` / `"a"`〜`"z"` / `"0"`〜`"9"` / `"f1"`〜`"f12"`
 - `mods` 配列要素: `"shift"` / `"ctrl"` (`"control"`) / `"alt"` / `"super"` (`"cmd"` / `"command"`) / `"action"` (= Ctrl on Win/Linux, Cmd on Mac)
 - `pad`: `"a"` / `"b"` / `"x"` / `"y"` / `"dpad_up"` / `"dpad_down"` / `"dpad_left"` / `"dpad_right"` / `"lb"` (`"l1"`) / `"rb"` (`"r1"`) / `"lt"` (`"l2"` / `"lt_click"`) / `"rt"` (`"r2"` / `"rt_click"`) / `"l3"` / `"r3"` / `"back"` / `"start"` / `"guide"` / `"face_south"` / `"face_east"` / `"face_west"` / `"face_north"`
+
+  ⚠ **フェイスボタンは «刻印基準» (`a`/`b`/`x`/`y`) と «位置基準» (`face_*`) の
+  2 系統があり、どちらか一方に揃えること。** どの刻印がどの位置かはコントローラ
+  依存 (任天堂系は A が右・B が下) なので、両者は別物として並立している。
+  **ホストによっては 1 回の物理押下で両系統の入力が届く** (krkrz は `VK_PAD1..4`
+  と `VK_PAD_FACE_*` を両方投げる) ため、同じ物理ボタンに両系統を割り当てると
+  1 押しで 2 回発火する。同じ画面で両系統を使っていると build 時に注意ログが出る。
   - フェイスボタンは**刻印基準** (`"a"`/`"b"`/`"x"`/`"y"`) と**位置基準** (`"face_*"`) の 2 系統。 1 回の押下で両方が届くので、 ボタンごとにどちらで縛るかを選ぶ (任天堂系と Xbox で X/Y の位置が入れ替わるため)。 説明表示の `pad_icon` も同じ 2 系統の名前を持つので、 割り当てと表示は同じ基準どうしで組にする (例: `"pad": "a"` の説明は `name: "a"`、 `"pad": "face_north"` の説明は `name: "face_north"`)
 - `pad_axis_mode`: `"disabled"` / `"focus"` / `"value"` / `"both"`
 
