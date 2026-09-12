@@ -7263,28 +7263,52 @@ public:
 
 	ce::view_limits limits(ce::basic_context const& ctx) const override
 	{
-		// ⚠ ここは **毎フレーム呼ばれ、行数に比例する** (計測: rows=64 で
-		//    60 フレームあたり 3840 回の row->limits())。draw 側は部分再描画中に
-		//    カリングされるのに、この経路は残るため「小さな変更しかしていないのに
-		//    コストが行数に比例する」の正体になっている。
-		//    "副作用のある widget 用" = text_var の label 等に新しい値を
-		//    拾わせるための呼び出し。 変数変化の通知で代替できるはず。
-		//    → doc/ElementsAudit.md §2
-		for (auto const& r : _rows) (void)r->limits(ctx);   // 副作用のある widget 用
+		// 行の limits を一巡する ("副作用のある widget 用")。
+		//
+		// ⚠ view::draw は毎フレーム無条件に set_limits() を呼ぶ (cycfi 本体の
+		//    作り) ので、ここは **毎フレーム・行数に比例して**走る。行はラベル
+		//    なので 1 行ごとにテキスト計測が入り、rows=64 では 60 フレーム
+		//    あたり 3840 回になっていた。draw 側は部分再描画中にカリングされて
+		//    呼ばれてすらいないのに、この経路だけ O(行数) で残るため
+		//    「小さな変更しかしていないのにコストが行数に比例する」の正体に
+		//    なっていた。
+		//
+		// 部分再描画中 (draw_bounds が非空) は、 **ダーティ矩形に掛かる行**
+		// だけを一巡する。 そこ以外の行はこのフレームで描かれないので、
+		// 副作用の機会が要らない。 掛かる行には従来どおり機会がある。
+		// 自分の bounds は limits の context からは引けないので、 直近の
+		// draw で控えた矩形を基準に使う (まだ描いていなければ従来どおり全行)。
+		// → doc/ElementsAudit.md §2
+		auto const db = ctx.view.draw_bounds();
+		if (db.is_empty() || _last_bounds.right <= _last_bounds.left) {
+			for (auto const& r : _rows) (void)r->limits(ctx);
+		} else {
+			for (std::size_t i = 0; i < _rows.size(); ++i) {
+				if (ce::intersects(row_rect(_last_bounds, i), db))
+					(void)_rows[i]->limits(ctx);
+			}
+		}
 		const float w = (_spec.row_w > 0) ? _spec.row_w : 1.0f;
 		const float h = (_spec.rows > 0)
 			? std::abs(_spec.pitch_y) * _spec.rows + _spec.row_h : 1.0f;
 		return {{w, h}, {ce::full_extent, ce::full_extent}};
 	}
 
-	ce::rect bounds_of(ce::context const& ctx, std::size_t ix) const override
+	// 行 ix の矩形。 bounds_of と、 limits 側のカリング (context を持てない)
+	// の両方から使うので、 基準矩形を引数で受ける形にしてある。
+	ce::rect row_rect(ce::rect const& base, std::size_t ix) const
 	{
-		const float w = (_spec.row_w > 0) ? _spec.row_w : ctx.bounds.width();
+		const float w = (_spec.row_w > 0) ? _spec.row_w : base.width();
 		const float h = (_spec.row_h > 0) ? _spec.row_h
 		                                  : std::abs(_spec.pitch_y);
-		const float x = ctx.bounds.left + _spec.pitch_x * float(ix);
-		const float y = ctx.bounds.top  + _spec.pitch_y * float(ix);
+		const float x = base.left + _spec.pitch_x * float(ix);
+		const float y = base.top  + _spec.pitch_y * float(ix);
 		return ce::rect{x, y, x + w, y + h};
+	}
+
+	ce::rect bounds_of(ce::context const& ctx, std::size_t ix) const override
+	{
+		return row_rect(ctx.bounds, ix);
 	}
 
 	void layout(ce::context const& ctx) override
@@ -7299,6 +7323,7 @@ public:
 	{
 		const auto width = ctx.bounds.width();
 		const auto height = ctx.bounds.height();
+		_last_bounds = ctx.bounds;   // limits 側のカリング用
 		if (_prev_size.x != width || _prev_size.y != height) {
 			_prev_size = {width, height};
 			layout(ctx);
@@ -7462,6 +7487,9 @@ private:
 	std::shared_ptr<VariableStore> _vars;
 	event_callback                 _cb;
 	ce::point                      _prev_size{};
+	// 直近の draw の bounds。 limits 側は自分の矩形を context から引けないので、
+	// 部分再描画のカリング基準にこれを使う。
+	ce::rect                       _last_bounds{};
 	int                            _hover_row = -1;
 	int                            _pressed_row = -1;
 	int                            _selected = -1;
