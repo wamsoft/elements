@@ -1117,6 +1117,11 @@ view 全体のナビゲーション設定。 全フィールドが任意:
 
     // focus モード軸 (dpad / stick) の長押しリピート。 rate 0 = 倒し量で
     // 60〜250ms 可変 (既定)。 delay 既定 400ms
+    //
+    // 優先順は 画面 JSON (ここ) > ホスト指定 (overlay_session::
+    // set_axis_repeat_default、 start() の前に呼ぶ) > input_defaults.jsonc >
+    // 組込既定。 ホストにパッドのリピート設定があるならそれを既定として
+    // 流し込める (krkrz なら起動オプション -paddelay / -padinterval)。
     "repeat_delay_ms": 400,
     "repeat_rate_ms": 80,
 

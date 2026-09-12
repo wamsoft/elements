@@ -650,6 +650,18 @@ public:
 	//!        これを実マウスカーソルの warp 先に使う (取得で消費される)。
 	//!        マウス由来 (hover_focus) の移動では発火しない。
 	//! @return true: 未消費のフォーカス移動があった / false: なし
+	//! @brief 軸ナビ (パッド十字 / スティック) のリピート既定をホストから与える。
+	//!
+	//! **start() より前に呼ぶこと。** 画面 JSON の
+	//! `"input": { "repeat_delay_ms", "repeat_rate_ms" }` があればそちらが優先。
+	//! ホスト (エンジン) 側にパッドのリピート設定があるとき、 UI のカーソル送りを
+	//! それに合わせるための口。 これが無いと、 ホストのリピート設定を変えても
+	//! UI のナビ速度だけ変わらない (ホストのリピートは軸値の再代入にしかならず、
+	//! 送りを作るのは view::process_pad_axes のタイマなので)。
+	//! @param delay_ms 押してから 2 回目までの待ち (<=0 で既定のまま)
+	//! @param rate_ms  2 回目以降の間隔 (<=0 で magnitude 連動の既定)
+	void set_axis_repeat_default(int delay_ms, int rate_ms);
+
 	bool take_key_focus_move(float& out_surface_x, float& out_surface_y);
 
 	//! @brief 入力フォーカス (キーボード/パッドの届き先) を得直したときに

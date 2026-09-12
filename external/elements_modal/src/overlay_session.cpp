@@ -492,6 +492,11 @@ struct overlay_session::impl
 	// 種別を追跡し、 キー/パッド由来のフォーカス変化を検出したら hot point
 	// (surface 座標) をワンショットで積む。 ホストが take_key_focus_move で
 	// 消費し、 実マウスカーソルを warp する。
+	// ホストが与える軸リピート既定 (start 前に set_axis_repeat_default)。
+	// 0 以下は「指定なし」。 画面 JSON の指定があればそちらが優先される。
+	int  axis_repeat_delay_default = 0;
+	int  axis_repeat_rate_default  = -1;   // -1 = 未指定 (0 は「magnitude 連動」の意味)
+
 	bool cursor_warp_enabled = false;
 	enum class nav_source { none, key, mouse };
 	nav_source last_nav_source = nav_source::none;
@@ -891,6 +896,20 @@ bool overlay_session::start(const std::string& json_utf8,
 		if (layout.actions.cursor_warp >= 0)
 			warp = layout.actions.cursor_warp;
 		_impl->cursor_warp_enabled = (warp == 1);
+	}
+
+	// ホストが与えた軸リピート既定 (-paddelay / -padinterval 等) を、
+	// 共通 input_defaults.jsonc の後・画面別 "input" の前に当てる。
+	// これで優先順は 画面 JSON > ホスト指定 > input_defaults.jsonc > 組込既定。
+	if (_impl->axis_repeat_delay_default > 0
+	    || _impl->axis_repeat_rate_default >= 0) {
+		_impl->view->axis_repeat(
+			(_impl->axis_repeat_delay_default > 0)
+				? _impl->axis_repeat_delay_default
+				: _impl->view->axis_repeat_delay(),
+			(_impl->axis_repeat_rate_default >= 0)
+				? _impl->axis_repeat_rate_default
+				: _impl->view->axis_repeat_rate());
 	}
 
 	// JSON "input" ブロックの設定 (arrow_focus_nav / pad mode / bind 等) を適用。
@@ -1484,6 +1503,13 @@ void overlay_session::invalidate()
 	if (em_nav_log()) em_logf("dirty_full: invalidate()");
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
+}
+
+void overlay_session::set_axis_repeat_default(int delay_ms, int rate_ms)
+{
+	if (!_impl) return;
+	_impl->axis_repeat_delay_default = delay_ms;
+	_impl->axis_repeat_rate_default  = rate_ms;
 }
 
 void overlay_session::set_pad_nav_active(bool on)
