@@ -5,6 +5,8 @@
 =============================================================================*/
 #include <elements/support/canvas.hpp>
 #include <algorithm>
+#include <cstdint>
+#include <vector>
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -850,7 +852,12 @@ namespace cycfi { namespace elements
       // のたびに同じ文字列を測り直し、その都度シェーピングが走る。文字列 +
       // フォント状態をキーに結果を記憶して 2 回目以降を O(1) にする。
       // フォント登録は起動時に済む前提 (後から register_font しても既存エントリ
-      // の測定値は既に描画に使われた値なので実害は薄い)。肥大化時は全クリア。
+      // の測定値は既に描画に使われた値なので実害は薄い)。
+      //
+      // 上限を超えたら **古いものから 1/4 だけ捨てる**。 かつては全 clear して
+      // いたが、 それだと跨いだ次のフレームで «まだ使っている文字列» まで全部
+      // 測り直しになり、 1 フレームだけ跳ねる (実測: 定常 2.0ms に対し 3.1ms)。
+      // 捨てる量を絞れば再計測は分散し、 崖が消える。
       auto const& s = get_state();
       std::string key;
       key.reserve(s.font_family.size() + s.font_file.size()
@@ -866,15 +873,49 @@ namespace cycfi { namespace elements
       key += '\x01';
       key += utf8;
 
-      static std::unordered_map<std::string, text_metrics> cache;
+      struct metrics_entry
+      {
+         text_metrics  m;
+         std::uint64_t last_use;
+      };
+      constexpr std::size_t max_entries = 4096;
+
+      static std::unordered_map<std::string, metrics_entry> cache;
+      static std::uint64_t use_clock = 0;
+
       auto it = cache.find(key);
       if (it != cache.end())
-         return it->second;
+      {
+         it->second.last_use = ++use_clock;
+         return it->second.m;
+      }
 
       auto m = get_text_backend()->measure_text(*this, utf8);
-      if (cache.size() > 4096)
-         cache.clear();
-      cache.emplace(std::move(key), m);
+      if (cache.size() >= max_entries)
+      {
+         // 直近の使用が古い順に 1/4 を捨てる。 閾値は nth_element で求める
+         // (全体のソートは不要)。 上限に達したときだけなので頻度は低い。
+         std::vector<std::uint64_t> uses;
+         uses.reserve(cache.size());
+         for (auto const& kv : cache)
+            uses.push_back(kv.second.last_use);
+         auto const drop = uses.size() / 4;
+         if (drop > 0)
+         {
+            std::nth_element(uses.begin(), uses.begin() + drop, uses.end());
+            std::uint64_t const threshold = uses[drop];
+            for (auto i = cache.begin(); i != cache.end(); )
+            {
+               if (i->second.last_use < threshold) i = cache.erase(i);
+               else                                ++i;
+            }
+         }
+         else
+         {
+            cache.clear();
+         }
+      }
+      cache.emplace(std::move(key), metrics_entry{m, ++use_clock});
       return m;
    }
 
