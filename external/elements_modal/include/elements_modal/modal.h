@@ -735,13 +735,14 @@ public:
 	                   cycfi::elements::mouse_button::what button, int mods);
 	void on_mouse_up  (float surface_x, float surface_y,
 	                   cycfi::elements::mouse_button::what button, int mods);
-	//! @param synthetic true = この move は**ホスト自身が出した cursor-warp の
-	//!        折返し**で、実マウスの移動ではない。ホストは SetCursorPos した
-	//!        直後だと知っているので、session 側で座標を突き合わせて推測する
-	//!        のではなく、ここで明示的に伝える (推測すると倍率の違う座標系で
-	//!        判定がホストと食い違う)。
-	void on_mouse_move(float surface_x, float surface_y, int mods,
-	                   bool synthetic = false);
+	//! @note ここへ来る move は **常に実マウスの移動**である前提。
+	//!       キー / パッドのナビでカーソルを «動かした» ことをホストが伝えたい
+	//!       場合は、 mouse move ではなく take_key_focus_move の結果として
+	//!       ホスト側が位置を持つこと (krkrz は OS の実カーソルを動かさず
+	//!       «仮想カーソル位置» を更新する)。 かつては「ホスト自身が出した
+	//!       warp の折返しか」を伝える synthetic 引数があったが、 OS を一往復
+	//!       しなくなったので不要になった。
+	void on_mouse_move(float surface_x, float surface_y, int mods);
 	void on_mouse_wheel(float dx, float dy,
 	                    float surface_mouse_x, float surface_mouse_y);
 	void on_mouse_leave();

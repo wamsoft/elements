@@ -505,13 +505,9 @@ struct overlay_session::impl
 	float warp_sy = 0.0f;
 	// 直近に要求した warp の着地点 (view 座標)。 診断ログ専用。
 	//
-	// かつてはここへ届く合成 mouse move を「着地点と ±2px 以内か」で判定して
-	// 実マウスと区別していたが、 **同じ判定をホスト側も持っていて** (engine の
-	// warp_expect_*)、 しかも片方はレイヤ座標・こちらは view 座標という
-	// 倍率の違う座標系で同じ ±2 を当てていた。 present_scale != 1 の画面では
-	// 両者の判定が食い違い、 ホストは「合成」・こちらは「実マウス」と見なす窓が
-	// できる (その状態が、 フォーカスとポインタが 2 項目間で振動する原因)。
-	// 現在は on_mouse_move の synthetic 引数でホストから明示的に受け取る。
+	// かつてはここへ届く «合成 mouse move» を着地点との距離で実マウスと区別して
+	// いたが、 ホストが OS の実カーソルを動かさず «仮想カーソル位置» を更新する
+	// 形になったので、 そもそも折返しが来ない = 判定自体が不要になった。
 	ce::point warp_target{};
 	void note_warp(ce::point hp, float sx, float sy)
 	{
@@ -1748,7 +1744,7 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 	_impl->view->click(btn);
 }
 
-void overlay_session::on_mouse_move(float sx, float sy, int mods, bool synthetic)
+void overlay_session::on_mouse_move(float sx, float sy, int mods)
 {
 	if (!active()) return;
 	// hover の hilite 変化は hovered_id_slot の変化 (update の矩形ダーティ) と
@@ -1774,10 +1770,10 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods, bool synthetic
 	// (host のキーイベントが来た瞬間だけ warp する)、 説明文などフォーカス連動の
 	// 表示だけが先に進んでハイライト (hover) が置いていかれる。 実マウスの
 	// 移動 (着地点と不一致) が来たら照合を解除して通常どおり mouse へ戻す。
-	// 合成かどうかはホストが知っている (SetCursorPos した直後)。 ここで座標を
-	// 突き合わせて推測しない — ホストとこちらでは座標系の倍率が違うため、
-	// 同じ許容幅を当てると present_scale != 1 で判定が割れる。
-	const bool synthetic_warp_move = synthetic;
+	// ここへ来る move は常に実マウスの移動 (ホストはキー / パッドのナビで
+	// OS の実カーソルを動かさない)。 かつては «自分が出した warp の折返しか» を
+	// 座標で推測していたが、 OS を一往復しなくなったので判定ごと不要になった。
+	const bool synthetic_warp_move = false;
 	const bool nav_was_key = (_impl->last_nav_source == impl::nav_source::key);
 	const bool moved_ = (p.x != _impl->last_cursor.x || p.y != _impl->last_cursor.y);
 	if (em_nav_log()) {
