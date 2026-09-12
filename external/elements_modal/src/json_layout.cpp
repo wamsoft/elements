@@ -9347,6 +9347,46 @@ void release_atlas_resources()
 	swap_atlas_map().clear();
 }
 
+// アトラスのデコードキャッシュの常駐量を返す (bytes = RGBA 展開後の合計、
+// count = エントリ数、 budget = 現在の予算)。 ホストが «場面をまたいで
+// どれだけ抱えているか» を見るための口。
+void atlas_cache_stats(std::size_t& out_bytes, std::size_t& out_count,
+                       std::size_t& out_budget)
+{
+	out_bytes  = g_atlas_cache_bytes;
+	out_count  = g_atlas_cache.size();
+	out_budget = g_atlas_cache_budget;
+}
+
+// キャッシュを budget まで切り詰める。 0 を渡すと «使われていないものを全部»
+// 手放す。 解放できたバイト数を返す。
+//
+// 予算そのものは変えない (一時的な切り詰め)。 «今の画面が使っている» atlas は
+// 参照が残っているので捨てられない — 場面の切れ目 (画面を閉じた後) に呼ぶと
+// 効く。 恒久的に予算を下げたいときは set_atlas_cache_budget を使う。
+std::size_t trim_atlas_cache(std::size_t budget_bytes)
+{
+	const std::size_t before = g_atlas_cache_bytes;
+	if (budget_bytes == 0) {
+		atlas_cache_release_unused();
+	} else {
+		const std::size_t saved = g_atlas_cache_budget;
+		g_atlas_cache_budget = budget_bytes;
+		atlas_cache_trim();
+		g_atlas_cache_budget = saved;
+	}
+	return (before > g_atlas_cache_bytes) ? (before - g_atlas_cache_bytes) : 0;
+}
+
+// 予算を恒久的に変更する。 0 にするとキャッシュ無効 (毎回デコード)。
+// 下げた場合はその場で切り詰める。
+void set_atlas_cache_budget(std::size_t budget_bytes)
+{
+	g_atlas_cache_budget = budget_bytes;
+	if (budget_bytes == 0) atlas_cache_release_unused();
+	else                   atlas_cache_trim();
+}
+
 void refresh_mem_image(const std::string& mem_key)
 {
 	std::lock_guard<std::mutex> lk(mem_image_mutex());

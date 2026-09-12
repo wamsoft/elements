@@ -402,6 +402,18 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   (`atlas load retry after releasing N KB of cache` をログへ出す)。
 - 予算を 0 にするとキャッシュ無効 = 毎回デコード (従来の挙動)。
 
+**ホストからの口** (`modal.h`、 プロセス全体で 1 つ):
+
+- `atlas_cache_stats(bytes, count, budget)` — 常駐量を読む
+- `trim_atlas_cache(budget)` — budget まで切り詰める。 0 で「使われていない
+  ものを全部」。 戻り値 = 解放バイト数。 ⚠ **表示中の画面が使っているアトラスは
+  参照が残るので捨てられない** — 画面を閉じた後に呼ぶこと
+- `set_atlas_cache_budget(budget)` — 予算を恒久的に変更 (下げたらその場で切り詰め)
+
+場面の切れ目 (タイトル → 本編など) でホストが明示的に落とすためのもの。
+krkrz では `ElementsDialog.atlasCacheStats` / `trimAtlasCache()` /
+`atlasCacheBudget` として TJS へ出ている。
+
 ##### atlas_button / atlas_toggle / atlas_choice の text overlay
 
 `"text"` (+ 任意 `"text_size"` / `"text_color"` / `"text_offset": [dx, dy]` / `"locale"`) を指定すると button の上にラベルを重ねる。 内部実装は **非 composite な proxy_base 派生ラッパ** (`label_decoration`) で button (subject) + label (overlay) を保持し、 draw/layout で両方に同じ bounds を流す。

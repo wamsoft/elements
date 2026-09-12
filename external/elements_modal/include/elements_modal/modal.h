@@ -37,6 +37,7 @@ struct SDL_Window;
 #include <functional>
 #include <map>
 #include <memory>
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -296,6 +297,32 @@ bool init(const std::string& font_directory = {},
 
 //! @brief ライブラリ全体の終了処理。 通常はプロセス終了時に自動。
 void shutdown();
+
+//---------------------------------------------------------------------------
+//  アトラスのデコードキャッシュ (プロセス全体で 1 つ)
+//---------------------------------------------------------------------------
+//
+// アトラス画像は `path + scale` をキーにデコード済み pixmap をキャッシュして
+// 使い回す。 画面を切り替えても手放さない設計 (長時間プレイでヒープが断片化
+// したあと大きな連続領域が取れずデコードが失敗するのを避けるため) なので、
+// **場面の切れ目でホストが明示的に落とす口**がこれ。
+
+//! @brief 常駐量を返す。
+//! @param out_bytes  RGBA 展開後の合計バイト数
+//! @param out_count  エントリ数
+//! @param out_budget 現在の予算 (バイト)
+void atlas_cache_stats(std::size_t& out_bytes, std::size_t& out_count,
+                       std::size_t& out_budget);
+
+//! @brief キャッシュを budget まで切り詰める。 0 で «使われていないものを全部»。
+//! @return 解放できたバイト数。
+//! @note 予算そのものは変えない (一時的な切り詰め)。 **表示中の画面が使っている
+//!       atlas は参照が残るので捨てられない** — 画面を閉じた後に呼ぶこと。
+std::size_t trim_atlas_cache(std::size_t budget_bytes);
+
+//! @brief 予算を恒久的に変更する。 0 でキャッシュ無効 (毎回デコード)。
+//!        下げた場合はその場で切り詰める。
+void set_atlas_cache_budget(std::size_t budget_bytes);
 
 //! @brief 実行時画像ストア ("mem://<key>") のバイトが差し替わったとき、その
 //!        key を参照して構築済みの image widget を再デコードして即時反映する。
