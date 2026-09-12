@@ -7263,6 +7263,13 @@ public:
 
 	ce::view_limits limits(ce::basic_context const& ctx) const override
 	{
+		// ⚠ ここは **毎フレーム呼ばれ、行数に比例する** (計測: rows=64 で
+		//    60 フレームあたり 3840 回の row->limits())。draw 側は部分再描画中に
+		//    カリングされるのに、この経路は残るため「小さな変更しかしていないのに
+		//    コストが行数に比例する」の正体になっている。
+		//    "副作用のある widget 用" = text_var の label 等に新しい値を
+		//    拾わせるための呼び出し。 変数変化の通知で代替できるはず。
+		//    → doc/ElementsAudit.md §2
 		for (auto const& r : _rows) (void)r->limits(ctx);   // 副作用のある widget 用
 		const float w = (_spec.row_w > 0) ? _spec.row_w : 1.0f;
 		const float h = (_spec.rows > 0)

@@ -1198,6 +1198,8 @@ void overlay_session::play_animation(const std::string& trigger,
 void overlay_session::notify_view_resize(int new_view_width, int new_view_height)
 {
 	if (!_impl->view) return;
+	if (em_nav_log()) em_logf("dirty_full: notify_view_resize %dx%d",
+	                          new_view_width, new_view_height);
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->view_w = new_view_width;
@@ -1428,6 +1430,7 @@ bool overlay_session::update()
 				_impl->mark_rects_px(pre);
 				_impl->mark_rects_px(post);
 			} else {
+				if (em_nav_log()) em_logf("dirty_full: anim rect 不明");
 				_impl->dirty_full_ = true;
 			}
 		}
@@ -1454,6 +1457,7 @@ bool overlay_session::update()
 		ce::rect area{};
 		if (_impl->view->take_refresh_request(full, area)) {
 			if (full) {
+				if (em_nav_log()) em_logf("dirty_full: view refresh (全面要求)");
 				_impl->needs_render_ = true;
 				_impl->dirty_full_ = true;
 			} else {
@@ -1477,6 +1481,7 @@ bool overlay_session::needs_render() const
 
 void overlay_session::invalidate()
 {
+	if (em_nav_log()) em_logf("dirty_full: invalidate()");
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 }
@@ -1604,6 +1609,20 @@ bool overlay_session::render_to_buffer_impl(std::uint32_t* pixel_buffer,
 			_impl->view->draw_bounds(
 				ce::rect{ cl / render_scale, ct / render_scale,
 				          cr / render_scale, cb / render_scale });
+		}
+		if (em_nav_log()) {
+			// -navlog: ラスタ 1 回ごとに「部分にできたか / できなかった理由」を出す。
+			// 部分再描画が効いていない画面の切り分け用 (doc/ElementsAudit.md §2)。
+			em_logf("raster partial=%d (allow=%d full=%d rect=%d bufsame=%d)"
+			        " dirty_px=(%d,%d)-(%d,%d) buf=%dx%d view=%dx%d rs=%.3f",
+			        partial ? 1 : 0, allow_partial ? 1 : 0,
+			        _impl->dirty_full_ ? 1 : 0,
+			        (_impl->dirty_px_r_ > _impl->dirty_px_l_ &&
+			         _impl->dirty_px_b_ > _impl->dirty_px_t_) ? 1 : 0,
+			        (_impl->last_buf_w_ == buffer_w_px &&
+			         _impl->last_buf_h_ == buffer_h_px) ? 1 : 0,
+			        cl, ct, cr, cb, buffer_w_px, buffer_h_px,
+			        _impl->view_w, _impl->view_h, render_scale);
 		}
 		_impl->view->draw(cnv);
 		if (partial) _impl->view->draw_bounds(ce::rect{});   // 次フレームへ持ち越さない
