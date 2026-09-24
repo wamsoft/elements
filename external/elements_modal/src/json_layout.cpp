@@ -3232,6 +3232,26 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 
 	auto st = std::make_shared<xform_state>();
 
+	// "visible_var" で出し入れする要素の enter 演出は、 出るたびに頭から
+	// 再生し直す (右端から滑り込むパネル等)。 画面を開いたときに 1 回だけ
+	// だと、 2 回目以降は最終位置にぱっと出てしまう。 隠れた → 出た の変化で
+	// 要求を立て、 animator の次の tick が受ける (animated_sprite の restart
+	// と同じ考え方)。
+	std::shared_ptr<bool> restart;
+	if (std::string vis_var = string_or(o, "visible_var"); !vis_var.empty()) {
+		restart = std::make_shared<bool>(false);
+		auto shown = std::make_shared<bool>(true);
+		auto parse = [](const std::string& v) {
+			return !(v == "0" || v == "false" || v.empty());
+		};
+		if (auto* cur = _vars->get(vis_var)) *shown = parse(*cur);
+		_vars->subscribe(vis_var, [restart, shown, parse](const std::string& v) {
+			bool const now = parse(v);
+			if (now && !*shown) *restart = true;
+			*shown = now;
+		}, el);
+	}
+
 	// [x,y] 配列 or スカラ (x=y へ展開) を読む。 無ければ (dx,dy)。
 	auto read_xy = [](const picojson::object& s, const char* key,
 	                  float dx, float dy, float& ox, float& oy) {
@@ -3257,6 +3277,7 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		// 束縛は要素 id へ紐付け、 その id への発火だけに反応する。
 		b.trig = trigger_from_string(string_or(s, "on", "enter"));
 		b.id   = owner_id;
+		if (b.trig == anim_binding::trigger::enter) b.restart = restart;
 
 		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
 		float dur_ms;

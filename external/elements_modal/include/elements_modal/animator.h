@@ -46,6 +46,10 @@ struct anim_binding
 	channel ch = channel::move;
 	trigger trig = trigger::enter;     //!< 発火タイミング。
 	std::string id;                    //!< 対象要素 id (focus/select の照合用)。
+	//! 再生し直しの要求。 enter 束縛の要素が "visible_var" で隠れた → 出た
+	//! ときに json_layout の購読が true を立て、 次の tick() が頭から再生する
+	//! (出るたびに «滑り込み» 等をやり直すため)。 null なら要求は来ない。
+	std::shared_ptr<bool> restart;
 
 	// from → to。 move/scale は (x,y)、 rotate は (a→b 度) で ax/bx のみ使用、
 	// fade は (a→b 透明度[0,1]) で ax/bx のみ使用。
@@ -175,12 +179,27 @@ public:
 		bool all = true;
 		bool ticked = false;
 		for (auto& b : _bindings) b.finished_tick = false;
+		// 再生し直しの要求 (visible_var で出し直された enter 束縛) を先に受ける。
+		// この tick では進めない: 待機中は tick が来ないので dt は «前回の
+		// 描画からの経過» (数秒になりうる) で、 そのまま進めると 1 コマで
+		// 終わってしまう。 頭 (from) を描いて次の tick から動かす。
+		std::vector<bool> fresh(_bindings.size(), false);
+		for (std::size_t i = 0; i < _bindings.size(); ++i) {
+			auto& b = _bindings[i];
+			if (!b.restart || !*b.restart) continue;
+			*b.restart = false;
+			b.reversed = false;
+			b.prog.reset();
+			b.active = true;
+			fresh[i] = true;
+		}
 		// 進める → 支配している束縛だけ反映 → 完了判定 の 3 段。 反映を分けて
 		// いるのは、 同一チャンネルの束縛が互いを上書きしないようにするため。
-		for (auto& b : _bindings) {
+		for (std::size_t i = 0; i < _bindings.size(); ++i) {
+			auto& b = _bindings[i];
 			if (!b.active) continue;
 			ticked = true;
-			b.prog.tick(dt_ms);
+			if (!fresh[i]) b.prog.tick(dt_ms);
 		}
 		apply_governing();
 		for (auto& b : _bindings) {
