@@ -8482,8 +8482,9 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 		return nullptr;
 	}
 	float lw = static_cast<float>(number_or(o, "label_width", 180.0));
-	// labeled_row の font_size は内部 label.relative_font_size 用 scale。
-	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
+	// ラベルの文字の大きさ (px)。 "font_size" が px、 "font_size_scale" がテーマ
+	// 既定に対する倍率 (label と同じ規則)。
+	float fpx = resolve_font_px(o, "font_size", "font_size_scale");
 
 	// ラベルは lib の labeled_row に作らせず自前で持つ。 lib 版は文字色が
 	// colors::white 固定で、 要素も外から掴めないため text_id (多言語) を
@@ -8498,11 +8499,13 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 	ce::color lc = ce::get_theme().label_font_color;
 	parse_color_field(o, "label_color", lc);
 
-	auto lbl = std::make_shared<ce::label>(std::move(text));
-	lbl->font_color(lc);
-	lbl->relative_font_size(fs);
+	// font_color / font_size は «色 / 大きさを変えた新しい label を返す»
+	// 生成器なので、 戻り値を受け取って使う。 (以前は make_shared<label> に
+	// 対して呼んで戻り値を捨てていたため、 大きさも色も効かず、 ラベルが
+	// テーマ既定の小さい文字で出ていた)
+	auto lbl = ce::share(ce::label(std::move(text)).font_color(lc).font_size(fpx));
 	if (!label_id.empty()) {
-		std::weak_ptr<ce::label> w = lbl;
+		std::weak_ptr<ce::text_writer> w = lbl;
 		_strings->subscribe(label_id, [w](const std::string& v) {
 			if (auto p = w.lock()) p->set_text(v);
 		});
