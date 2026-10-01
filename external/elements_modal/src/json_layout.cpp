@@ -1538,8 +1538,13 @@ public:
 	// ホストの再描画要否 (ダーティ) 判定に使える。
 	bool set(const std::string& name, const std::string& value)
 	{
+		// **「まだ無い」と「空」は別もの。** operator[] で作ってから
+		// 比べると、まだ一度も書いていない変数へ空を書いたときに
+		// 同値とみなして subscriber が発火せず、 widget が JSON の
+		// 静的 text (= 見本の文言) を出したまま残る。
+		auto found = _values.find(name);
+		if (found != _values.end() && found->second == value) return false;
 		auto& cur = _values[name];
-		if (cur == value) return false;
 		cur = value;
 		if (_rev) ++(*_rev);   // flatten の焼き直し契機
 		auto it = _subs.find(name);

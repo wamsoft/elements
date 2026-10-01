@@ -281,6 +281,7 @@
    void view::click(mouse_button btn)
    {
       _current_button = btn;
+      _click_handled = false;
       if (_content.empty())
          return;
 
@@ -288,7 +289,10 @@
          [btn, this](auto const& ctx, auto& _main_element)
          {
             if (_main_element.click(ctx, btn))
+            {
+               _click_handled = true;
                _is_focus = _main_element.focus();
+            }
             else if (btn.down)
                elements::relinquish_focus(_content, ctx);
             refresh(_main_element);

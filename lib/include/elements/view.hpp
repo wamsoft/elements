@@ -129,6 +129,12 @@ namespace cycfi::elements
       // while typing (see focus_consumes_text()).
       bool                    focus_wants_text_input() { return focus_consumes_text(); }
 
+      // Returns true if the most recent click() was taken by an element
+      // in this view. Hosts that overlay a UI on top of their own scene
+      // use this to pass unhandled clicks through to the scene (the same
+      // way key() already reports whether it consumed the key).
+      bool                    click_was_handled() const { return _click_handled; }
+
       // Returns the caret rectangle and the surrounding text area of the
       // focused editable text element, in view (device) coordinates. Hosts
       // use this to place the platform IME composition / candidate window at
@@ -333,6 +339,7 @@ namespace cycfi::elements
       view_limits             _current_limits = {{0, 0}, { full_extent, full_extent}};
       mouse_button            _current_button;
       bool                    _is_focus = false;
+      bool                    _click_handled = false;
       bool                    _arrow_focus_nav = false;
       bool                    _arrow_focus_wrap = false;
       focus_nav_override_function _focus_nav_override;

@@ -236,6 +236,8 @@ struct overlay_session::impl
 	// 入力 hover 用 last cursor (view local)
 	ce::point last_cursor{0.0f, 0.0f};
 	bool mouse_down = false;
+	// 直前の press を消費したか。 release を揃えて消費するために覚える
+	bool mouse_down_consumed = false;
 
 	// 開いた直後の「置きっぱなしポインタ」から初期フォーカスを守るゲート。
 	//
@@ -1694,9 +1696,9 @@ bool overlay_session::render_to_buffer_impl(std::uint32_t* pixel_buffer,
 
 // --- 入力イベント転送 (surface logical 座標) ---
 
-void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what button, int mods)
+bool overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what button, int mods)
 {
-	if (!active()) return;
+	if (!active()) return false;
 	_impl->needs_render_ = true;   // 入力は押下状態等の見た目を変え得る
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// クリックは明確なマウス操作なのでナビ種別を戻す (on_mouse_move 参照)
@@ -1706,7 +1708,8 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 	if (auto it = _impl->mouse_actions.find(static_cast<int>(button));
 	    it != _impl->mouse_actions.end()) {
 		_impl->dispatch_action(it->second);
-		return;
+		_impl->mouse_down_consumed = true;
+		return true;
 	}
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
@@ -1720,16 +1723,20 @@ void overlay_session::on_mouse_down(float sx, float sy, ce::mouse_button::what b
 	};
 	_impl->view->cursor(p, ce::cursor_tracking::hovering);
 	_impl->view->click(btn);
+	// **widget が受けたかを view に訊く。** 受けていないなら、ホストは
+	// 自分の場面へ流してよい (地をクリックして本文を送る、など)
+	_impl->mouse_down_consumed = _impl->view->click_was_handled();
+	return _impl->mouse_down_consumed;
 }
 
-void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what button, int mods)
+bool overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what button, int mods)
 {
-	if (!active()) return;
+	if (!active()) return false;
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	// mouse バインド対象ボタンは down 側で消費済みなので up も揃えて消費。
 	if (_impl->mouse_actions.count(static_cast<int>(button))) {
-		return;
+		return true;
 	}
 	auto p = _impl->to_view(sx, sy);
 	_impl->last_cursor = p;
@@ -1742,6 +1749,11 @@ void overlay_session::on_mouse_up(float sx, float sy, ce::mouse_button::what but
 		.pos = p
 	};
 	_impl->view->click(btn);
+	// **押したときに合わせる。** press を widget が受けたなら release も
+	// そちらのもの (ドラッグの途中で外へ出ても片方だけ漏らさない)
+	const bool consumed = _impl->mouse_down_consumed;
+	_impl->mouse_down_consumed = false;
+	return consumed;
 }
 
 void overlay_session::on_mouse_move(float sx, float sy, int mods)

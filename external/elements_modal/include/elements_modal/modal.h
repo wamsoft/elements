@@ -731,9 +731,13 @@ public:
 	//! button = cycfi::elements::mouse_button::what (left/middle/right)、
 	//! mods は cycfi::elements の mod_shift / mod_control / mod_alt の OR。
 	//! native (SDL_BUTTON_* / SDL_KMOD_* 等) からの変換はホストアダプタが行う。
-	void on_mouse_down(float surface_x, float surface_y,
+	//! @return true: widget / mouse バインドが消費した / false: 未処理。
+	//!         on_key_down と同じ約束で、ホストは非モーダル時に未処理の
+	//!         クリックをゲームへ素通しできる (ADV の «本文を送る» など)。
+	//!         press が消費されたときは release も揃えて消費する。
+	bool on_mouse_down(float surface_x, float surface_y,
 	                   cycfi::elements::mouse_button::what button, int mods);
-	void on_mouse_up  (float surface_x, float surface_y,
+	bool on_mouse_up  (float surface_x, float surface_y,
 	                   cycfi::elements::mouse_button::what button, int mods);
 	//! @note ここへ来る move は **常に実マウスの移動**である前提。
 	//!       キー / パッドのナビでカーソルを «動かした» ことをホストが伝えたい
