@@ -1860,7 +1860,9 @@
          );
       }
 
-      if (!_a11y_announce.empty())
+      // The live region for announce() is always there, empty until the
+      // first message: a screen reader (Narrator) may not read a live
+      // region that appears with its text already in it.
       {
          a11y::node n;
          n.id = a11y::hash_id("<announce>");

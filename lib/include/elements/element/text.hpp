@@ -9,6 +9,7 @@
 #include <elements/support/glyphs.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/element/element.hpp>
+#include <elements/support/a11y.hpp>   // a11y::text_run (basic_text_box::a11y_text)
 
 #include <infra/string_view.hpp>
 #include <string>
@@ -181,6 +182,12 @@ namespace cycfi::elements
 
       char const*             caret_position(context const& ctx, point p);
       glyph_metrics           glyph_info(context const& ctx, char const* s);
+
+      // The lines as a11y text runs, and the byte offset where each
+      // character starts (to map a selection both ways).
+      void                    a11y_text(context const& ctx,
+                                 std::vector<a11y::text_run>& runs,
+                                 std::vector<std::vector<int>>& starts) const;
 
    private:
 

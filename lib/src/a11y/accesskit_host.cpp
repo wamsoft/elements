@@ -112,6 +112,9 @@ namespace cycfi::elements::a11y
       bool                    need_full = true;
       std::vector<std::pair<int, node>> pending;
       std::unordered_map<accesskit_node_id, std::pair<int, node_id>> reverse;
+      // TextRun nodes (edit fields): run -> (slot, edit field, run index)
+      struct run_ref { int slot; node_id field; std::uint32_t index; };
+      std::unordered_map<accesskit_node_id, run_ref> run_reverse;
       bool                    factory_called = false;
       bool                    ui_thread_activation = true;
       std::function<void()>   cleanup;
@@ -231,8 +234,59 @@ namespace cycfi::elements::a11y
          for (auto c : n.children)
             accesskit_node_push_child(a, gid(slot, c));
 
+         // An edit field: its lines as TextRun children (pushed by
+         // push_runs), and the caret / selection in them.
+         for (std::size_t i = 0; i != n.text_runs.size(); ++i)
+            accesskit_node_push_child(a, gid(slot, run_local(n.id, i)));
+         if (n.selection && !n.text_runs.empty())
+         {
+            auto pos = [&](text_position p) {
+               std::size_t r = std::min<std::size_t>(p.run, n.text_runs.size() - 1);
+               return accesskit_text_position{gid(slot, run_local(n.id, r)), p.index};
+            };
+            accesskit_node_set_text_selection(a, accesskit_text_selection{
+               pos(n.selection->anchor), pos(n.selection->focus)});
+         }
+         if (n.actions & bit(action::set_text_selection))
+            accesskit_node_add_action(a, ACCESSKIT_ACTION_SET_TEXT_SELECTION);
+
          reverse[gid(slot, n.id)] = {slot, n.id};
          return a;
+      }
+
+      static node_id run_local(node_id field, std::size_t i)
+      {
+         return field * 0x9E3779B97F4A7C15ull + (i + 1) * 0xBF58476D1CE4E5B9ull;
+      }
+
+      // The TextRun nodes of an edit field (see a11y::text_run).
+      void push_runs(accesskit_tree_update* u, node const& n, int slot, a11y::transform const& xf)
+      {
+         for (std::size_t i = 0; i != n.text_runs.size(); ++i)
+         {
+            auto const& r = n.text_runs[i];
+            auto* a = accesskit_node_new(ACCESSKIT_ROLE_TEXT_RUN);
+            accesskit_node_set_value(a, r.text.c_str());
+            accesskit_node_set_bounds(a, accesskit_rect{
+               r.bounds.left * xf.sx + xf.tx, r.bounds.top * xf.sy + xf.ty,
+               r.bounds.right * xf.sx + xf.tx, r.bounds.bottom * xf.sy + xf.ty});
+            if (!r.char_lengths.empty())
+               accesskit_node_set_character_lengths(a, r.char_lengths.size(), r.char_lengths.data());
+            if (!r.char_positions.empty())
+            {
+               std::vector<float> pos(r.char_positions), w(r.char_widths);
+               for (auto& v : pos) v *= xf.sx;
+               for (auto& v : w) v *= xf.sx;
+               accesskit_node_set_character_positions(a, pos.size(), pos.data());
+               accesskit_node_set_character_widths(a, w.size(), w.data());
+            }
+            if (!r.word_starts.empty())
+               accesskit_node_set_word_starts(a, r.word_starts.size(), r.word_starts.data());
+            accesskit_node_set_text_direction(a, ACCESSKIT_TEXT_DIRECTION_LEFT_TO_RIGHT);
+            auto g = gid(slot, run_local(n.id, i));
+            accesskit_tree_update_push_node(u, g, a);
+            run_reverse[g] = {slot, n.id, std::uint32_t(i)};
+         }
       }
 
       accesskit_node* root_node(std::vector<std::pair<int, slot_data*>> const& vis)
@@ -262,6 +316,7 @@ namespace cycfi::elements::a11y
             count += s->has_snap ? s->snap.nodes.size() : 0;
 
          reverse.clear();
+         run_reverse.clear();
          auto* u = accesskit_tree_update_with_capacity_and_focus(count, focus_gid(vis));
          auto* info = accesskit_tree_info_new(root_gid);
          accesskit_tree_info_set_toolkit_name(info, "Elements");
@@ -275,6 +330,7 @@ namespace cycfi::elements::a11y
             {
                auto const& n = s->snap.nodes[i];
                accesskit_tree_update_push_node(u, gid(k, n.id), convert(n, k, s->xf));
+               push_runs(u, n, k, s->xf);
             }
          }
          need_full = false;
@@ -300,6 +356,7 @@ namespace cycfi::elements::a11y
             if (!shown)
                continue;
             accesskit_tree_update_push_node(u, gid(k, n.id), convert(n, k, it->second.xf));
+            push_runs(u, n, k, it->second.xf);
          }
          pending.clear();
          return u;
@@ -372,17 +429,35 @@ namespace cycfi::elements::a11y
             case ACCESSKIT_ACTION_INCREMENT:  act = action::increment; break;
             case ACCESSKIT_ACTION_DECREMENT:  act = action::decrement; break;
             case ACCESSKIT_ACTION_SET_VALUE:  act = action::set_value; break;
+            case ACCESSKIT_ACTION_SET_TEXT_SELECTION: act = action::set_text_selection; break;
             default: break;
          }
          action_arg arg;
+         auto target = req->target_node;
          if (req->data.has_value)
          {
             if (req->data.value.tag == ACCESSKIT_ACTION_DATA_NUMERIC_VALUE)
                arg.number = req->data.value.numeric_value;
             else if (req->data.value.tag == ACCESSKIT_ACTION_DATA_VALUE && req->data.value.value)
                arg.text = std::string(req->data.value.value);
+            else if (req->data.value.tag == ACCESSKIT_ACTION_DATA_SET_TEXT_SELECTION)
+            {
+               // TextRun positions -> (run index, character) of the field
+               auto const& ts = req->data.value.set_text_selection;
+               std::lock_guard lock(self->mtx);
+               auto a = self->run_reverse.find(ts.anchor.node);
+               auto f = self->run_reverse.find(ts.focus.node);
+               if (a != self->run_reverse.end() && f != self->run_reverse.end())
+               {
+                  arg.selection = text_selection{
+                     {a->second.index, std::uint32_t(ts.anchor.character_index)},
+                     {f->second.index, std::uint32_t(ts.focus.character_index)}};
+                  // the request may target a run; act on its field
+                  if (self->reverse.find(target) == self->reverse.end())
+                     target = (std::uint64_t(a->second.slot + 1) << 56) | (a->second.field & local_mask);
+               }
+            }
          }
-         auto target = req->target_node;
          accesskit_action_request_free(req);
          if (!act)
             return;

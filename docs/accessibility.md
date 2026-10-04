@@ -1,6 +1,6 @@
 # アクセシビリティ (スクリーンリーダー) 対応 設計
 
-状態: **Phase 0〜3 実装済み (2026-10-04)**。対象 OS は Windows / macOS / Linux のデスクトップ 3 系統で、3 OS の実機 (ナレーター / VoiceOver / Orca と UIA / AX / AT-SPI の外部クライアント) で確認した。第 1 部・第 2 部の本文は設計時の記録で、実装との違いは §6.1〜§6.4 に書いてある。未着手: テキスト編集の読み上げ (Phase 5)、elements_console のパネル UI の A11y タブ。
+状態: **Phase 0〜3 と Phase 5 (テキスト編集) 実装済み (2026-10-04)**。対象 OS は Windows / macOS / Linux のデスクトップ 3 系統で、3 OS の実機 (ナレーター / VoiceOver / Orca と UIA / AX / AT-SPI の外部クライアント) で確認した。第 1 部・第 2 部の本文は設計時の記録で、実装との違いは §6.1〜§6.4 に書いてある。未着手: IME の変換中文字列の読み上げ (§6.5)。
 
 この文書は 2 部構成になっている。
 
@@ -545,6 +545,29 @@ Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a1
 
 - **live region は先に置いておく**。文字の入った live region が後から現れても、スクリーンリーダー (ナレーター) は読まないことがある。空の status を最初から置き、announce では中身だけ変える。
 - **`is_active()` は «AT が初めて問い合わせた» 時点で真になる**。Windows ではウィンドウが前面になったとき。起動直後に一度だけ見て決めると外れるので、`on_active_changed` で追う。
+
+### 6.5 Phase 5 の実装 (テキスト編集、2026-10-04)
+
+入力欄 (`basic_input_box` / `basic_text_box`) を、スクリーンリーダーが文字・単語・行の単位で読め、キャレットの移動を追えるようにした。
+
+| 場所 | 中身 |
+|---|---|
+| `a11y::text_run` / `text_position` / `text_selection` | 入力欄の文字を表示行ごとの run で持つ。run は行末の `\n` (や折返しで切れた空白) まで含み、全 run をつなぐと全文になる。文字はレイアウト上のクラスタ単位で、`char_lengths` (UTF-8 のバイト数)、`char_positions` / `char_widths` (run の左端からの x、view 単位)、`word_starts` (単語の先頭の文字位置。空白の次で区切る) |
+| `node` / `info` | `text_runs` と `selection` (anchor = 選択の始点、focus = キャレット。位置は run 番号と文字番号) |
+| `action::set_text_selection` | `action_arg::selection` でキャレット / 選択範囲を受ける |
+| `basic_text_box::accessible()` | 表示行 (`_rows`) と glyph の x 位置から run を組み、`select_start` / `select_end` (UTF-8 のバイト位置) を run と文字の位置へ換算する。`a11y_perform(set_text_selection)` はその逆 |
+| `accesskit_host` | 入力欄の子に run ごとの TextRun ノードを置き (`character_lengths` / `character_positions` / `character_widths` / `word_starts`、位置と幅は transform で拡縮)、入力欄に `text_selection` を付ける。AT の SET_TEXT_SELECTION は run の id から入力欄と位置へ戻す |
+| `speech_lines` | 入力欄で値が変わらずに選択だけ動いたとき `[caret] x` (行末は `(line end)`、末尾は `(end)`) / `[selected] 文字列` |
+| ダンプ | `"selection":[anchor run, anchor 文字, focus run, focus 文字]` |
+
+確認: UIA (TextPattern。全文、キャレット位置の文字と単語、範囲の選択、外接矩形)、AT-SPI (Text / EditableText。全文、caret offset の設定、文字と単語、選択、文字の位置)、AX (値、文字数、AXSelectedTextRange の設定と取得、AXStringForRange) で、3 OS とも `examples/accessibility` の入力欄が期待どおりに答える。ヘッドレステストに 4 項目 (run と文字、UTF-8 の長さと単語、キャレットの設定、`[caret]` の行)。
+
+あわせて直したこと:
+
+- **`view::announce` の live region を常設にした** (最初の announce までは空)。文字の入った live region が後から現れると、ナレーターは読まないことがある (埋め込みホストで分かったことと同じ)。
+- **テストのぶら下がりポインタ**: `a11y_tree_test` が、作り直した後のスナップショットのノードを指すポインタで操作していた (たまたま古いメモリが残っていて通っていた)。操作の直前に今のスナップショットから id を引くようにした。
+
+残り: IME の変換中文字列 (確定前の文字) は value にも run にも入れていない。変換中は確定文字だけを読む。
 
 ## 7. リスクと未決事項
 

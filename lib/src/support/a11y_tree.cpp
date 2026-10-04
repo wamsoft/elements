@@ -302,6 +302,8 @@ namespace cycfi::elements::a11y::detail
             n.states = i.states;
             n.actions = i.actions;
             n.live = i.live;
+            n.text_runs = i.text_runs;
+            n.selection = i.selection;
 
             if (e.wants_focus())
                n.states |= state::focusable;

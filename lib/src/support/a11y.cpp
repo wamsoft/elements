@@ -101,7 +101,8 @@ namespace cycfi::elements::a11y
    namespace
    {
       constexpr char const* action_names[] = {
-         "focus", "click", "increment", "decrement", "set_value"
+         "focus", "click", "increment", "decrement", "set_value",
+         "set_text_selection"
       };
 
       struct state_name { std::uint32_t bit; char const* name; };
@@ -287,6 +288,13 @@ namespace cycfi::elements::a11y
             }
             out += ']';
          }
+         if (n.selection)
+         {
+            auto const& s = *n.selection;
+            out += ",\"selection\":[" + std::to_string(s.anchor.run) + ',' +
+               std::to_string(s.anchor.index) + ',' + std::to_string(s.focus.run) + ',' +
+               std::to_string(s.focus.index) + ']';
+         }
          if (n.live != live::off)
          {
             out += ",\"live\":";
@@ -319,6 +327,59 @@ namespace cycfi::elements::a11y
       }
       out += "]}";
       return out;
+   }
+
+   namespace
+   {
+      // "[caret] x" / "[caret] (end)" / "[selected] text"
+      std::string caret_line(node const& n)
+      {
+         auto const& sel = *n.selection;
+         auto char_at = [&n](text_position p, std::size_t& off, std::size_t& len) {
+            off = 0;
+            len = 0;
+            if (p.run >= n.text_runs.size())
+               return false;
+            auto const& r = n.text_runs[p.run];
+            for (std::uint32_t i = 0; i < p.index && i < r.char_lengths.size(); ++i)
+               off += r.char_lengths[i];
+            if (p.index >= r.char_lengths.size())
+               return false;
+            len = r.char_lengths[p.index];
+            return true;
+         };
+         if (sel.anchor == sel.focus)
+         {
+            std::size_t off, len;
+            if (!char_at(sel.focus, off, len))
+               return "[caret] (end)";
+            std::string c = n.text_runs[sel.focus.run].text.substr(off, len);
+            if (c == " ")
+               c = "(space)";
+            else if (c == "\n")
+               c = "(line end)";
+            return "[caret] " + c;
+         }
+         // A selection: the text between the two ends (same run only; good
+         // enough for a log line).
+         auto a = sel.anchor, f = sel.focus;
+         if (f.run < a.run || (f.run == a.run && f.index < a.index))
+            std::swap(a, f);
+         std::string text;
+         for (std::uint32_t r = a.run; r <= f.run && r < n.text_runs.size(); ++r)
+         {
+            auto const& run = n.text_runs[r];
+            std::size_t b = 0, e = run.text.size();
+            std::size_t off, len;
+            if (r == a.run && char_at(a, off, len))
+               b = off;
+            if (r == f.run)
+               e = char_at(f, off, len) ? off : run.text.size();
+            if (e > b)
+               text += run.text.substr(b, e - b);
+         }
+         return "[selected] " + text;
+      }
    }
 
    std::vector<std::string> speech_lines(snapshot const* prev, snapshot const& next)
@@ -357,6 +418,10 @@ namespace cycfi::elements::a11y
          // The focused control changed under the user.
          if (p->value != n.value && !n.value.empty())
             out.push_back("[value] " + (n.name.empty() ? std::string{} : n.name + ", ") + n.value);
+         // The caret moved in an edit field (without typing): the character
+         // it lands on, as a screen reader echoes arrow keys.
+         else if (p->value == n.value && n.selection && p->selection != n.selection)
+            out.push_back(caret_line(n));
          if ((p->states & toggles) != (n.states & toggles))
             out.push_back("[state] " + describe(n));
       }

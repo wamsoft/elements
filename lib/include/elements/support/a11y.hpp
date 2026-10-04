@@ -80,15 +80,55 @@ namespace cycfi::elements::a11y
       click,
       increment,
       decrement,
-      set_value
+      set_value,
+      set_text_selection
    };
 
    constexpr std::uint32_t bit(action a) { return 1u << unsigned(a); }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Text of an edit field, for character / word / line reading
+   //
+   // One run per visual line. `text` covers the line including what ends it
+   // (the '\n', or the space a soft wrap broke at), so the runs concatenated
+   // are the whole text. Characters are grapheme-ish clusters as laid out:
+   // `char_lengths` gives the UTF-8 bytes of each, `char_positions` and
+   // `char_widths` their x extent from `bounds.left` (view units).
+   ////////////////////////////////////////////////////////////////////////////
+   struct text_run
+   {
+      std::string                text;
+      rect                       bounds;
+      std::vector<std::uint8_t>  char_lengths;
+      std::vector<float>         char_positions;
+      std::vector<float>         char_widths;
+      std::vector<std::uint8_t>  word_starts;    // character indices (< 256)
+
+      bool                       operator==(text_run const&) const = default;
+   };
+
+   struct text_position
+   {
+      std::uint32_t              run = 0;        // index into text_runs
+      std::uint32_t              index = 0;      // character index in the run
+
+      bool                       operator==(text_position const&) const = default;
+   };
+
+   // anchor = where the selection started, focus = the caret
+   struct text_selection
+   {
+      text_position              anchor;
+      text_position              focus;
+
+      bool                       operator==(text_selection const&) const = default;
+   };
 
    struct action_arg
    {
       std::optional<double>      number;
       std::optional<std::string> text;
+      std::optional<text_selection> selection;   // set_text_selection
    };
 
    using node_id = std::uint64_t;
@@ -113,6 +153,8 @@ namespace cycfi::elements::a11y
       rect                    bounds;        // view coordinates
       std::vector<node_id>    children;
       std::string             debug_id;      // explicit id, if any (dumps)
+      std::vector<text_run>   text_runs;     // edit fields
+      std::optional<text_selection> selection;
 
       bool                    has(std::uint32_t s) const { return (states & s) != 0; }
       bool                    operator==(node const&) const = default;
@@ -144,6 +186,8 @@ namespace cycfi::elements::a11y
       std::uint32_t           actions = 0;
       a11y::live              live = live::off;
       std::string             id;            // stable id across rebuilds
+      std::vector<text_run>   text_runs;     // edit fields (see text_run)
+      std::optional<text_selection> selection;
       bool                    hidden = false;
       bool                    leaf = false;
       bool                    name_from_content = false;

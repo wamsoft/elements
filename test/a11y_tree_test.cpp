@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>   // std::getenv (A11Y_TEST_TRACE)
 #include <thread>
 #include <string>
 #include <vector>
@@ -41,6 +42,13 @@ namespace
       {
          ++calls;
          last = delta;
+         if (std::getenv("A11Y_TEST_TRACE"))
+         {
+            std::printf("    [push %d]", calls);
+            for (auto const& n : delta.nodes)
+               std::printf(" {%s}", a11y::describe(n).c_str());
+            std::printf("\n");
+         }
       }
    };
 
@@ -145,6 +153,20 @@ int run()
    auto* n_vol = by_name(s, "Volume");
    check(n_vol && n_vol->role == a11y::role::slider && n_vol->value == "50%"
       && n_vol->num_value && *n_vol->num_value == 50.0, "slider named by a11y_label, 50%");
+
+   // Act by id, looked up fresh: `s` is reassigned as the test goes, which
+   // frees the nodes the pointers above point into.
+   auto const vol_id = n_vol ? n_vol->id : a11y::node_id{};
+   auto id_by_name = [&v](char const* name) {
+      auto const ss = v.a11y_snapshot();
+      auto const* n = by_name(ss, name);
+      return n ? n->id : a11y::node_id{};
+   };
+   auto id_by_role = [&v](a11y::role r) {
+      auto const ss = v.a11y_snapshot();
+      auto const* n = by_role(ss, r);
+      return n ? n->id : a11y::node_id{};
+   };
    auto* n_pick = by_role(s, a11y::role::spin_button);
    check(n_pick && n_pick->value == "Low", "cycle picker: spin button showing Low");
    auto* n_input = by_role(s, a11y::role::text_input);
@@ -180,7 +202,7 @@ int run()
    n_check = by_name(s, "Enable sound");
    check(n_check && n_check->has(a11y::state::checked), "click toggles the check box");
 
-   v.a11y_perform(n_r2->id, a11y::action::click);
+   v.a11y_perform(id_by_name("Choice B"), a11y::action::click);
    settle(v);
    s = v.a11y_snapshot();
    n_r1 = by_name(s, "Choice A");
@@ -188,7 +210,7 @@ int run()
    check(n_r2 && n_r2->has(a11y::state::checked) && n_r1 && !n_r1->has(a11y::state::checked),
       "click selects radio B and clears A");
 
-   v.a11y_perform(n_vol->id, a11y::action::increment);
+   v.a11y_perform(vol_id, a11y::action::increment);
    settle(v);
    s = v.a11y_snapshot();
    n_vol = by_name(s, "Volume");
@@ -196,13 +218,13 @@ int run()
 
    a11y::action_arg eighty;
    eighty.number = 80.0;
-   v.a11y_perform(n_vol->id, a11y::action::set_value, eighty);
+   v.a11y_perform(vol_id, a11y::action::set_value, eighty);
    settle(v);
    s = v.a11y_snapshot();
    n_vol = by_name(s, "Volume");
    check(n_vol && n_vol->value == "80%", "set_value moves the slider to 80%");
 
-   v.a11y_perform(n_pick->id, a11y::action::increment);
+   v.a11y_perform(id_by_role(a11y::role::spin_button), a11y::action::increment);
    settle(v);
    s = v.a11y_snapshot();
    n_pick = by_role(s, a11y::role::spin_button);
@@ -210,11 +232,52 @@ int run()
 
    a11y::action_arg abc;
    abc.text = "abc";
-   v.a11y_perform(n_input->id, a11y::action::set_value, abc);
+   v.a11y_perform(id_by_role(a11y::role::text_input), a11y::action::set_value, abc);
    settle(v);
    s = v.a11y_snapshot();
    n_input = by_role(s, a11y::role::text_input);
    check(n_input && n_input->value == "abc", "set_value fills the input box");
+
+   // Phase 5: the text by character, and the caret
+   if (n_input)
+   {
+      bool runs_ok = n_input->text_runs.size() == 1
+         && n_input->text_runs[0].text == "abc"
+         && n_input->text_runs[0].char_lengths == std::vector<std::uint8_t>{1, 1, 1}
+         && n_input->text_runs[0].char_positions.size() == 3
+         && n_input->text_runs[0].char_positions[1] > n_input->text_runs[0].char_positions[0]
+         && n_input->text_runs[0].word_starts == std::vector<std::uint8_t>{0};
+      check(runs_ok, "input box: one text run, three characters, one word");
+   }
+   v.a11y_perform(n_input->id, a11y::action::focus);
+   settle(v);
+   a11y::snapshot before_caret = v.a11y_snapshot();
+   a11y::action_arg sel;
+   sel.selection = a11y::text_selection{{0, 1}, {0, 1}};
+   v.a11y_perform(n_input->id, a11y::action::set_text_selection, sel);
+   settle(v);
+   s = v.a11y_snapshot();
+   n_input = by_role(s, a11y::role::text_input);
+   check(n_input && n_input->selection && n_input->selection->focus == a11y::text_position{0, 1},
+      "set_text_selection puts the caret after 'a'");
+   {
+      auto lines = a11y::speech_lines(&before_caret, s);
+      bool said = false;
+      for (auto const& l : lines)
+         if (l == "[caret] b")
+            said = true;
+      check(said, "speech_lines: [caret] b");
+   }
+   a11y::action_arg jp;
+   jp.text = "日本 語";
+   v.a11y_perform(n_input->id, a11y::action::set_value, jp);
+   settle(v);
+   s = v.a11y_snapshot();
+   n_input = by_role(s, a11y::role::text_input);
+   check(n_input && n_input->text_runs.size() == 1
+      && n_input->text_runs[0].char_lengths == std::vector<std::uint8_t>{3, 3, 1, 3}
+      && n_input->text_runs[0].word_starts == std::vector<std::uint8_t>{0, 3},
+      "input box: UTF-8 lengths per character, words split at the space");
 
    auto* n_other = by_name(s, "Another button");
    v.a11y_perform(n_other->id, a11y::action::focus);
@@ -242,11 +305,14 @@ int run()
          ann_in_delta = true;
    check(ann && ann_in_delta, "announce pushes a polite live region");
 
-   v.a11y_perform(n_vol->id, a11y::action::decrement);
+   v.a11y_perform(vol_id, a11y::action::decrement);
    settle(v);
    bool only_slider = sink->last.nodes.size() == 1 && sink->last.nodes[0].name == "Volume"
       && sink->last.nodes[0].value == "75%";
    check(only_slider, "a value change pushes just that node");
+   if (!only_slider)
+      for (auto const& n : sink->last.nodes)
+         std::printf("    pushed: %s\n", a11y::describe(n).c_str());
 
    {
       // A sink attached before the first draw (what an overlay host does):
@@ -271,14 +337,14 @@ int run()
    {
       // speech_lines: what a screen reader would say about a change
       a11y::snapshot a = v.a11y_snapshot();
-      v.a11y_perform(n_vol->id, a11y::action::focus);
+      v.a11y_perform(vol_id, a11y::action::focus);
       settle(v);
       a11y::snapshot b = v.a11y_snapshot();
       auto lines = a11y::speech_lines(&a, b);
       check(lines.size() == 1 && lines[0] == "[focus] Volume, slider, 75%",
          "speech_lines: focus moved to the slider");
       a = b;
-      v.a11y_perform(n_vol->id, a11y::action::increment);
+      v.a11y_perform(vol_id, a11y::action::increment);
       settle(v);
       lines = a11y::speech_lines(&a, v.a11y_snapshot());
       check(lines.size() == 1 && lines[0] == "[value] Volume, 80%",

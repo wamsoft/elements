@@ -1481,7 +1481,143 @@ namespace cycfi::elements
    ////////////////////////////////////////////////////////////////////////////
    // Accessibility
    ////////////////////////////////////////////////////////////////////////////
-   void basic_text_box::accessible(context const& /* ctx */, a11y::info& out) const
+   void basic_text_box::a11y_text(context const& ctx,
+      std::vector<a11y::text_run>& runs, std::vector<std::vector<int>>& starts) const
+   {
+      runs.clear();
+      starts.clear();
+      auto const  metrics = _layout.metrics();
+      float const line_height = metrics.ascent + metrics.descent + metrics.leading;
+      char const* base = _text.data();
+      char const* text_end = base + _text.size();
+
+      auto utf8_len = [](unsigned char c) -> std::size_t {
+         return c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+      };
+      // Words start after whitespace (good enough for word-by-word reading).
+      auto is_space = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+
+      std::size_t const nrows = _rows.empty() ? 1 : _rows.size();
+      for (std::size_t i = 0; i != nrows; ++i)
+      {
+         a11y::text_run r;
+         std::vector<int> st;
+         float const top = ctx.bounds.top + line_height * i;
+         char const* rb = base;
+         char const* re = text_end;
+         float row_w = 0;
+
+         // (start, left, right) per laid-out cluster
+         struct cl { char const* s; float l, r; };
+         std::vector<cl> cls;
+         if (!_rows.empty())
+         {
+            auto& row = const_cast<glyphs&>(_rows[i]);
+            rb = (i == 0) ? base : row.begin();
+            re = (i + 1 < _rows.size()) ? _rows[i + 1].begin() : text_end;
+            row_w = row.width();
+            row.for_each([&cls](char const* utf8, float left, float right) {
+               cls.push_back({utf8, left, right});
+               return true;
+            });
+         }
+         auto add = [&](char const* s, std::size_t len, float pos, float w) {
+            if (!len)
+               return;
+            len = std::min<std::size_t>(len, 255);
+            r.char_lengths.push_back(std::uint8_t(len));
+            r.char_positions.push_back(pos);
+            r.char_widths.push_back(w);
+            st.push_back(int(s - base));
+         };
+         // Bytes the layout did not cover (before the first cluster, the
+         // line end and soft-wrap spaces after the last) become zero-width
+         // characters, so the runs together hold the whole text.
+         auto add_plain = [&](char const* from, char const* to, float pos) {
+            while (from < to)
+            {
+               std::size_t len = std::min<std::size_t>(utf8_len((unsigned char)*from), std::size_t(to - from));
+               add(from, len, pos, 0);
+               from += len;
+            }
+         };
+         char const* p = rb;
+         float last_right = 0;
+         for (std::size_t k = 0; k != cls.size(); ++k)
+         {
+            char const* cs = cls[k].s;
+            if (cs < p || cs >= re)
+               continue;
+            add_plain(p, cs, cls[k].l);
+            char const* ce = (k + 1 < cls.size() && cls[k + 1].s > cs) ? cls[k + 1].s : nullptr;
+            if (!ce || ce > re)
+               ce = std::min(re, cs + utf8_len((unsigned char)*cs));
+            // A cluster may cover several glyphs' worth of bytes; keep the
+            // rest of it in this character.
+            add(cs, std::size_t(ce - cs), cls[k].l, cls[k].r - cls[k].l);
+            last_right = cls[k].r;
+            p = ce;
+         }
+         add_plain(p, re, last_right);
+
+         r.text.assign(rb, re);
+         r.bounds = rect{ctx.bounds.left, top,
+            ctx.bounds.left + std::max(row_w, 1.0f), top + line_height};
+
+         // word starts
+         std::size_t off = 0;
+         bool prev_space = true;
+         for (std::size_t c = 0; c != r.char_lengths.size(); ++c)
+         {
+            bool sp = is_space(r.text[off]);
+            if (!sp && prev_space && c < 256)
+               r.word_starts.push_back(std::uint8_t(c));
+            prev_space = sp;
+            off += r.char_lengths[c];
+         }
+         runs.push_back(std::move(r));
+         starts.push_back(std::move(st));
+      }
+   }
+
+   namespace
+   {
+      // byte offset -> (run, character index). The end of the text maps to
+      // one past the last character of the last run.
+      a11y::text_position to_text_position(std::vector<std::vector<int>> const& starts,
+         std::vector<a11y::text_run> const& runs, int offset)
+      {
+         for (std::uint32_t r = 0; r < starts.size(); ++r)
+         {
+            auto const& st = starts[r];
+            for (std::uint32_t c = 0; c < st.size(); ++c)
+            {
+               int end = st[c] + runs[r].char_lengths[c];
+               if (offset < end)
+                  return {r, offset > st[c] ? c + 1 : c};
+            }
+         }
+         std::uint32_t last = starts.empty() ? 0 : std::uint32_t(starts.size() - 1);
+         return {last, starts.empty() ? 0 : std::uint32_t(starts[last].size())};
+      }
+
+      int to_offset(std::vector<std::vector<int>> const& starts,
+         std::vector<a11y::text_run> const& runs, a11y::text_position p, int text_size)
+      {
+         if (p.run >= starts.size())
+            return text_size;
+         auto const& st = starts[p.run];
+         if (p.index < st.size())
+            return st[p.index];
+         // past the end of a run: where the next run starts
+         for (std::uint32_t r = p.run + 1; r < starts.size(); ++r)
+            if (!starts[r].empty())
+               return starts[r][0];
+         return text_size;
+      }
+   }
+
+   void basic_text_box::accessible(context const& ctx, a11y::info& out) const
    {
       using namespace a11y;
       out.role = role::multiline_text_input;
@@ -1492,10 +1628,35 @@ namespace cycfi::elements
          out.actions |= bit(action::set_value);
       else
          out.states |= state::read_only;
+
+      // The text by line, and the caret / selection, so a screen reader can
+      // read by character / word / line and follow the caret.
+      std::vector<std::vector<int>> starts;
+      a11y_text(ctx, out.text_runs, starts);
+      out.actions |= bit(action::set_text_selection);
+      if (_select_start >= 0 && _select_end >= 0)
+      {
+         out.selection = text_selection{
+            to_text_position(starts, out.text_runs, _select_start),
+            to_text_position(starts, out.text_runs, _select_end)};
+      }
    }
 
    bool basic_text_box::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg)
    {
+      if (act == a11y::action::set_text_selection)
+      {
+         if (!arg.selection)
+            return true;
+         std::vector<a11y::text_run> runs;
+         std::vector<std::vector<int>> starts;
+         a11y_text(ctx, runs, starts);
+         int const size = int(get_text().size());
+         _select_start = to_offset(starts, runs, arg.selection->anchor, size);
+         _select_end = to_offset(starts, runs, arg.selection->focus, size);
+         ctx.view.refresh(ctx);
+         return true;
+      }
       if (act != a11y::action::set_value)
          return false;
       if (editable() && arg.text)
@@ -1515,6 +1676,8 @@ namespace cycfi::elements
 
    bool basic_input_box::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg)
    {
+      if (act == a11y::action::set_text_selection)
+         return basic_text_box::a11y_perform(ctx, act, arg);
       if (act != a11y::action::set_value)
          return false;
       if (editable() && arg.text)
