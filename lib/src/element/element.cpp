@@ -8,6 +8,8 @@
 #include <elements/element/composite.hpp>
 #include <elements/support.hpp>
 #include <elements/view.hpp>
+#include <elements/element/text.hpp>
+#include <elements/support/a11y.hpp>
 #include <typeinfo>
 
 #if !defined(_MSC_VER) && (defined(__GNUC__) || defined(__clang__))
@@ -759,5 +761,29 @@ namespace cycfi::elements
    std::string element::class_name() const
    {
       return demangle(typeid(*this).name());
+   }
+
+   /**
+    * rief
+    *    Declares the element to assistive technology.
+    *
+    *    The default exposes any `text_reader` (labels, button captions,
+    *    static text) as a label carrying its text, and leaves everything
+    *    else transparent: no node, children are walked as if they belonged
+    *    to the parent.
+    */
+   void element::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      if (auto tr = dynamic_cast<text_reader const*>(this))
+      {
+         out.role = a11y::role::label;
+         out.name = tr->get_text();
+         out.leaf = true;
+      }
+   }
+
+   bool element::a11y_perform(context const& /* ctx */, a11y::action /* act */, a11y::action_arg const& /* arg */)
+   {
+      return false;
    }
 }

@@ -457,6 +457,27 @@ ID がない要素は `#<hex>` で表す。併せて、「SR がおおよそ何�
 | 4 組み込みホスト | 各アプリ側の設計書を参照 | — |
 | 5 テキスト | `text_input` の TextRun (文字位置、単語境界)、IME の変換中文字列を value に反映 | NVDA で文字単位のカーソル読み |
 
+### 6.1 Phase 1 の実装 (2026-10-04)
+
+| 場所 | 中身 |
+|---|---|
+| `support/a11y.hpp` / `src/support/a11y.cpp` | 型 (`role` / `state` / `action` / `node` / `info` / `snapshot` / `update` / `sink`)、`diff`、`to_json`、`describe` (読み上げ 1 行)、`id_string` |
+| `support/detail/a11y_tree.hpp` / `src/support/a11y_tree.cpp` | walker。走り方は `collect_focusables` と同じ型分岐で、proxy は `prepare_subject` を通す (margin / align の効いた矩形になる)。deck は選択中のページだけ、layer は最前面から見て modal が出たらそれより下を出さない |
+| `element::accessible()` / `element::a11y_perform()` | 既定は `text_reader` をラベルとして出す (label、ボタンのキャプション、static text)。それ以外は透過 |
+| `view` | `a11y_snapshot()`、`a11y_sink()`、`a11y_perform()` (どのスレッドからでも可、`post` で UI スレッドへ)、`announce()`、`a11y_name()`、`a11y_invalidate()`、`focused_element()`。`refresh` 系で dirty になり、`poll()` が sink へ差分を送る (フォーカス変更・announce・AT 操作の直後は即時、それ以外は 33ms 間隔) |
+| `element/accessible.hpp` | `a11y_label` / `a11y_description` / `a11y_role` / `a11y_id` / `a11y_live` / `a11y_hidden` / `a11y_value_fn` / `a11y_props` |
+| ウィジェット | `basic_button` (button / toggle_button / check_box / radio_button / tab の判別。クリックは `activate(ctx)`、つまり Space/Enter と同じ経路)、`slider_base` (0..100、増減幅はキーと同じ 5)、3 種の picker (spin_button)、`basic_text_box` / `basic_input_box`、`status_bar_base`、`basic_menu_item_element`、`modal_element` (dialog + modal)、`hidable_element` / `vcollapsable_element` (隠れていれば除外)、`toggle_selector` に `text_reader` を追加 |
+| `test/a11y_tree_test.cpp` | ヘッドレス (`view(extent)`) のテスト 27 項目。`-DELEMENTS_BUILD_TESTS=ON`、`ctest` で回す。SDL / Win32 の両ホストで通過 |
+
+設計 (§2) との差:
+
+- `role` は今あるウィジェットで使う分だけにした。`radio_group` / `tab_list` / `tab_panel` / `combo_box` / `menu` / `list` / `scroll_view` / `separator` はまだない。`action` も `scroll_into_view` / `expand` / `collapse` / `set_text_selection` はまだない。
+- スクロール外の子は出していない (`for_each_visible` が間引く)。`offscreen` 状態も未実装。
+- `text_selection`、`locale` はまだ持たない (Phase 5)。
+- `basic_dial` / `thumbwheel_base` / `range_slider` / `basic_button_menu` の開閉状態は未対応。
+- ノード ID は「構造上の位置 + 型」の hash (§2.3 の規則 2) で、`typeid().hash_code()` を使うため**プロセスをまたいでは安定しない**。プロセスをまたいで安定させたいときは `a11y_id` を付ける。
+- ヘッドレスで view を使うときは、ホストがやっている初期化と後始末 (`tvg::Initializer::init` → … → `detail::release_shared_scratch()` → `tvg::Initializer::term`) を自分で行う必要がある (テスト参照)。
+
 ## 7. リスクと未決事項
 
 - **AccessKit の C API の追従**: 0.x 系で破壊的変更がある。prebuilt のバージョンは CMake で固定し、L3 に閉じ込める (L0〜L2 の公開 API は AccessKit 型を出さない)。

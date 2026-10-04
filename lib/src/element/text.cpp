@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/text.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/element/port.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/support/text_utils.hpp>
@@ -1475,5 +1476,54 @@ namespace cycfi::elements
             ctx.view.refresh(*pctx);
          }
       }
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Accessibility
+   ////////////////////////////////////////////////////////////////////////////
+   void basic_text_box::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      using namespace a11y;
+      out.role = role::multiline_text_input;
+      out.leaf = true;
+      out.value = get_text();
+      out.actions = bit(action::focus);
+      if (editable())
+         out.actions |= bit(action::set_value);
+      else
+         out.states |= state::read_only;
+   }
+
+   bool basic_text_box::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg)
+   {
+      if (act != a11y::action::set_value)
+         return false;
+      if (editable() && arg.text)
+      {
+         set_text(*arg.text);
+         ctx.view.refresh(ctx);
+      }
+      return true;
+   }
+
+   void basic_input_box::accessible(context const& ctx, a11y::info& out) const
+   {
+      basic_text_box::accessible(ctx, out);
+      out.role = a11y::role::text_input;
+      out.name = _placeholder;
+   }
+
+   bool basic_input_box::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg)
+   {
+      if (act != a11y::action::set_value)
+         return false;
+      if (editable() && arg.text)
+      {
+         set_text(*arg.text);
+         if (on_text)
+            on_text(get_text());
+         ctx.view.refresh(ctx);
+      }
+      return true;
    }
 }

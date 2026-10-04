@@ -28,6 +28,9 @@ namespace cycfi::elements
       double                  value() const override { return _value; }
       void                    value(double val) override;
 
+      // A progress bar, 0..100.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+
       virtual rect            background_bounds(context const& ctx) const;
       virtual rect            foreground_bounds(context const& ctx) const;
 

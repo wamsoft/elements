@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/slider.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/view.hpp>
 #include <algorithm>
@@ -349,5 +350,50 @@ namespace cycfi::elements
    {
       if (on_change)
          on_change(val);
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Accessibility
+   ////////////////////////////////////////////////////////////////////////////
+   void slider_base::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      using namespace a11y;
+      out.role = role::slider;
+      out.leaf = true;
+      double pct = value() * 100.0;
+      out.num_value = pct;
+      out.num_min = 0.0;
+      out.num_max = 100.0;
+      out.num_step = 5.0;
+      out.value = std::to_string(int(std::lround(pct))) + "%";
+      out.actions = bit(action::focus) | bit(action::increment)
+         | bit(action::decrement) | bit(action::set_value);
+   }
+
+   bool slider_base::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg)
+   {
+      using a11y::action;
+      double v = value();
+      switch (act)
+      {
+         case action::increment: v += 0.05; break;    // same step as the arrow keys
+         case action::decrement: v -= 0.05; break;
+         case action::set_value:
+            if (!arg.number)
+               return true;
+            v = *arg.number / 100.0;
+            break;
+         default:
+            return false;
+      }
+      if (!ctx.enabled)
+         return true;
+      v = clamp(v, 0.0, 1.0);
+      if (v != value())
+      {
+         edit_value(v);
+         ctx.view.refresh(ctx);
+      }
+      return true;
    }
 }

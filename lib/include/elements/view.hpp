@@ -16,6 +16,7 @@
 #include <elements/element/size.hpp>
 #include <elements/element/indirect.hpp>
 #include <elements/support/context.hpp>
+#include <elements/support/a11y.hpp>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -319,6 +320,40 @@ namespace cycfi::elements
       using context_function = element::context_function;
       void                    in_context_do(element& e, context_function f);
 
+      // The element that currently holds keyboard focus: the deepest
+      // wants_focus() element on the focus chain, or nullptr.
+      element*                focused_element();
+
+      // ---- Accessibility (docs/accessibility.md) ----------------------
+      // The view keeps an a11y tree in step with the element tree and
+      // pushes changes to the sink from poll(): focus changes right away,
+      // everything else at most every 33 ms. With no sink, or a sink that
+      // reports no assistive technology listening, nothing is computed.
+      void                    a11y_sink(std::shared_ptr<a11y::sink> s);
+      std::shared_ptr<a11y::sink> const& a11y_sink() const { return _a11y_sink; }
+
+      // The whole tree, now (UI thread). Works without a sink; empty (root
+      // only) until the view has been drawn once.
+      a11y::snapshot          a11y_snapshot();
+
+      // Mark the tree stale. refresh() does this already; call it for
+      // changes that do not repaint.
+      void                    a11y_invalidate() { _a11y_dirty = true; }
+
+      // Carry out an AT action on a node. Safe from any thread: the work is
+      // posted to the UI thread. Elements that do not implement the action
+      // get the keyboard equivalent (focus, then Enter / arrow keys).
+      void                    a11y_perform(a11y::node_id id, a11y::action act,
+                                 a11y::action_arg arg = {});
+
+      // Name of the root (window) node.
+      void                    a11y_name(std::string name);
+      std::string const&      a11y_name() const { return _a11y_name; }
+
+      // Have assistive technology read `text` (a live region under the
+      // root). Repeating the same text announces it again.
+      void                    announce(std::string text, a11y::live priority = a11y::live::polite);
+
 
    private:
 
@@ -406,6 +441,21 @@ namespace cycfi::elements
       using tracking_map = std::map<element*, time_point>;
 
       tracking_map            _tracking;
+
+      // Accessibility
+      void                    a11y_poll(time_point now);
+      void                    a11y_do_perform(a11y::node_id id, a11y::action act,
+                                 a11y::action_arg const& arg);
+
+      std::shared_ptr<a11y::sink> _a11y_sink;
+      std::unique_ptr<a11y::snapshot> _a11y_last;
+      bool                    _a11y_dirty = true;
+      bool                    _a11y_urgent = false;
+      element*                _a11y_last_focus = nullptr;
+      time_point              _a11y_last_push{};
+      std::string             _a11y_name;
+      std::string             _a11y_announce;
+      a11y::live              _a11y_announce_live = a11y::live::polite;
    };
 
    ////////////////////////////////////////////////////////////////////////////

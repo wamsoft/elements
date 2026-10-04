@@ -97,6 +97,12 @@ namespace cycfi::elements
 
       void              edit(view& view_, bool val) override;
 
+      // Role follows the button kind: toggle with a check-box style is a
+      // check box, a choice with one is a radio button, other choices are
+      // tabs. The name comes from the caption inside.
+      void              accessible(context const& ctx, a11y::info& out) const override;
+      bool              a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
+
       button_function   on_click;
 
       // Overridable: derived classes implement how Space/Enter activates

@@ -97,6 +97,10 @@ namespace cycfi::elements
 
       bool                    focused() const { return _has_focus; }
 
+      // A spin button whose value is the current option's text.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
+
       on_change_function      on_change;
 
    private:
@@ -147,7 +151,14 @@ namespace cycfi::elements
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
+      std::size_t             num_options() const { return _options.size(); }
+      std::string const&      option_text(std::size_t i) const { return _options[i]; }
+
       bool                    focused() const { return _has_focus; }
+
+      // A spin button whose value is the current option's text.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
 
       on_change_function      on_change;
 
@@ -198,7 +209,14 @@ namespace cycfi::elements
       bool                    step(int delta);
       void                    set_options(std::vector<std::string> options);
 
+      std::size_t             num_options() const { return _options.size(); }
+      std::string const&      option_text(std::size_t i) const { return _options[i]; }
+
       bool                    focused() const { return _has_focus; }
+
+      // A spin button whose value is the current option's text.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
 
       on_change_function      on_change;
 

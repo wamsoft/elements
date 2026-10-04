@@ -3,6 +3,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/picker.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/element/anchored_text.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/support/text_utils.hpp>
@@ -755,4 +756,66 @@ namespace cycfi::elements
       return false;
    }
 
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Accessibility (all three pickers share the selection model)
+   ////////////////////////////////////////////////////////////////////////////
+   namespace
+   {
+      template <typename Picker>
+      void picker_accessible(Picker const& p, a11y::info& out)
+      {
+         using namespace a11y;
+         out.role = role::spin_button;
+         out.leaf = true;
+         if (p.index() < p.num_options())
+            out.value = p.option_text(p.index());
+         out.actions = bit(action::focus) | bit(action::increment) | bit(action::decrement);
+      }
+
+      template <typename Picker>
+      bool picker_perform(Picker& p, context const& ctx, a11y::action act)
+      {
+         int delta = 0;
+         if (act == a11y::action::increment)
+            delta = +1;
+         else if (act == a11y::action::decrement)
+            delta = -1;
+         else
+            return false;
+         if (ctx.enabled && p.step(delta))
+            ctx.view.refresh(ctx);
+         return true;
+      }
+   }
+
+   void cycle_picker::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      picker_accessible(*this, out);
+   }
+
+   bool cycle_picker::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& /* arg */)
+   {
+      return picker_perform(*this, ctx, act);
+   }
+
+   void framed_cycle_picker::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      picker_accessible(*this, out);
+   }
+
+   bool framed_cycle_picker::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& /* arg */)
+   {
+      return picker_perform(*this, ctx, act);
+   }
+
+   void segmented_picker::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      picker_accessible(*this, out);
+   }
+
+   bool segmented_picker::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& /* arg */)
+   {
+      return picker_perform(*this, ctx, act);
+   }
 }

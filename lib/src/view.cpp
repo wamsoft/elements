@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/view.hpp>
+#include <elements/support/detail/a11y_tree.hpp>
 #include <cstdarg>
 #include <cstdio>
 #include <elements/window.hpp>
@@ -187,6 +188,7 @@
       _tasks.post(
          [this]()
          {
+            _a11y_dirty = true;
             base_view::refresh();
          }
       );
@@ -198,6 +200,7 @@
       _tasks.post(
          [this, area]()
          {
+            _a11y_dirty = true;
             base_view::refresh(area);
          }
       );
@@ -218,6 +221,7 @@
       _tasks.post(
          [this, &element, outward]()
          {
+            _a11y_dirty = true;
             with_context_do(
                [&element, outward](auto const& ctx, auto& _main_element)
                {
@@ -1763,6 +1767,8 @@
             }
          }
       }
+
+      a11y_poll(now);
    }
 
    void view::manage_on_tracking(element& e, tracking state)
@@ -1790,5 +1796,217 @@
          },
          *this, _current_bounds
       );
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Accessibility
+   ////////////////////////////////////////////////////////////////////////////
+   element* view::focused_element()
+   {
+      if (_content.empty())
+         return nullptr;
+      std::vector<element*> path;
+      walk_focus_path(_main_element, path);
+      // A chain that stops at a composite means nothing is focused below it.
+      if (path.empty() || dynamic_cast<composite_base*>(path.back()))
+         return nullptr;
+      element* leaf = nullptr;
+      for (auto* e : path)
+         if (e->wants_focus())
+            leaf = e;
+      return leaf;
+   }
+
+   namespace
+   {
+      a11y::node a11y_root_node(view const& v, std::string const& name)
+      {
+         a11y::node root;
+         root.id = a11y::hash_id("<root>");
+         root.role = a11y::role::window;
+         root.name = name;
+         auto sz = v.size();
+         root.bounds = {0, 0, sz.x, sz.y};
+         return root;
+      }
+
+      constexpr std::uint64_t a11y_main_seed = 0x6d61696e5f736565ull;
+   }
+
+   a11y::snapshot view::a11y_snapshot()
+   {
+      a11y::snapshot s;
+      s.nodes.push_back(a11y_root_node(*this, _a11y_name));
+      s.root = s.focus = s.nodes[0].id;
+
+      if (!_content.empty() && !_current_bounds.is_empty())
+      {
+         a11y::detail::walk_input in;
+         if ((in.focus_leaf = focused_element()))
+         {
+            std::vector<element*> path;
+            walk_focus_path(_main_element, path);
+            in.focus_path.insert(path.begin(), path.end());
+         }
+         with_context_do(
+            [&](auto const& ctx, auto& _main_element)
+            {
+               a11y::detail::walk(ctx, _main_element, a11y_main_seed, 0, s, in);
+            },
+            *this, _current_bounds
+         );
+      }
+
+      if (!_a11y_announce.empty())
+      {
+         a11y::node n;
+         n.id = a11y::hash_id("<announce>");
+         n.role = a11y::role::status;
+         n.name = _a11y_announce;
+         n.live = _a11y_announce_live;
+         s.nodes[0].children.push_back(n.id);
+         s.nodes.push_back(std::move(n));
+      }
+      s.reindex();
+      return s;
+   }
+
+   void view::a11y_sink(std::shared_ptr<a11y::sink> s)
+   {
+      _a11y_sink = std::move(s);
+      _a11y_last.reset();
+      _a11y_dirty = true;
+   }
+
+   void view::a11y_name(std::string name)
+   {
+      _a11y_name = std::move(name);
+      _a11y_dirty = true;
+   }
+
+   void view::announce(std::string text, a11y::live priority)
+   {
+      // A live region speaks when its text changes; to repeat the same
+      // message, make it differ by an invisible character.
+      if (text == _a11y_announce)
+         text += "\xE2\x80\x8B";   // U+200B ZERO WIDTH SPACE
+      _a11y_announce = std::move(text);
+      _a11y_announce_live = priority;
+      _a11y_urgent = true;
+   }
+
+   void view::a11y_poll(time_point now)
+   {
+      if (!_a11y_sink || !_a11y_sink->is_active())
+      {
+         // Start from a full tree when someone listens again.
+         _a11y_last.reset();
+         return;
+      }
+
+      auto* focus_now = focused_element();
+      bool focus_moved = focus_now != _a11y_last_focus;
+      bool first = !_a11y_last;
+      if (!first && !focus_moved && !_a11y_urgent)
+      {
+         using namespace std::chrono_literals;
+         if (!_a11y_dirty || now - _a11y_last_push < 33ms)
+            return;
+      }
+
+      auto snap = std::make_unique<a11y::snapshot>(a11y_snapshot());
+      auto delta = a11y::diff(_a11y_last.get(), *snap);
+      _a11y_dirty = false;
+      _a11y_urgent = false;
+      _a11y_last_focus = focus_now;
+      _a11y_last_push = now;
+      if (!delta.empty())
+         _a11y_sink->tree_changed(*snap, delta);
+      _a11y_last = std::move(snap);
+   }
+
+   void view::a11y_perform(a11y::node_id id, a11y::action act, a11y::action_arg arg)
+   {
+      _tasks.post(
+         [this, id, act, arg = std::move(arg)]()
+         {
+            a11y_do_perform(id, act, arg);
+         }
+      );
+   }
+
+   void view::a11y_do_perform(a11y::node_id id, a11y::action act, a11y::action_arg const& arg)
+   {
+      if (_content.empty() || _current_bounds.is_empty())
+         return;
+
+      // Walk again to reach the element with a live context (ids are the
+      // same as in a11y_snapshot(): same seeds, same order).
+      a11y::snapshot s;
+      s.nodes.push_back(a11y_root_node(*this, _a11y_name));
+      s.root = s.focus = s.nodes[0].id;
+
+      element* target = nullptr;
+      rect target_bounds;
+      bool handled = false;
+
+      a11y::detail::walk_input in;
+      in.target = id;
+      in.on_target =
+         [&](context const& ctx, element& e)
+         {
+            target = &e;
+            target_bounds = ctx.bounds;
+            handled = e.a11y_perform(ctx, act, arg);
+         };
+
+      with_context_do(
+         [&](auto const& ctx, auto& _main_element)
+         {
+            a11y::detail::walk(ctx, _main_element, a11y_main_seed, 0, s, in);
+         },
+         *this, _current_bounds
+      );
+
+      if (!target)
+         return;
+      _a11y_urgent = true;
+      if (handled)
+         return;
+
+      // Keyboard equivalent. focus() is itself posted, so the key goes
+      // behind it in the queue.
+      auto send_key =
+         [this](key_code k)
+         {
+            _tasks.post(
+               [this, k]()
+               {
+                  key(key_info{k, key_action::press, 0});
+                  key(key_info{k, key_action::release, 0});
+               }
+            );
+         };
+      bool horiz = target_bounds.width() >= target_bounds.height();
+      switch (act)
+      {
+         case a11y::action::focus:
+            focus(*target);
+            break;
+         case a11y::action::click:
+            focus(*target);
+            send_key(key_code::enter);
+            break;
+         case a11y::action::increment:
+            focus(*target);
+            send_key(horiz ? key_code::right : key_code::up);
+            break;
+         case a11y::action::decrement:
+            focus(*target);
+            send_key(horiz ? key_code::left : key_code::down);
+            break;
+         default:
+            break;
+      }
    }
 }

@@ -27,6 +27,20 @@ set(ELEMENTS_HOST_UI_LIBRARY "sdl" CACHE STRING "Host UI library to use (sdl, wi
 
 add_subdirectory(lib)
 
+# Headless tests (no window): -DELEMENTS_BUILD_TESTS=ON, then ctest.
+option(ELEMENTS_BUILD_TESTS "Build headless library tests" OFF)
+if (ELEMENTS_BUILD_TESTS)
+   enable_testing()
+   add_executable(a11y_tree_test test/a11y_tree_test.cpp)
+   target_link_libraries(a11y_tree_test PRIVATE elements)
+   if (WIN32 AND TARGET SDL3-shared)
+      add_custom_command(TARGET a11y_tree_test POST_BUILD
+         COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:SDL3-shared> $<TARGET_FILE_DIR:a11y_tree_test>)
+   endif()
+   add_test(NAME a11y_tree COMMAND a11y_tree_test ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
 # elements_modal: JSON modal UI library。
 # ライブラリ本体の overlay サブセット (overlay_session / navigator) は host 非依存
 # で、 win32 host でも SDL3 を引かずにビルドできる。 独立ウィンドウ modal

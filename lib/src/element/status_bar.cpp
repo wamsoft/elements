@@ -6,6 +6,9 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/status_bar.hpp>
+#include <elements/support/a11y.hpp>
+#include <cmath>
+#include <string>
 #include <elements/support/draw_utils.hpp>
 #include <elements/support/theme.hpp>
 #include <elements/view.hpp>
@@ -167,5 +170,16 @@ namespace cycfi::elements
             animate(view_);
          }
       );
+   }
+
+   void status_bar_base::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      out.role = a11y::role::progress_indicator;
+      out.leaf = true;
+      double pct = value() * 100.0;
+      out.num_value = pct;
+      out.num_min = 0.0;
+      out.num_max = 100.0;
+      out.value = std::to_string(int(std::lround(pct))) + "%";
    }
 }

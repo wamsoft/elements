@@ -160,6 +160,10 @@ namespace cycfi::elements
       //! @param area  テキスト領域の矩形 (候補窓が避けるべき範囲)
       //! @return 編集フォーカスがあり値が有効なら真
       bool                    caret_bounds(rect& caret, rect& area) const;
+      // An edit field; the text is its value.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
+
       virtual void            delete_(bool forward);
       virtual void            cut(view& v, int start, int end);
       virtual void            copy(view& v, int start, int end);
@@ -258,6 +262,13 @@ namespace cycfi::elements
       bool                    cursor(context const& ctx, point p, cursor_tracking status) override;
       bool                    scroll(context const& ctx, point dir, point p) override;
       bool                    end_focus() override;
+
+      // Single-line edit named by its placeholder (wrap it in a11y_label
+      // for a real caption). A value set by AT fires on_text like typing.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
+
+      std::string const&      placeholder() const { return _placeholder; }
 
       text_function           on_text;
       enter_function          on_enter;

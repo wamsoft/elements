@@ -8,6 +8,7 @@
 
 #include <elements/element/element.hpp>
 #include <elements/element/proxy.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/element/style/misc.hpp>
 
 namespace cycfi::elements
@@ -44,6 +45,13 @@ namespace cycfi::elements
 
       bool           wants_focus() const override { return true; }
       bool           wants_control() const override { return true; }
+
+      // A dialog that hides the layers beneath it from assistive technology.
+      void           accessible(context const& /* ctx */, a11y::info& out) const override
+                     {
+                        out.role = a11y::role::dialog;
+                        out.states |= a11y::state::modal;
+                     }
    };
 
    /**

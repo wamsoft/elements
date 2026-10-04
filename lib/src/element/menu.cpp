@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/menu.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/element/composite.hpp>
 #include <elements/element/traversal.hpp>
 #include <elements/element/port.hpp>
@@ -348,5 +349,18 @@ namespace cycfi::elements
    bool basic_menu_item_element::wants_control() const
    {
       return true;
+   }
+
+   void basic_menu_item_element::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      using namespace a11y;
+      out.role = role::menu_item;
+      out.leaf = true;
+      out.name_from_content = true;
+      out.actions = bit(action::focus) | bit(action::click);
+      if (_selected)
+         out.states |= state::selected;
+      if (!is_enabled())
+         out.states |= state::disabled;
    }
 }

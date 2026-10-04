@@ -17,6 +17,7 @@
 #include <elements/element/drag_and_drop.hpp>
 #include <elements/element/list.hpp>
 #include <elements/element/events_intercept.hpp>
+#include <elements/element/accessible.hpp>
 #include <elements/element/floating.hpp>
 #include <elements/element/flow.hpp>
 #include <elements/element/focus.hpp>

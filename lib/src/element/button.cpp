@@ -5,6 +5,8 @@
 =============================================================================*/
 #include <elements/element/button.hpp>
 #include <elements/element/traversal.hpp>
+#include <elements/element/style/toggle_selector.hpp>
+#include <elements/support/a11y.hpp>
 #include <elements/support/theme.hpp>
 
 namespace cycfi::elements
@@ -470,5 +472,71 @@ namespace cycfi::elements
          }
       }
       return false;
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
+   // Accessibility
+   ////////////////////////////////////////////////////////////////////////////
+   namespace
+   {
+      // Is there a toggle_selector (check box / radio styling) somewhere
+      // down the button's proxy chain?
+      bool has_toggle_selector(element const& e)
+      {
+         element const* p = &e;
+         while (p)
+         {
+            if (dynamic_cast<toggle_selector const*>(p))
+               return true;
+            auto* px = dynamic_cast<proxy_base const*>(p);
+            p = px ? &px->subject() : nullptr;
+         }
+         return false;
+      }
+   }
+
+   void basic_button::accessible(context const& /* ctx */, a11y::info& out) const
+   {
+      using namespace a11y;
+      out.leaf = true;
+      out.name_from_content = true;
+      out.actions = bit(action::focus) | bit(action::click);
+
+      bool selector = has_toggle_selector(subject());
+      if (dynamic_cast<basic_choice const*>(this))
+      {
+         if (selector)
+         {
+            out.role = role::radio_button;
+            if (value())
+               out.states |= state::checked;
+         }
+         else
+         {
+            out.role = role::tab;
+            if (value())
+               out.states |= state::selected;
+         }
+      }
+      else if (dynamic_cast<basic_toggle_button const*>(this))
+      {
+         out.role = selector ? role::check_box : role::toggle_button;
+         if (value())
+            out.states |= state::checked;
+      }
+      else
+      {
+         out.role = role::button;
+      }
+   }
+
+   bool basic_button::a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& /* arg */)
+   {
+      if (act != a11y::action::click)
+         return false;
+      // Same path as Space / Enter, without moving the focus.
+      if (ctx.enabled && is_enabled())
+         activate(ctx);
+      return true;
    }
 }

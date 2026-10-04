@@ -8,6 +8,7 @@
 
 #include <elements/element/element.hpp>
 #include <elements/element/proxy.hpp>
+#include <elements/support/a11y.hpp>
 
 namespace cycfi::elements
 {
@@ -25,6 +26,8 @@ namespace cycfi::elements
       void                    draw(context const& ctx) override;
       bool                    wants_control() const override;
       bool                    wants_focus() const override;
+      void                    accessible(context const& ctx, a11y::info& out) const override
+                              { out.hidden = is_hidden; }
       bool                    is_hidden = false;
    };
 

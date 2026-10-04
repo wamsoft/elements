@@ -254,6 +254,8 @@ namespace cycfi::elements
       bool                    is_selected() const override;
       void                    select(bool state) override;
 
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+
    private:
 
       bool                    _selected = false;

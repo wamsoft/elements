@@ -21,8 +21,9 @@ namespace cycfi::elements
    ////////////////////////////////////////////////////////////////////////////
    // Derives from `text_writer` so the caption can be replaced at run time
    // (a language switch replaces the string in place rather than rebuilding
-   // the control).
-   struct toggle_selector : element, text_writer
+   // the control), and from `text_reader` so the caption can be read back
+   // (the check box / radio button's accessible name).
+   struct toggle_selector : element, text_reader, text_writer
    {
                               // `scale` は 1.0 = テーマ既定サイズ。 >1.0 で
                               // ラベルフォント・インジケータ・余白を一括拡大する
@@ -41,7 +42,7 @@ namespace cycfi::elements
       // revision, which the host turns into a refresh.
       void                    set_text(string_view text) override
                               { _text = std::string(text); }
-      std::string const&      get_text() const { return _text; }
+      std::string const&      get_text() const override { return _text; }
 
       std::string             _text;
       float                   _scale = 1.0f;

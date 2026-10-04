@@ -52,6 +52,10 @@ namespace cycfi::elements
       void                    edit(view& view_, double val) override;
       virtual void            edit_value(double val) { value(val);}
 
+      // Exposed as 0..100 (percent), stepping like the arrow keys.
+      void                    accessible(context const& ctx, a11y::info& out) const override;
+      bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
+
       // Virtual so hosts can draw the track image over the full widget
       // bounds instead of the default thumb-overhang inset (e.g. atlas
       // track art that already bakes in its own frame/border).

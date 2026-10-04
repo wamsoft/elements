@@ -10,6 +10,7 @@
 #include <elements/support/receiver.hpp>
 #include <elements/support/rect.hpp>
 #include <infra/support.hpp>
+#include <cstdint>
 #include <memory>
 #include <type_traits>
 #include <concepts>
@@ -18,6 +19,13 @@ namespace cycfi::elements
 {
    struct basic_context;
    class context;
+
+   namespace a11y
+   {
+      struct info;
+      struct action_arg;
+      enum class action : std::uint8_t;
+   }
 
    namespace concepts
    {
@@ -143,6 +151,19 @@ namespace cycfi::elements
       enum tracking { none, begin_tracking, while_tracking, end_tracking };
 
       virtual std::string     class_name() const;
+
+   // Accessibility (docs/accessibility.md)
+
+      // Declare what assistive technology should see for this element:
+      // role, name, value, state. The default exposes text_reader elements
+      // (labels, button captions, static text) as labels and leaves every
+      // other element transparent.
+      virtual void            accessible(context const& ctx, a11y::info& out) const;
+
+      // Carry out an action requested by assistive technology. Return false
+      // to let the view fall back to the keyboard equivalent (focus, then
+      // Enter / arrows).
+      virtual bool            a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg);
 
    protected:
 

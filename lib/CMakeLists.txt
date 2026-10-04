@@ -58,6 +58,8 @@ set(ELEMENTS_SOURCES
    src/element/tile.cpp
    src/element/tooltip.cpp
    src/support/block_text.cpp
+   src/support/a11y.cpp
+   src/support/a11y_tree.cpp
    src/support/canvas.cpp
    src/support/text_backend_tvg.cpp
    src/support/draw_utils.cpp
@@ -98,6 +100,7 @@ set(ELEMENTS_HEADERS
    include/elements/element/grid.hpp
    include/elements/element/image.hpp
    include/elements/element/indirect.hpp
+   include/elements/element/accessible.hpp
    include/elements/element/hidable.hpp
    include/elements/element/label.hpp
    include/elements/element/layer.hpp
@@ -154,6 +157,8 @@ set(ELEMENTS_HEADERS
    include/elements/support/icon_ids.hpp
    include/elements/support/pixmap.hpp
    include/elements/support/point.hpp
+   include/elements/support/a11y.hpp
+   include/elements/support/detail/a11y_tree.hpp
    include/elements/support/receiver.hpp
    include/elements/support/rect.hpp
    include/elements/support/resource_loader.hpp
