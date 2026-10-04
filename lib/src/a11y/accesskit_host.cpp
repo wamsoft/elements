@@ -16,7 +16,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <vector>
 
 #if defined(_WIN32)
 # include <windows.h>
@@ -25,6 +24,11 @@
 
 #if defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
 # include <SDL3/SDL.h>
+#endif
+
+#if defined(__APPLE__)
+# include <objc/message.h>
+# include <objc/runtime.h>
 #endif
 
 #if (defined(__linux__) || defined(__DragonFly__) || defined(__FreeBSD__) \
@@ -113,6 +117,7 @@ namespace cycfi::elements::a11y
       accesskit_windows_adapter*    adapter = nullptr;
 #elif defined(__APPLE__)
       accesskit_macos_subclassing_adapter* adapter = nullptr;
+      void*                         nswindow = nullptr;
 #elif defined(ELEMENTS_A11Y_UNIX)
       accesskit_unix_adapter*       adapter = nullptr;
 #endif
@@ -475,6 +480,7 @@ namespace cycfi::elements::a11y
             &impl::on_action, this);
          SetWindowSubclass(hwnd, &impl::subclass_proc, 0xE1A11, reinterpret_cast<DWORD_PTR>(this));
 #elif defined(__APPLE__)
+         nswindow = native_window;
          adapter = accesskit_macos_subclassing_adapter_for_window(native_window,
             &impl::on_activate, this, &impl::on_action, this);
 #elif defined(ELEMENTS_A11Y_UNIX)
@@ -723,6 +729,20 @@ namespace cycfi::elements::a11y
       return _impl->active;
    }
 
+   float accesskit_host::native_scale() const
+   {
+#if defined(__APPLE__)
+      if (_impl->nswindow)
+      {
+         // [NSWindow backingScaleFactor]
+         using fn = double (*)(void*, SEL);
+         return float(reinterpret_cast<fn>(objc_msgSend)(
+            _impl->nswindow, sel_registerName("backingScaleFactor")));
+      }
+#endif
+      return 1.0f;
+   }
+
    void accesskit_host::flush()
    {
       if (!_impl->active)
@@ -784,7 +804,13 @@ namespace cycfi::elements::a11y
 # elif defined(__APPLE__)
       // SDL keeps the keyboard focus on its NSWindow subclass; forward the
       // focused-element query to the content view the adapter lives on.
-      accesskit_macos_add_focus_forwarder_to_window_class("SDL3Window");
+      // The class is patched for the life of the process, and patching it
+      // twice panics (attach_sdl again after the host was dropped).
+      static bool const forwarder = [] {
+         accesskit_macos_add_focus_forwarder_to_window_class("SDL3Window");
+         return true;
+      }();
+      (void)forwarder;
       native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
 # endif
       (void)props;

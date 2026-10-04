@@ -104,6 +104,12 @@ namespace cycfi::elements::a11y
       // True once an assistive technology has asked for the tree.
       bool                    is_active() const;
 
+      // What the adapter counts as one physical pixel per window point: the
+      // NSWindow's backingScaleFactor on macOS, 1 elsewhere. A host that
+      // renders at one pixel per point (an SDL window without high pixel
+      // density on a Retina screen) multiplies its transform by this.
+      float                   native_scale() const;
+
       // Push what changed to AccessKit. Sources call this from their sink;
       // call it after set_transform / set_z / set_modal.
       void                    flush();
