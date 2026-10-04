@@ -51,7 +51,9 @@ namespace cycfi::elements::a11y
       text_input,
       multiline_text_input,
       progress_indicator,
-      status            // live region
+      status,           // live region
+      list,             // a list of list_item children (choices, a menu)
+      list_item
    };
 
    enum class live : std::uint8_t { off, polite, assertive };
@@ -205,6 +207,15 @@ namespace cycfi::elements::a11y
    char const*                role_name(role r);
    char const*                action_name(action a);
    std::optional<action>      action_from_name(std::string_view name);
+
+   // Names as written by scripts and layout files: "button", "check_box"
+   // (also "checkbox"), "group", "list_item", "text" (= label),
+   // "progress" ... and the role_name() spellings ("check box").
+   std::optional<role>        role_from_name(std::string_view name);
+
+   // "focusable", "focused", "disabled", "checked", "selected", "expanded",
+   // "read_only", "modal" -> the state bit; 0 when unknown.
+   std::uint32_t              state_from_name(std::string_view name);
 
    // The string form of a node id used by dumps and by REPL commands:
    // the explicit id when there is one, else "#<hex>".

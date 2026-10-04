@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <vector>
 
 #if defined(_WIN32)
 # include <windows.h>
@@ -67,6 +68,8 @@ namespace cycfi::elements::a11y
             case role::multiline_text_input: return ACCESSKIT_ROLE_MULTILINE_TEXT_INPUT;
             case role::progress_indicator:   return ACCESSKIT_ROLE_PROGRESS_INDICATOR;
             case role::status:               return ACCESSKIT_ROLE_STATUS;
+            case role::list:                 return ACCESSKIT_ROLE_LIST;
+            case role::list_item:            return ACCESSKIT_ROLE_LIST_ITEM;
          }
          return ACCESSKIT_ROLE_GROUP;
       }
@@ -182,6 +185,7 @@ namespace cycfi::elements::a11y
                break;
             case role::tab:
             case role::menu_item:
+            case role::list_item:
                accesskit_node_set_selected(a, n.has(state::selected));
                break;
             default:
@@ -369,31 +373,74 @@ namespace cycfi::elements::a11y
          accesskit_action_request_free(req);
          if (!act)
             return;
+#if defined(_WIN32)
+         // UIA calls in on its own threads. Hand the action to the window's
+         // thread, so perform functions run where the UI lives and the
+         // message also wakes a host that sleeps in its message loop.
+         if (GetWindowThreadProcessId(self->hwnd, nullptr) != GetCurrentThreadId())
+         {
+            {
+               std::lock_guard lock(self->mtx);
+               self->posted.push_back({target, *act, std::move(arg)});
+            }
+            PostMessageW(self->hwnd, action_message(), 0, 0);
+            return;
+         }
+#endif
+         self->dispatch(target, *act, std::move(arg));
+      }
 
+      void dispatch(accesskit_node_id target, action act, action_arg arg)
+      {
          perform_function perform;
          node_id local = 0;
          {
-            std::lock_guard lock(self->mtx);
-            auto r = self->reverse.find(target);
-            if (r == self->reverse.end())
+            std::lock_guard lock(mtx);
+            auto r = reverse.find(target);
+            if (r == reverse.end())
                return;
-            auto it = self->slots.find(r->second.first);
-            if (it == self->slots.end())
+            auto it = slots.find(r->second.first);
+            if (it == slots.end())
                return;
             perform = it->second.perform;
             local = r->second.second;
          }
          if (perform)
-            perform(local, *act, std::move(arg));
+            perform(local, act, std::move(arg));
       }
 
       // ---- platform ------------------------------------------------------
 
 #if defined(_WIN32)
+      struct posted_action
+      {
+         accesskit_node_id target;
+         action            act;
+         action_arg        arg;
+      };
+      std::vector<posted_action> posted;
+
+      static UINT action_message()
+      {
+         static UINT const msg = RegisterWindowMessageW(L"cycfi.elements.a11y.action");
+         return msg;
+      }
+
       static LRESULT CALLBACK subclass_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
          UINT_PTR id, DWORD_PTR ref)
       {
          auto* self = reinterpret_cast<impl*>(ref);
+         if (msg == action_message())
+         {
+            std::vector<posted_action> q;
+            {
+               std::lock_guard lock(self->mtx);
+               q.swap(self->posted);
+            }
+            for (auto& a : q)
+               self->dispatch(a.target, a.act, std::move(a.arg));
+            return 0;
+         }
          switch (msg)
          {
             case WM_GETOBJECT:

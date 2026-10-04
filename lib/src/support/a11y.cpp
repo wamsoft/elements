@@ -70,8 +70,32 @@ namespace cycfi::elements::a11y
          case role::multiline_text_input: return "multiline edit";
          case role::progress_indicator:   return "progress bar";
          case role::status:               return "status";
+         case role::list:                 return "list";
+         case role::list_item:            return "list item";
       }
       return "?";
+   }
+
+   std::optional<role> role_from_name(std::string_view s)
+   {
+      static constexpr std::pair<char const*, role> aliases[] = {
+         {"group", role::generic}, {"generic", role::generic},
+         {"text", role::label}, {"checkbox", role::check_box},
+         {"toggle_button", role::toggle_button}, {"check_box", role::check_box},
+         {"radio_button", role::radio_button}, {"spin_button", role::spin_button},
+         {"menu_item", role::menu_item}, {"text_input", role::text_input},
+         {"multiline_text_input", role::multiline_text_input},
+         {"progress", role::progress_indicator},
+         {"progress_indicator", role::progress_indicator},
+         {"list_item", role::list_item},
+      };
+      for (auto const& [name, r] : aliases)
+         if (s == name)
+            return r;
+      for (int i = 0; i <= int(role::list_item); ++i)
+         if (s == role_name(role(i)))
+            return role(i);
+      return std::nullopt;
    }
 
    namespace
@@ -145,6 +169,14 @@ namespace cycfi::elements::a11y
       return std::nullopt;
    }
 
+   std::uint32_t state_from_name(std::string_view name)
+   {
+      for (auto const& s : state_names)
+         if (name == s.name)
+            return s.bit;
+      return 0;
+   }
+
    std::string id_string(node const& n)
    {
       if (!n.debug_id.empty())
@@ -169,7 +201,7 @@ namespace cycfi::elements::a11y
          add(role_name(n.role));
       if (n.role == role::check_box || n.role == role::toggle_button || n.role == role::radio_button)
          add(n.has(state::checked) ? "checked" : "not checked");
-      if (n.role == role::tab && n.has(state::selected))
+      if ((n.role == role::tab || n.role == role::list_item) && n.has(state::selected))
          add("selected");
       add(n.value);
       if (n.has(state::disabled))

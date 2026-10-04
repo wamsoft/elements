@@ -30,8 +30,10 @@ struct SDL_Window;
 // elements_modal overlay session, anything that produces a11y snapshots — are
 // registered in slots and composed under the window's root node, bottom to
 // top by z; a modal slot hides the slots below it. Each source gets an
-// a11y::sink to push into, and a perform function that receives AT actions
-// (from any thread; view::a11y_perform posts to the UI thread itself).
+// a11y::sink to push into, and a perform function that receives AT actions:
+// on the window's thread on Windows (posted to the window, which also wakes a
+// host idling in its message loop) and macOS, from another thread on Unix.
+// view::a11y_perform posts to the UI thread itself.
 //
 // Native Elements windows: attach_accesskit(view) does all of it.
 // Embedding hosts (a game engine compositing Elements into its own window):

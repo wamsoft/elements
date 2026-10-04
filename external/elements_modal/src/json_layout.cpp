@@ -3098,19 +3098,7 @@ private:
 
 bool parse_a11y_role(const std::string& s, ce::a11y::role& out)
 {
-	using ce::a11y::role;
-	static const std::pair<const char*, role> table[] = {
-		{"none", role::none}, {"group", role::generic}, {"dialog", role::dialog},
-		{"label", role::label}, {"text", role::label}, {"heading", role::heading},
-		{"image", role::image}, {"button", role::button},
-		{"toggle_button", role::toggle_button}, {"check_box", role::check_box},
-		{"checkbox", role::check_box}, {"radio_button", role::radio_button},
-		{"tab", role::tab}, {"slider", role::slider}, {"spin_button", role::spin_button},
-		{"menu_item", role::menu_item}, {"text_input", role::text_input},
-		{"progress", role::progress_indicator}, {"status", role::status},
-	};
-	for (auto& [name, r] : table)
-		if (s == name) { out = r; return true; }
+	if (auto r = ce::a11y::role_from_name(s)) { out = *r; return true; }
 	return false;
 }
 

@@ -291,6 +291,25 @@ int run()
    check(json.rfind("{\"focus\":", 0) == 0 && json.find("\"role\":\"slider\"") != std::string::npos,
       "json dump");
 
+   std::printf("[names]\n");
+   check(a11y::role_from_name("check_box") == a11y::role::check_box
+      && a11y::role_from_name("check box") == a11y::role::check_box
+      && a11y::role_from_name("group") == a11y::role::generic
+      && a11y::role_from_name("list_item") == a11y::role::list_item
+      && a11y::role_from_name("list") == a11y::role::list
+      && !a11y::role_from_name("bogus"),
+      "role_from_name");
+   check(a11y::state_from_name("selected") == a11y::state::selected
+      && a11y::state_from_name("nope") == 0,
+      "state_from_name");
+   {
+      a11y::node item;
+      item.role = a11y::role::list_item;
+      item.name = "Go north";
+      item.states = a11y::state::selected;
+      check(a11y::describe(item) == "Go north, list item, selected", "describe list item");
+   }
+
    return failures;
 }
 

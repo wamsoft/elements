@@ -305,7 +305,7 @@ public:
 - **ID の名前空間**: AccessKit の node id は `(slot << 48) | (id & 0xFFFF'FFFF'FFFF)` とする。AccessKit 0.25 の `tree_id` / graft (部分木の接ぎ木) は、単一ウィンドウ内の合成には不要なので当面は使わない。使えるかどうかは Phase 0 で確認する。
 - **座標**: source の bounds は view 座標 (DIP) で出てくる。ホストが渡す `view_to_window_px` (スケール、レターボックスのオフセット、オーバーレイの位置) で物理ピクセルに変換し、各ノードの `bounds` に入れる。
 - **フォーカス**: z 最上位の「アクティブな source」の focus を採用する。どの source にもフォーカスがなければ root にする。
-- **アクション**: AccessKit のコールバックはどのスレッドからでも来るので、slot で source を引いて `source->perform()` に渡す。各 source は `post()` で UI スレッドへ移すので、ここでは同期を取らない。
+- **アクション**: AccessKit のコールバックは、Windows では UIA のスレッド、Unix では別スレッドから来る。slot で source を引いて `source->perform()` に渡す。Windows ではウィンドウのスレッドへ投げ直してから呼ぶ (§6.4)。view の source は `post()` で UI スレッドへ移すので、ここでは同期を取らない。
 
 ### 3.2.1 Phase 0 の結果 (Windows、2026-10-04)
 
@@ -527,6 +527,16 @@ Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a1
 - **補足説明の自動導出は `strings_on_focus` だけ**。`vars_on_focus` は画像番号など文言でない値も書くので使わない。ヘルプ帯を読ませたいときは、帯のラベルに `"a11y": {"live": "polite"}` を付ける。
 - **不具合修正 (view)**: sink を最初の描画より前に付けると (オーバーレイのホストはこの順になる)、空のツリーを送ったあと、レイアウトで dirty にならず二度と送らなかった。レイアウトが走ったら dirty にする。
 - **不具合修正 (accesskit_host)**: AT がいない間もソースが送ってくる場合 (読み上げログのため)、差分が溜まり続けていた。非アクティブの間は最新のツリーだけを持ち、アクティブ化で全体を送る。
+
+### 6.4 埋め込みホストの自前ノード向けの追加 (2026-10-04)
+
+埋め込みホスト (ゲームエンジン) が、Elements で作っていない自前の UI (ゲーム画面に描いた選択肢やメニュー) を、ノードの表から snapshot に組んで slot に載せる用途のための追加。
+
+| 場所 | 中身 |
+|---|---|
+| `a11y::role` | `list` / `list_item` を追加 (選択肢の並び)。AccessKit では List / ListItem、`list_item` の `selected` は選択状態として出る |
+| `a11y::role_from_name()` / `state_from_name()` | スクリプトやレイアウトファイルに書いた名前 (`"check_box"` / `"checkbox"` / `"group"` / `"text"` / `"progress"` … と `role_name()` の綴り) からロールと状態ビットを引く。elements_modal の JSON `"a11y".role` もこれを使う |
+| `accesskit_host` (Windows) | AT の操作を UIA のスレッドで受けたら、ウィンドウへメッセージで投げ直し、ウィンドウのスレッドで `perform` を呼ぶ。メッセージループで待機しているホスト (描画が止まっている静止画面) もこれで起きる。それまでは次の描画まで操作が届かなかった |
 
 ## 7. リスクと未決事項
 
