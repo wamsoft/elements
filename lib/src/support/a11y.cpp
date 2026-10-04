@@ -289,6 +289,48 @@ namespace cycfi::elements::a11y
       return out;
    }
 
+   std::vector<std::string> speech_lines(snapshot const* prev, snapshot const& next)
+   {
+      std::vector<std::string> out;
+      auto const* f = next.find(next.focus);
+      bool focus_moved = !prev || prev->focus != next.focus;
+      if (focus_moved && f && f->id != next.root)
+         out.push_back("[focus] " + describe(*f));
+
+      if (!prev)
+         return out;
+
+      constexpr std::uint32_t toggles = state::checked | state::selected;
+      for (auto const& n : next.nodes)
+      {
+         auto const* p = prev->find(n.id);
+         if (n.live != live::off)
+         {
+            // A live region speaks when its text changes (or appears).
+            if (!p || p->name != n.name || p->value != n.value)
+            {
+               std::string text = n.name;
+               // announce() makes a repeat differ by a trailing U+200B
+               while (text.size() >= 3 && text.compare(text.size() - 3, 3, "\xE2\x80\x8B") == 0)
+                  text.resize(text.size() - 3);
+               if (!n.value.empty() && n.value != text)
+                  text += (text.empty() ? "" : " ") + n.value;
+               if (!text.empty())
+                  out.push_back(std::string(n.live == live::assertive ? "[assertive] " : "[polite] ") + text);
+            }
+            continue;
+         }
+         if (!p || n.id != next.focus || focus_moved)
+            continue;
+         // The focused control changed under the user.
+         if (p->value != n.value && !n.value.empty())
+            out.push_back("[value] " + (n.name.empty() ? std::string{} : n.name + ", ") + n.value);
+         if ((p->states & toggles) != (n.states & toggles))
+            out.push_back("[state] " + describe(n));
+      }
+      return out;
+   }
+
    node_id hash_id(std::string_view s)
    {
       // FNV-1a 64

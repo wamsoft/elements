@@ -27,6 +27,7 @@
 // (mouse_button / key_code / pad_button / pad_axis) で受ける。 native (SDL /
 // Win32 / …) → cycfi のマッピングはホストアダプタの責務。
 #include <elements/base_view.hpp>
+#include <elements/support/a11y.hpp>
 
 // run_modal の config::parent が使う SDL_Window はポインタとしてのみ現れるので
 // 前方宣言で足りる (win32 host ビルドは SDL3 を一切引かない)。 実体 (run_modal)
@@ -504,6 +505,30 @@ public:
 	//! 送るので、 focus_by_id + on_key_down と違いその場で効く。 button は click、
 	//! checkbox/toggle/slide_switch は値トグル相当。 id が無ければ false。
 	bool activate_by_id(const std::string& id);
+
+	//! @name 読み上げ (スクリーンリーダー対応、 docs/accessibility.md §4)
+	//! 画面の読み上げ用ツリー。 部品の名前・役割・値は Elements の部品と JSON の
+	//! "a11y" (と自動導出) から作られる。 OS へ出すときは accesskit_host 等の
+	//! sink を a11y_sink() で差す (start の前でも後でもよい)。 sink が無くても
+	//! a11y_snapshot() / a11y_dump_json() は使える (検証・REPL 用)。
+	//! @{
+	void a11y_sink(std::shared_ptr<cycfi::elements::a11y::sink> s);
+	cycfi::elements::a11y::snapshot a11y_snapshot();
+	//! AT と同じ経路で操作する (どのスレッドからでもよい。 実行は次の update)。
+	void a11y_perform(cycfi::elements::a11y::node_id id,
+	                  cycfi::elements::a11y::action act,
+	                  cycfi::elements::a11y::action_arg arg = {});
+	//! 文字列版 (REPL / パネル用): node は dump の "id" ("btn_save" / "#<hex>")、
+	//! action は "click" / "focus" / "increment" / "decrement" / "set_value"。
+	//! arg は set_value の値 (数値として読めれば数値、 常に文字列としても渡す)。
+	//! node / action が見つからなければ false。
+	bool a11y_perform(const std::string& node, const std::string& action,
+	                  const std::string& arg = {});
+	//! 読み上げさせる (live region)。
+	void announce(const std::string& text, bool assertive = false);
+	//! ツリーを JSON で (docs/accessibility.md §5 の形)。
+	std::string a11y_dump_json();
+	//! @}
 
 	//! @brief i18n: 実行中の表示言語を切り替える (EUI Phase 2)。
 	//! JSON top-level "strings" の対応表を持つ画面で、 "text_id" を指定した

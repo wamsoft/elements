@@ -509,6 +509,25 @@ Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a1
 - **起動は遅延**: AT が接続するまで view はツリーを作らない (`sink::is_active`)。Windows / macOS は接続時 (UI スレッド) に `snapshot_now` でその場のツリーを返す。Unix は別スレッドなので、それまでに受け取ったツリーを返し、あとから view が全体を送る。
 - **CRT**: prebuilt の static lib は static CRT (`/MT`) の構成にそのままリンクでき、警告も出ない (実行ファイルは vcruntime に依存しない)。
 
+### 6.3 Phase 3 の実装 (2026-10-04)
+
+| 場所 | 中身 |
+|---|---|
+| `elements_modal/src/json_layout.cpp` | 部品ごとの `"a11y"` (§4.1) と自動導出 (§4.2) を `a11y_json_element` proxy で受ける。名前・説明・値は関数で持ち、ツリーを作るたびに StringStore / 変数を引き直す (言語切替・変数変化に追従)。`visible_var` / `opacity` 0 は読み上げからも消す。`labeled_row` は行ラベルを中の部品の名前にし、ラベル自体は読み上げから外す |
+| トップレベル `"a11y"` | `title(_id)` が root (window) の名前、`announce(_id)` が画面に入ったときの live region |
+| `overlay_session` | `a11y_sink()`、`a11y_snapshot()`、`a11y_perform()` (id 版と、ダンプの id 文字列版)、`announce()`、`a11y_dump_json()` |
+| `a11y::speech_lines()` | 2 つのツリーの差を «SR がおおよそ何と読むか» の行にする (`[focus]` / `[value]` / `[state]` / `[polite]`)。REPL / パネルの読み上げログに使う |
+| `accesskit_host::attach_sdl(SDL_Window*)` | Elements の view ではない SDL ウィンドウ (elements_console、ゲームエンジン) にも 1 行で付ける |
+| `test/modal_a11y_test.cpp` | JSON 画面のヘッドレステスト |
+
+設計からの差・実装で決めたこと:
+
+- **上書きの行き先**: ラッパーの部分木に操作部品 (actions を持つノード) があれば、最初の操作部品に付ける。無ければ最初のノード。範囲つきスライダー (`[0] ── [100]`) で、行ラベルと id が最小値ラベルに付いてしまう問題への対処。
+- **id はウィジェット型のものだけ**を使う (`register_id` を通ったもの)。レイアウト型の id を付けると中の最初の部品へ乗り移ってしまうため。
+- **補足説明の自動導出は `strings_on_focus` だけ**。`vars_on_focus` は画像番号など文言でない値も書くので使わない。ヘルプ帯を読ませたいときは、帯のラベルに `"a11y": {"live": "polite"}` を付ける。
+- **不具合修正 (view)**: sink を最初の描画より前に付けると (オーバーレイのホストはこの順になる)、空のツリーを送ったあと、レイアウトで dirty にならず二度と送らなかった。レイアウトが走ったら dirty にする。
+- **不具合修正 (accesskit_host)**: AT がいない間もソースが送ってくる場合 (読み上げログのため)、差分が溜まり続けていた。非アクティブの間は最新のツリーだけを持ち、アクティブ化で全体を送る。
+
 ## 7. リスクと未決事項
 
 - **AccessKit の C API の追従**: 0.x 系で破壊的変更がある。prebuilt のバージョンは CMake で固定し、L3 に閉じ込める (L0〜L2 の公開 API は AccessKit 型を出さない)。

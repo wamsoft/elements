@@ -1840,6 +1840,7 @@ public:
 	element_ptr apply_flatten(const picojson::object& o, element_ptr el);
 	element_ptr apply_opacity(const picojson::object& o, element_ptr el);
 	element_ptr apply_visible(const picojson::object& o, element_ptr el);
+	element_ptr apply_a11y(const picojson::object& o, element_ptr el);
 
 	// build 中に集めたパーツ演出束縛 (xform_state を proxy と共有)。
 	std::vector<anim_binding> take_animations() { return std::move(_animations); }
@@ -2831,6 +2832,12 @@ public:
 		cnv.global_alpha(prev);
 	}
 
+	// 完全透明 (= 描かない) なら読み上げツリーからも消す
+	void accessible(ce::context const&, ce::a11y::info& out) const override
+	{
+		if (_alpha && *_alpha <= 0.0f) out.hidden = true;
+	}
+
 private:
 	std::shared_ptr<float> _alpha;
 };
@@ -2892,6 +2899,12 @@ public:
 	{
 		if (!shown()) return false;
 		return ce::proxy<Subject>::click(ctx, btn);
+	}
+
+	// 非表示の間は読み上げツリーからも消す
+	void accessible(ce::context const&, ce::a11y::info& out) const override
+	{
+		if (!shown()) out.hidden = true;
 	}
 
 	bool key(ce::context const& ctx, ce::key_info k) override
@@ -3005,6 +3018,9 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	auto type = string_or(o, "type");
 
 	element_ptr el = build_dispatch(o, type);
+	// 読み上げ用の上書き ("a11y" / "id" / 自動導出)。 いちばん内側に置き、
+	// visible_var などの外側の proxy が隠したときは一緒に消えるようにする。
+	if (el) el = apply_a11y(o, std::move(el));
 	// "animate" 指定があれば変換 proxy で包み、 演出束縛を登録する (Phase A)。
 	if (el) el = apply_animation(o, std::move(el));
 	// "focus_point" 指定があれば focus hot point 上書き proxy で包む。
@@ -3026,6 +3042,174 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	// 非表示のときは中を一切触らせないので、 最外周である必要がある。
 	if (el) el = apply_visible(o, std::move(el));
 	return el;
+}
+
+//---------------------------------------------------------------------------
+// "a11y" — 読み上げ (スクリーンリーダー) 用の上書き (docs/accessibility.md §4)
+//
+//   "a11y": "セーブ"                         名前だけ (label の短縮形)
+//   "a11y": { "label" | "label_id", "description" | "description_id",
+//             "role", "value_var", "live": "polite"|"assertive",
+//             "hidden": true }
+//
+// 何も書かなくても、 文字を持つ部品 (label / button 等) はその文字で読まれる。
+// ここで足すのは、 文字を持たない部品 (画像ボタン等) の名前と、 次の自動導出:
+//   - "id" (ウィジェット型のもの) → 再構築しても変わらないノード id
+//   - "strings_on_focus" (フォーカス時のヘルプ行) → 補足説明
+//   - "display_var" (整形済みの値 "75%") → 値
+// 名前・説明・値は読み上げツリーを作るたびに引き直すので、 言語切替や
+// 変数の変化にそのまま追従する。
+//---------------------------------------------------------------------------
+namespace {
+
+struct a11y_json_spec
+{
+	bool                         has_role = false;
+	ce::a11y::role               role = ce::a11y::role::none;
+	std::function<std::string()> name, description, value;
+	ce::a11y::live               live = ce::a11y::live::off;
+	std::string                  id;
+	bool                         hidden = false;
+};
+
+template <typename Subject>
+class a11y_json_element : public ce::proxy<Subject>
+{
+public:
+	a11y_json_element(Subject subject, std::shared_ptr<a11y_json_spec> spec)
+	 : ce::proxy<Subject>(std::move(subject)), _spec(std::move(spec))
+	{}
+
+	void accessible(ce::context const&, ce::a11y::info& out) const override
+	{
+		out.is_override = true;
+		out.hidden = _spec->hidden;
+		if (_spec->has_role) out.role = _spec->role;
+		if (_spec->name) out.name = _spec->name();
+		if (_spec->description) out.description = _spec->description();
+		if (_spec->value) out.value = _spec->value();
+		out.live = _spec->live;
+		out.id = _spec->id;
+	}
+
+private:
+	std::shared_ptr<a11y_json_spec> _spec;
+};
+
+bool parse_a11y_role(const std::string& s, ce::a11y::role& out)
+{
+	using ce::a11y::role;
+	static const std::pair<const char*, role> table[] = {
+		{"none", role::none}, {"group", role::generic}, {"dialog", role::dialog},
+		{"label", role::label}, {"text", role::label}, {"heading", role::heading},
+		{"image", role::image}, {"button", role::button},
+		{"toggle_button", role::toggle_button}, {"check_box", role::check_box},
+		{"checkbox", role::check_box}, {"radio_button", role::radio_button},
+		{"tab", role::tab}, {"slider", role::slider}, {"spin_button", role::spin_button},
+		{"menu_item", role::menu_item}, {"text_input", role::text_input},
+		{"progress", role::progress_indicator}, {"status", role::status},
+	};
+	for (auto& [name, r] : table)
+		if (s == name) { out = r; return true; }
+	return false;
+}
+
+// 文字列キー → その場で引く関数。 *_id は StringStore を引く (言語切替に追従)。
+std::function<std::string()> a11y_text_fn(const picojson::object& a,
+	const char* key, const char* id_key, std::shared_ptr<StringStore> strings)
+{
+	std::string id = string_or(a, id_key);
+	if (!id.empty())
+		return [strings, id]() { return strings->resolve(id); };
+	std::string text = string_or(a, key);
+	if (!text.empty())
+		return [text]() { return text; };
+	return {};
+}
+
+} // anonymous (a11y)
+
+element_ptr LayoutBuilder::apply_a11y(const picojson::object& o, element_ptr el)
+{
+	if (!el) return el;
+	auto spec = std::make_shared<a11y_json_spec>();
+	bool any = false;
+	auto strings = _strings;
+	auto vars = _vars;
+
+	// ウィジェット型の "id" だけを使う (register_id を通ったもの)。 レイアウト型
+	// (vtile 等) の id を付けると、 中の最初の部品へ乗り移ってしまう。
+	std::string id = string_or(o, "id");
+	if (!id.empty() && _id_to_element.count(id)) {
+		spec->id = id;
+		any = true;
+	}
+
+	if (auto* av = get_field(o, "a11y")) {
+		if (av->is<std::string>()) {
+			std::string text = av->get<std::string>();
+			spec->name = [text]() { return text; };
+			any = true;
+		} else if (av->is<picojson::object>()) {
+			const auto& a = av->get<picojson::object>();
+			spec->name = a11y_text_fn(a, "label", "label_id", strings);
+			spec->description = a11y_text_fn(a, "description", "description_id", strings);
+			std::string vv = string_or(a, "value_var");
+			if (!vv.empty())
+				spec->value = [vars, vv]() {
+					auto* v = vars->get(vv);
+					return v ? *v : std::string{};
+				};
+			std::string r = string_or(a, "role");
+			if (!r.empty()) {
+				if (parse_a11y_role(r, spec->role)) spec->has_role = true;
+				else em_logf("elements_modal: a11y: unknown role '%s'", r.c_str());
+			}
+			std::string lv = string_or(a, "live");
+			if (lv == "polite") spec->live = ce::a11y::live::polite;
+			else if (lv == "assertive") spec->live = ce::a11y::live::assertive;
+			if (auto* h = get_field(a, "hidden"); h && h->is<bool>())
+				spec->hidden = h->get<bool>();
+			any = true;
+		}
+	}
+
+	// 補足説明: フォーカス時のヘルプ行 ("strings_on_focus" の文言)。
+	if (!spec->description) {
+		if (auto* sf = get_field(o, "strings_on_focus"); sf && sf->is<picojson::object>()) {
+			std::vector<std::string> ids;
+			for (auto& kv : sf->get<picojson::object>())
+				if (kv.second.is<std::string>()) ids.push_back(kv.second.get<std::string>());
+			if (!ids.empty()) {
+				spec->description = [strings, ids]() {
+					std::string out;
+					for (auto& i : ids) {
+						auto t = strings->resolve(i);
+						if (t.empty()) continue;
+						if (!out.empty()) out += ' ';
+						out += t;
+					}
+					return out;
+				};
+				any = true;
+			}
+		}
+	}
+
+	// 値: 整形済みの表示文字列 ("display_var")。
+	if (!spec->value) {
+		std::string dv = string_or(o, "display_var");
+		if (!dv.empty()) {
+			spec->value = [vars, dv]() {
+				auto* v = vars->get(dv);
+				return v ? *v : std::string{};
+			};
+			any = true;
+		}
+	}
+
+	if (!any) return el;
+	return ce::share(a11y_json_element(ce::hold_any(std::move(el)), spec));
 }
 
 // "enabled_var" をボタン以外の要素にも効かせる。
@@ -8516,9 +8700,21 @@ element_ptr LayoutBuilder::build_labeled_row(const picojson::object& o)
 		});
 	}
 
+	// 読み上げ: 行ラベルを中の部品の名前にする (部品自身の "a11y" は内側に
+	// あるので、 そちらが勝つ)。 ラベルは別ノードとして読まない (同じ文言を
+	// 2 度読まないため)。
+	auto row_spec = std::make_shared<a11y_json_spec>();
+	{
+		std::weak_ptr<ce::text_reader> rd = lbl;
+		row_spec->name = [rd]() {
+			auto p = rd.lock();
+			return p ? std::string(p->get_text()) : std::string{};
+		};
+	}
+	auto named_child = ce::share(a11y_json_element(ce::hold_any(child), row_spec));
 	auto row = ce::htile(
-		ce::hsize(lw, ce::align_left(ce::hmargin({8, 8}, ce::hold(lbl)))),
-		ce::hold(child)
+		ce::hsize(lw, ce::align_left(ce::hmargin({8, 8}, ce::a11y_hidden(ce::hold(lbl))))),
+		ce::hold(named_child)
 	);
 	return ce::share(ce::focus_row(std::move(row), child));
 }
@@ -9378,6 +9574,14 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	result.languages = [strings = builder.strings()]() {
 		return strings->languages();
 	};
+
+	// 読み上げ: 画面の名前と、 画面に入ったときに読ませる文 (どちらも任意)。
+	//   "a11y": { "title" | "title_id", "announce" | "announce_id" }
+	if (auto* av = get_field(o, "a11y"); av && av->is<picojson::object>()) {
+		const auto& a = av->get<picojson::object>();
+		result.a11y_title = a11y_text_fn(a, "title", "title_id", builder.strings());
+		result.a11y_announce = a11y_text_fn(a, "announce", "announce_id", builder.strings());
+	}
 
 	// take 系は最後に。 内部 state を move する。
 	result.focus_poll = builder.take_focus_poll();

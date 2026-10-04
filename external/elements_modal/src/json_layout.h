@@ -220,6 +220,12 @@ struct parsed_layout
 	//! Phase A は全て画面表示時 (enter) 発火。
 	std::vector<anim_binding> animations;
 
+	//! 読み上げ: 画面の名前 / 画面に入ったときに読ませる文 (JSON top-level
+	//! "a11y": {"title"|"title_id", "announce"|"announce_id"})。 呼ぶたびに
+	//! StringStore を引くので言語切替に追従する。 未指定なら空。
+	std::function<std::string()> a11y_title;
+	std::function<std::string()> a11y_announce;
+
 	//! "input" ブロックの action バインド関連 ("bindings" / "se" /
 	//! "initial_focus")。 overlay_session が組込デフォルト + input_defaults.jsonc
 	//! とマージして view / セッションに適用する。

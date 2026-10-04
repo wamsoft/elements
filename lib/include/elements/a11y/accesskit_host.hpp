@@ -16,6 +16,10 @@ namespace cycfi::elements
    class view;
 }
 
+#if defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
+struct SDL_Window;
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 // OS accessibility through AccessKit (UIA / NSAccessibility / AT-SPI).
 //
@@ -58,6 +62,13 @@ namespace cycfi::elements::a11y
       // content view). Ignored on Unix, where the adapter needs no handle.
       // Works on a window that is already visible.
       static std::unique_ptr<accesskit_host> attach(void* native_window);
+
+#if defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
+      // An SDL3 window (any SDL window, not only Elements' own): takes the
+      // native handle from the window properties, forwards the macOS focus
+      // query, and watches SDL window events for focus and bounds (Unix).
+      static std::unique_ptr<accesskit_host> attach_sdl(SDL_Window* window);
+#endif
 
                               ~accesskit_host();
                               accesskit_host(accesskit_host const&) = delete;

@@ -537,6 +537,15 @@ namespace cycfi::elements::a11y
                }
                s.snap = full;
                s.has_snap = true;
+               if (!h->active)
+               {
+                  // Nobody listens yet (the source pushes anyway, e.g. for a
+                  // speech log): keep the latest tree only; activation sends
+                  // it in full.
+                  h->pending.clear();
+                  h->need_full = true;
+                  return;
+               }
                if (delta.full)
                   h->need_full = true;
                else if (!h->need_full)
@@ -718,6 +727,30 @@ namespace cycfi::elements::a11y
    }
 #endif
 
+#if defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
+   std::unique_ptr<accesskit_host> accesskit_host::attach_sdl(SDL_Window* win)
+   {
+      auto props = SDL_GetWindowProperties(win);
+      void* native = nullptr;
+# if defined(_WIN32)
+      native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+# elif defined(__APPLE__)
+      // SDL keeps the keyboard focus on its NSWindow subclass; forward the
+      // focused-element query to the content view the adapter lives on.
+      accesskit_macos_add_focus_forwarder_to_window_class("SDL3Window");
+      native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+# endif
+      (void)props;
+      auto h = attach(native);
+
+      auto watch = std::make_shared<sdl_watch>(sdl_watch{h.get(), SDL_GetWindowID(win), win});
+      SDL_AddEventWatch(&sdl_watch::on_event, watch.get());
+      watch->update_bounds();
+      h->_impl->cleanup = [watch]() { SDL_RemoveEventWatch(&sdl_watch::on_event, watch.get()); };
+      return h;
+   }
+#endif
+
    std::unique_ptr<accesskit_host> attach_accesskit(view& v)
    {
       std::unique_ptr<accesskit_host> h;
@@ -745,18 +778,7 @@ namespace cycfi::elements::a11y
       }
 #elif defined(ELEMENTS_HOST_UI_LIBRARY_SDL)
       SDL_Window* win = v.host();
-      auto props = SDL_GetWindowProperties(win);
-      void* native = nullptr;
-# if defined(_WIN32)
-      native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-# elif defined(__APPLE__)
-      // SDL keeps the keyboard focus on its NSWindow subclass; forward the
-      // focused-element query to the content view the adapter lives on.
-      accesskit_macos_add_focus_forwarder_to_window_class("SDL3Window");
-      native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
-# endif
-      (void)props;
-      h = accesskit_host::attach(native);
+      h = accesskit_host::attach_sdl(win);
       get_xf = [&v, win]()
       {
          int w = 0, hh = 0;
@@ -772,11 +794,6 @@ namespace cycfi::elements::a11y
       if (v.a11y_name().empty())
          if (auto* t = SDL_GetWindowTitle(win))
             h->set_window_label(t);
-
-      auto watch = std::make_shared<sdl_watch>(sdl_watch{h.get(), SDL_GetWindowID(win), win});
-      SDL_AddEventWatch(&sdl_watch::on_event, watch.get());
-      watch->update_bounds();
-      h->_impl->cleanup = [watch]() { SDL_RemoveEventWatch(&sdl_watch::on_event, watch.get()); };
 #endif
 
       if (!h)

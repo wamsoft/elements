@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <memory>
@@ -307,6 +308,12 @@ struct overlay_session::impl
 	                                     const std::string&)>)> set_var_watcher_fn;
 	var_ref_map var_refs;
 	std::function<std::vector<std::string>()> languages_fn;
+
+	// 読み上げ (docs/accessibility.md §4): 画面の名前 / 入場時の読み上げ文
+	// (JSON top-level "a11y") と、 ホストが差した sink (start 前でもよい)。
+	std::function<std::string()> a11y_title_fn;
+	std::function<std::string()> a11y_announce_fn;
+	std::shared_ptr<ce::a11y::sink> a11y_sink;
 
 	// 現在の表示言語。 JSON "lang" の初期値 or set_language() で更新。
 	std::string current_lang;
@@ -851,6 +858,18 @@ bool overlay_session::start(const std::string& json_utf8,
 		            static_cast<float>(view_height) });
 	_impl->view->content(ce::hold_any(_impl->layout_root));
 
+	// 読み上げ: 画面の名前と入場時の一言、 先に差されていた sink。
+	_impl->a11y_title_fn = std::move(layout.a11y_title);
+	_impl->a11y_announce_fn = std::move(layout.a11y_announce);
+	if (_impl->a11y_title_fn)
+		_impl->view->a11y_name(_impl->a11y_title_fn());
+	if (_impl->a11y_announce_fn) {
+		auto text = _impl->a11y_announce_fn();
+		if (!text.empty()) _impl->view->announce(std::move(text));
+	}
+	if (_impl->a11y_sink)
+		_impl->view->a11y_sink(_impl->a11y_sink);
+
 	// 部分再描画: 変数変化で見た目が変わった要素を、 その要素の bounds だけの
 	// ダーティとして view へ登録する (全面再描画を避ける)。 view::refresh は
 	// 遅延タスクなので、 同フレームの update() 内 poll() で矩形が確定する。
@@ -1122,6 +1141,73 @@ void overlay_session::set_language(const std::string& lang)
 		_impl->needs_render_ = true;
 		_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	}
+	// 読み上げ: 画面の名前も訳し直す (部品の名前は読むたびに引き直される)
+	if (_impl->view) {
+		if (_impl->a11y_title_fn)
+			_impl->view->a11y_name(_impl->a11y_title_fn());
+		_impl->view->a11y_invalidate();
+	}
+}
+
+//---------------------------------------------------------------------------
+// 読み上げ (docs/accessibility.md §4)
+//---------------------------------------------------------------------------
+void overlay_session::a11y_sink(std::shared_ptr<ce::a11y::sink> s)
+{
+	if (!_impl) return;
+	_impl->a11y_sink = s;
+	if (_impl->view) _impl->view->a11y_sink(std::move(s));
+}
+
+ce::a11y::snapshot overlay_session::a11y_snapshot()
+{
+	if (!_impl || !_impl->view) return {};
+	return _impl->view->a11y_snapshot();
+}
+
+void overlay_session::a11y_perform(ce::a11y::node_id id, ce::a11y::action act,
+                                   ce::a11y::action_arg arg)
+{
+	if (!_impl || !_impl->view) return;
+	_impl->view->a11y_perform(id, act, std::move(arg));
+	// 実行は次の update() の poll。 何が変わるか分からないので全面。
+	_impl->needs_render_ = true;
+	_impl->dirty_full_ = true;
+}
+
+bool overlay_session::a11y_perform(const std::string& node, const std::string& action,
+                                   const std::string& arg)
+{
+	if (!_impl || !_impl->view) return false;
+	auto act = ce::a11y::action_from_name(action);
+	if (!act) return false;
+	auto snap = _impl->view->a11y_snapshot();
+	for (auto const& n : snap.nodes) {
+		if (ce::a11y::id_string(n) != node) continue;
+		ce::a11y::action_arg a;
+		if (!arg.empty()) {
+			char* end = nullptr;
+			double num = std::strtod(arg.c_str(), &end);
+			if (end && *end == '\0') a.number = num;
+			a.text = arg;
+		}
+		a11y_perform(n.id, *act, std::move(a));
+		return true;
+	}
+	return false;
+}
+
+void overlay_session::announce(const std::string& text, bool assertive)
+{
+	if (!_impl || !_impl->view) return;
+	_impl->view->announce(text,
+		assertive ? ce::a11y::live::assertive : ce::a11y::live::polite);
+}
+
+std::string overlay_session::a11y_dump_json()
+{
+	if (!_impl || !_impl->view) return "{}";
+	return ce::a11y::to_json(_impl->view->a11y_snapshot());
 }
 
 const std::string& overlay_session::language() const

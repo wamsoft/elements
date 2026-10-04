@@ -140,10 +140,19 @@ namespace cycfi::elements::a11y::detail
 
          bool done() const { return _done; }
 
-         // Returns true when a node was created in the subtree (which is
-         // what consumes a pending override).
+         // A wrapper's override waiting for the node it belongs to. When the
+         // wrapped subtree has a control in it (a slider between its min and
+         // max labels, say), the override goes to that control, not to the
+         // first label that happens to come before it.
+         struct pending_override
+         {
+            info const* props = nullptr;
+            bool        controls_only = false;
+         };
+
+         // Returns true when the pending override was consumed.
          bool visit(context const& ctx, element& e, std::size_t parent,
-            std::uint64_t seed, info const* pending, rect const& clip)
+            std::uint64_t seed, pending_override pending, rect const& clip)
          {
             if (_done)
                return false;
@@ -160,18 +169,12 @@ namespace cycfi::elements::a11y::detail
 
             if (i.is_override)
             {
-               info merged = pending ? *pending : info{};
+               info merged = pending.props ? *pending.props : info{};
                apply(merged, i);
                merged.is_override = true;
-               bool made = false;
-               for_children(ctx, e,
-                  [&](context const& cctx, element& child, std::size_t ix)
-                  {
-                     made |= visit(cctx, child, parent, child_seed(seed, ix, child),
-                        made ? nullptr : &merged, here);
-                     return !_done;
-                  });
-               if (!made && !_done && (merged.role != role::none || !merged.name.empty()))
+               pending_override mine{&merged, has_control(ctx, e)};
+               bool consumed = visit_children(ctx, e, parent, seed, mine, here);
+               if (!consumed && !_done && (merged.role != role::none || !merged.name.empty()))
                {
                   // Nothing inside became a node (an image, a decoration):
                   // the wrapper stands for it.
@@ -180,42 +183,68 @@ namespace cycfi::elements::a11y::detail
                      self.role = role::image;
                   self.leaf = true;
                   make_node(ctx, e, self, parent, seed, here);
-                  made = true;
+                  consumed = true;
                }
-               return made;
+               return consumed;
             }
 
             if (i.role != role::none)
             {
-               if (pending)
-                  apply(i, *pending);
+               bool take = pending.props && (!pending.controls_only || i.actions != 0);
+               if (take)
+                  apply(i, *pending.props);
                if (i.leaf && i.name.empty() && i.name_from_content)
                   collect_names(ctx, e, i.name);
                // A label with no text is decoration.
                if (i.role == role::label && i.name.empty() && i.value.empty())
                   return false;
                auto ix = make_node(ctx, e, i, parent, seed, here);
+               bool consumed = take;
                if (!i.leaf && !_done)
-               {
-                  for_children(ctx, e,
-                     [&](context const& cctx, element& child, std::size_t cix)
-                     {
-                        visit(cctx, child, ix, child_seed(seed, cix, child), nullptr, here);
-                        return !_done;
-                     });
-               }
-               return true;
+                  consumed |= visit_children(ctx, e, ix, seed,
+                     take ? pending_override{} : pending, here);
+               return consumed;
             }
 
-            bool made = false;
+            return visit_children(ctx, e, parent, seed, pending, here);
+         }
+
+      private:
+
+         // Children of `e` under `parent`; the pending override goes to the
+         // first that takes it. Returns whether one did.
+         bool visit_children(context const& ctx, element& e, std::size_t parent,
+            std::uint64_t seed, pending_override pending, rect const& clip)
+         {
+            bool consumed = false;
             for_children(ctx, e,
                [&](context const& cctx, element& child, std::size_t ix)
                {
-                  made |= visit(cctx, child, parent, child_seed(seed, ix, child),
-                     made ? nullptr : pending, here);
+                  consumed |= visit(cctx, child, parent, child_seed(seed, ix, child),
+                     consumed ? pending_override{} : pending, clip);
                   return !_done;
                });
-            return made;
+            return consumed;
+         }
+
+         // Is there a control (a node with actions) in the subtree?
+         bool has_control(context const& ctx, element& e)
+         {
+            bool found = false;
+            for_children(ctx, e,
+               [&](context const& cctx, element& child, std::size_t)
+               {
+                  info ci;
+                  child.accessible(cctx, ci);
+                  if (ci.hidden)
+                     return true;
+                  if (ci.role != role::none && ci.actions != 0)
+                     found = true;
+                  else if (!(ci.role != role::none && ci.leaf))
+                     found = has_control(cctx, child);
+                  return !found;
+               });
+            return found;
          }
 
       private:
@@ -324,7 +353,7 @@ namespace cycfi::elements::a11y::detail
       std::size_t parent, snapshot& out, walk_input const& in)
    {
       walker w{out, in};
-      w.visit(root_ctx, root, parent, seed, nullptr, out.nodes[parent].bounds);
+      w.visit(root_ctx, root, parent, seed, {}, out.nodes[parent].bounds);
       return w.done();
    }
 }

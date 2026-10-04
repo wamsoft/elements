@@ -125,6 +125,9 @@
       {
          _current_bounds = subj_bounds;
          _main_element.layout(ctx);
+         // New bounds for everything (and, on the first draw, the first
+         // tree there is to show at all).
+         _a11y_dirty = true;
       }
 
       // draw the subject

@@ -9,8 +9,10 @@
 #include <elements/support/detail/scratch_context.hpp>
 #include <thorvg.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -245,6 +247,43 @@ int run()
    bool only_slider = sink->last.nodes.size() == 1 && sink->last.nodes[0].name == "Volume"
       && sink->last.nodes[0].value == "75%";
    check(only_slider, "a value change pushes just that node");
+
+   {
+      // A sink attached before the first draw (what an overlay host does):
+      // the tree must still arrive once the view has been laid out.
+      view v2(extent{200, 100});
+      v2.content(margin({10, 10, 10, 10}, button("Late")), box(colors::black));
+      auto early = std::make_shared<recording_sink>();
+      v2.a11y_sink(early);
+      settle(v2);
+      std::vector<std::uint32_t> b2(200 * 100);
+      canvas c2{b2.data(), 200, 100, 1.0f};
+      v2.draw(c2);
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));   // past the 33 ms throttle
+      settle(v2);
+      bool got = false;
+      for (auto const& n : early->last.nodes)
+         if (n.name == "Late")
+            got = true;
+      check(got, "sink attached before the first draw gets the tree after it");
+   }
+
+   {
+      // speech_lines: what a screen reader would say about a change
+      a11y::snapshot a = v.a11y_snapshot();
+      v.a11y_perform(n_vol->id, a11y::action::focus);
+      settle(v);
+      a11y::snapshot b = v.a11y_snapshot();
+      auto lines = a11y::speech_lines(&a, b);
+      check(lines.size() == 1 && lines[0] == "[focus] Volume, slider, 75%",
+         "speech_lines: focus moved to the slider");
+      a = b;
+      v.a11y_perform(n_vol->id, a11y::action::increment);
+      settle(v);
+      lines = a11y::speech_lines(&a, v.a11y_snapshot());
+      check(lines.size() == 1 && lines[0] == "[value] Volume, 80%",
+         "speech_lines: value change of the focused control");
+   }
 
    std::printf("[json]\n");
    auto json = a11y::to_json(v.a11y_snapshot());

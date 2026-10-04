@@ -217,6 +217,15 @@ namespace cycfi::elements::a11y
    // JSON dump (flat: "nodes" array, children by id). See docs/accessibility.md.
    std::string                to_json(snapshot const& s);
 
+   // What changed between two trees, as lines approximating what a screen
+   // reader would say — a speech log for checking without one:
+   //    [focus] Volume, slider, 75% — BGM level
+   //    [value] Volume, 80%
+   //    [state] Enable sound, check box, checked
+   //    [polite] Settings saved
+   // `prev` may be null (first tree: focus line only).
+   std::vector<std::string>   speech_lines(snapshot const* prev, snapshot const& next);
+
    node_id                    hash_id(std::string_view s);
 }
 
