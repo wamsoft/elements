@@ -87,17 +87,20 @@ namespace cycfi::elements
          info->limits_ = limits_;
 
       // Constrain current size to limits (matching Win32 behavior)
-      // limits are in logical (unscaled) coordinates.
-      // SDL GetWindowSize returns points. With HIGH_PIXEL_DENSITY,
-      // we need to convert limits to the same coordinate space.
+      // limits are in logical (unscaled) coordinates; SDL window coordinates
+      // are pixels on Windows / X11 but points on macOS / Wayland. Window
+      // coordinates per logical unit = display scale / pixel density.
       float scale = SDL_GetWindowDisplayScale(_window);
+      float density = SDL_GetWindowPixelDensity(_window);
       if (scale <= 0) scale = 1.0f;
+      if (density <= 0) density = 1.0f;
+      scale /= density;
 
       int cw, ch;
       SDL_GetWindowSize(_window, &cw, &ch);
 
       // Convert logical limits to points (SDL window coordinates)
-      // Points = logical * scale (for HIGH_PIXEL_DENSITY windows)
+      // Window coordinates = logical * scale
       int min_w = int(limits_.min.x * scale);
       int min_h = int(limits_.min.y * scale);
       int max_w = (limits_.max.x < full_extent) ? int(limits_.max.x * scale) : 100000;

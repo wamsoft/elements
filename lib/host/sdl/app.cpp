@@ -4,11 +4,13 @@
    Distributed under the MIT License (https://opensource.org/licenses/MIT)
 =============================================================================*/
 #include <elements/app.hpp>
+#include <elements/support/detail/scratch_context.hpp>
 #include <elements/support/font.hpp>
 #include <elements/support/resource_paths.hpp>
 #include <infra/filesystem.hpp>
 #include <SDL3/SDL.h>
 #include <thorvg.h>
+#include <vector>
 
 namespace cycfi::elements
 {
@@ -31,20 +33,33 @@ namespace cycfi::elements
       if (base_path)
       {
          fs::path exe_dir(base_path);
-         auto res_dir = exe_dir / "resources";
-         add_search_path(res_dir);
-
-         auto fonts_dir = res_dir / "fonts";
-         if (fs::exists(fonts_dir))
-            load_fonts_from_directory(fonts_dir.string());
-         if (fs::exists(res_dir))
+         std::vector<fs::path> res_dirs{exe_dir / "resources"};
+#if defined(__APPLE__)
+         // In an .app bundle SDL_GetBasePath() is Contents/Resources/, which
+         // is where the bundle keeps the resource files themselves.
+         res_dirs.push_back(exe_dir);
+#endif
+         for (auto const& res_dir : res_dirs)
+         {
+            if (!fs::exists(res_dir))
+               continue;
+            add_search_path(res_dir);
+            auto fonts_dir = res_dir / "fonts";
+            if (fs::exists(fonts_dir))
+               load_fonts_from_directory(fonts_dir.string());
             load_fonts_from_directory(res_dir.string());
+         }
       }
 #endif
    }
 
    app::~app()
    {
+      // Drop the measuring canvas first: while it lives, ThorVG's renderer
+      // refuses to terminate, Initializer::term() returns before unloading
+      // the font loaders, and their static destructors then touch the
+      // already destroyed font manager at exit (an abort on macOS).
+      detail::release_shared_scratch();
       tvg::Initializer::term();
       SDL_Quit();
    }

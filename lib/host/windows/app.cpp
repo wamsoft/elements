@@ -4,6 +4,7 @@
    Distributed under the MIT License (https://opensource.org/licenses/MIT)
 =============================================================================*/
 #include <elements/app.hpp>
+#include <elements/support/detail/scratch_context.hpp>
 #include <elements/support/font.hpp>
 #include <infra/filesystem.hpp>
 #include <windows.h>
@@ -35,6 +36,11 @@ namespace cycfi::elements
 
    app::~app()
    {
+      // Drop the measuring canvas first: while it lives, ThorVG's renderer
+      // refuses to terminate, Initializer::term() returns before unloading
+      // the font loaders, and their static destructors then touch the
+      // already destroyed font manager at exit (an abort on macOS).
+      detail::release_shared_scratch();
       tvg::Initializer::term();
    }
 

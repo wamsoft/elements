@@ -65,6 +65,19 @@ namespace cycfi::elements
 
       SDL_Cursor* current_cursor = nullptr;
 
+      // Window coordinates per logical unit. The display scale is pixels per
+      // logical unit; on platforms whose window coordinates are already
+      // points (macOS, Wayland) the pixel density takes that part out again:
+      // Windows 150% -> 1.5 / 1, macOS Retina -> 2 / 2, Wayland 2x -> 2 / 2.
+      float coord_scale(SDL_Window* w)
+      {
+         float d = SDL_GetWindowDisplayScale(w);
+         float p = SDL_GetWindowPixelDensity(w);
+         if (d <= 0) d = 1.0f;
+         if (p <= 0) p = 1.0f;
+         return d / p;
+      }
+
       void ensure_buffer(view_state* vs)
       {
          int w, h;
@@ -452,7 +465,7 @@ namespace cycfi::elements
             if (e.button.button == SDL_BUTTON_MIDDLE) btn = mouse_button::middle;
             if (e.button.button == SDL_BUTTON_RIGHT)  btn = mouse_button::right;
 
-            float s = vs->scale;
+            float s = coord_scale(vs->window);
             mouse_button mb{
                true, vs->click_count, btn,
                get_modifiers(SDL_GetModState()),
@@ -469,7 +482,7 @@ namespace cycfi::elements
             if (e.button.button == SDL_BUTTON_MIDDLE) btn = mouse_button::middle;
             if (e.button.button == SDL_BUTTON_RIGHT)  btn = mouse_button::right;
 
-            float s = vs->scale;
+            float s = coord_scale(vs->window);
             mouse_button mb{
                false, vs->click_count, btn,
                get_modifiers(SDL_GetModState()),
@@ -481,7 +494,7 @@ namespace cycfi::elements
 
          case SDL_EVENT_MOUSE_MOTION:
          {
-            float s = vs->scale;
+            float s = coord_scale(vs->window);
             point pos{e.motion.x / s, e.motion.y / s};
 
             if (vs->is_dragging)
@@ -506,7 +519,7 @@ namespace cycfi::elements
 
             float mx, my;
             SDL_GetMouseState(&mx, &my);
-            float s = vs->scale;
+            float s = coord_scale(vs->window);
             view->scroll(
                {dx * 20.0f, dy * 20.0f},
                {mx / s, my / s}
@@ -655,7 +668,7 @@ namespace cycfi::elements
       float x, y;
       SDL_GetMouseState(&x, &y);
       auto* vs = get_view_state_for(_view);
-      float s = vs ? vs->scale : 1.0f;
+      float s = vs ? coord_scale(vs->window) : 1.0f;
       return {x / s, y / s};
    }
 
@@ -669,7 +682,8 @@ namespace cycfi::elements
       }
       int w, h;
       SDL_GetWindowSize(vs->window, &w, &h);
-      return {float(w) / vs->scale, float(h) / vs->scale};
+      float s = coord_scale(vs->window);
+      return {float(w) / s, float(h) / s};
    }
 
    void base_view::size(extent size_)
@@ -680,8 +694,8 @@ namespace cycfi::elements
          _embedded_size = size_;
          return;
       }
-      SDL_SetWindowSize(vs->window,
-         int(size_.x * vs->scale), int(size_.y * vs->scale));
+      float s = coord_scale(vs->window);
+      SDL_SetWindowSize(vs->window, int(size_.x * s), int(size_.y * s));
       vs->needs_refresh = true;
    }
 
