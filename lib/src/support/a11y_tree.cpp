@@ -143,7 +143,7 @@ namespace cycfi::elements::a11y::detail
          // Returns true when a node was created in the subtree (which is
          // what consumes a pending override).
          bool visit(context const& ctx, element& e, std::size_t parent,
-            std::uint64_t seed, info const* pending)
+            std::uint64_t seed, info const* pending, rect const& clip)
          {
             if (_done)
                return false;
@@ -152,6 +152,11 @@ namespace cycfi::elements::a11y::detail
             e.accessible(ctx, i);
             if (i.hidden)
                return false;
+
+            // Device bounds, cut down by every ancestor's: an element may be
+            // laid out wider than what shows (the text inside a scrolling
+            // input box), and AT should get what is on screen.
+            rect here = clip_to(clip, device_bounds(ctx));
 
             if (i.is_override)
             {
@@ -163,7 +168,7 @@ namespace cycfi::elements::a11y::detail
                   [&](context const& cctx, element& child, std::size_t ix)
                   {
                      made |= visit(cctx, child, parent, child_seed(seed, ix, child),
-                        made ? nullptr : &merged);
+                        made ? nullptr : &merged, here);
                      return !_done;
                   });
                if (!made && !_done && (merged.role != role::none || !merged.name.empty()))
@@ -174,7 +179,7 @@ namespace cycfi::elements::a11y::detail
                   if (self.role == role::none)
                      self.role = role::image;
                   self.leaf = true;
-                  make_node(ctx, e, self, parent, seed);
+                  make_node(ctx, e, self, parent, seed, here);
                   made = true;
                }
                return made;
@@ -189,13 +194,13 @@ namespace cycfi::elements::a11y::detail
                // A label with no text is decoration.
                if (i.role == role::label && i.name.empty() && i.value.empty())
                   return false;
-               auto ix = make_node(ctx, e, i, parent, seed);
+               auto ix = make_node(ctx, e, i, parent, seed, here);
                if (!i.leaf && !_done)
                {
                   for_children(ctx, e,
                      [&](context const& cctx, element& child, std::size_t cix)
                      {
-                        visit(cctx, child, ix, child_seed(seed, cix, child), nullptr);
+                        visit(cctx, child, ix, child_seed(seed, cix, child), nullptr, here);
                         return !_done;
                      });
                }
@@ -207,7 +212,7 @@ namespace cycfi::elements::a11y::detail
                [&](context const& cctx, element& child, std::size_t ix)
                {
                   made |= visit(cctx, child, parent, child_seed(seed, ix, child),
-                     made ? nullptr : pending);
+                     made ? nullptr : pending, here);
                   return !_done;
                });
             return made;
@@ -236,8 +241,25 @@ namespace cycfi::elements::a11y::detail
                });
          }
 
+         static rect clip_to(rect const& clip, rect const& r)
+         {
+            auto x = intersection(clip, r);
+            if (x.right < x.left)
+               x.right = x.left;
+            if (x.bottom < x.top)
+               x.bottom = x.top;
+            return x;
+         }
+
+         static rect device_bounds(context const& ctx)
+         {
+            auto tl = ctx.canvas.user_to_device(ctx.bounds.top_left());
+            auto br = ctx.canvas.user_to_device(ctx.bounds.bottom_right());
+            return {tl.x, tl.y, br.x, br.y};
+         }
+
          std::size_t make_node(context const& ctx, element& e, info const& i,
-            std::size_t parent, std::uint64_t seed)
+            std::size_t parent, std::uint64_t seed, rect const& bounds)
          {
             node n;
             n.role = i.role;
@@ -257,9 +279,7 @@ namespace cycfi::elements::a11y::detail
             if (!ctx.enabled || !e.is_enabled())
                n.states |= state::disabled;
 
-            auto tl = ctx.canvas.user_to_device(ctx.bounds.top_left());
-            auto br = ctx.canvas.user_to_device(ctx.bounds.bottom_right());
-            n.bounds = {tl.x, tl.y, br.x, br.y};
+            n.bounds = bounds;
 
             if (!i.id.empty())
             {
@@ -304,7 +324,7 @@ namespace cycfi::elements::a11y::detail
       std::size_t parent, snapshot& out, walk_input const& in)
    {
       walker w{out, in};
-      w.visit(root_ctx, root, parent, seed, nullptr);
+      w.visit(root_ctx, root, parent, seed, nullptr, out.nodes[parent].bounds);
       return w.done();
    }
 }

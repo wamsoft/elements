@@ -34,9 +34,7 @@ add_subdirectory(multilingual_layout_test)
 add_subdirectory(key_driven)
 add_subdirectory(console_menu)
 
-# AccessKit の疎通確認 (docs/accessibility.md の Phase 0)。 prebuilt を
-# ダウンロードするので既定では建てない。
-option(ELEMENTS_A11Y_SPIKE "Build the AccessKit spike example (Windows)" OFF)
-if (ELEMENTS_A11Y_SPIKE AND WIN32)
-   add_subdirectory(a11y_spike)
+# OS のスクリーンリーダー対応 (AccessKit)。 -DELEMENTS_A11Y_ACCESSKIT=ON のときだけ。
+if (TARGET elements_a11y_accesskit)
+   add_subdirectory(accessibility)
 endif()

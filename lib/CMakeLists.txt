@@ -371,3 +371,42 @@ if (WIN32)
 endif()
 
 add_library(cycfi::elements ALIAS elements)
+
+###############################################################################
+# OS accessibility through AccessKit (docs/accessibility.md §3).
+#
+# Off by default: it downloads the accesskit-c prebuilt (a Rust library; no
+# Rust toolchain is needed for the prebuilt). A parent project may provide
+# the `accesskit` target itself instead.
+###############################################################################
+option(ELEMENTS_A11Y_ACCESSKIT "Build elements_a11y_accesskit (OS screen reader support)" OFF)
+if (ELEMENTS_A11Y_ACCESSKIT)
+   if (NOT TARGET accesskit)
+      include(FetchContent)
+      # The source CMakeLists in the archive builds with cargo; only unpack
+      # it (SOURCE_SUBDIR names nothing) and use its prebuilt config.
+      FetchContent_Declare(
+         accesskit_c
+         URL      https://github.com/AccessKit/accesskit-c/releases/download/0.23.1/accesskit-c-0.23.1.zip
+         URL_HASH SHA256=35b7ca8a6f1e038b5da35e1e9e5a0adaed9bfcf21e1496d29598fbbadcc7043f
+         SOURCE_SUBDIR _no_cmake_
+         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      )
+      FetchContent_MakeAvailable(accesskit_c)
+      if (APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+         set(CMAKE_OSX_ARCHITECTURES ${CMAKE_HOST_SYSTEM_PROCESSOR})
+      endif()
+      include(${accesskit_c_SOURCE_DIR}/accesskit-config.cmake)
+   endif()
+
+   add_library(elements_a11y_accesskit STATIC
+      src/a11y/accesskit_host.cpp
+      include/elements/a11y/accesskit_host.hpp
+   )
+   target_link_libraries(elements_a11y_accesskit PUBLIC elements PRIVATE accesskit)
+   if (WIN32)
+      target_link_libraries(elements_a11y_accesskit PRIVATE comctl32)
+   endif()
+   target_compile_definitions(elements_a11y_accesskit PUBLIC ELEMENTS_A11Y_ACCESSKIT=1)
+   add_library(cycfi::elements_a11y_accesskit ALIAS elements_a11y_accesskit)
+endif()

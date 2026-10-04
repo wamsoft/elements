@@ -478,6 +478,37 @@ ID がない要素は `#<hex>` で表す。併せて、「SR がおおよそ何�
 - ノード ID は「構造上の位置 + 型」の hash (§2.3 の規則 2) で、`typeid().hash_code()` を使うため**プロセスをまたいでは安定しない**。プロセスをまたいで安定させたいときは `a11y_id` を付ける。
 - ヘッドレスで view を使うときは、ホストがやっている初期化と後始末 (`tvg::Initializer::init` → … → `detail::release_shared_scratch()` → `tvg::Initializer::term`) を自分で行う必要がある (テスト参照)。
 
+### 6.2 Phase 2 の実装 (2026-10-04)
+
+| 場所 | 中身 |
+|---|---|
+| `a11y/accesskit_host.hpp` / `src/a11y/accesskit_host.cpp` | `accesskit_host` (L3)。1 ウィンドウに 1 つ。`add_source(slot, perform, snapshot_now, get_transform)` が slot 用の `a11y::sink` を返す。slot は z 順に root の下へ並べ、modal の slot より下は出さない。AT 用 id は上位 8bit に slot を入れる |
+| `attach_accesskit(view&)` | ネイティブの Elements ウィンドウ用。Win32 ホストは `ElementsView` 子 HWND、SDL ホストは `SDL_GetWindowProperties` から HWND / NSWindow を取る。Unix は SDL のイベントを `SDL_AddEventWatch` で見て、フォーカスと外接矩形を通知する |
+| CMake | `-DELEMENTS_A11Y_ACCESSKIT=ON` で `elements_a11y_accesskit` を作る (accesskit-c 0.23.1 の prebuilt を FetchContent。親が `accesskit` ターゲットを持っていればそれを使う) |
+| `examples/accessibility` | 実際のウィジェットで組んだ設定画面。`attach_accesskit(view_)` の 1 行で OS に出る |
+
+動作確認:
+
+- **Windows (SDL3 / Win32 ホスト)**: UI Automation の外部クライアントで確認した。全ノードのロール・名前・値・矩形、初期フォーカス、Invoke / Toggle / SelectionItem.Select / RangeValue.SetValue / Value.SetValue / SetFocus、live region (`announce`) が正しく動く。
+- **Linux (GNOME、X11)**: AT-SPI (Python Atspi) で確認した。ツリー、座標 (倍率 1.5 のウィンドウ座標)、click / grab_focus、checked 状態が正しい。elements が固定している SDL 3.4.0 は Wayland で落ちるので、X11 で確認している。
+- **macOS 15 (Intel、Retina)**: System Events (AX) で確認した。ロール (Heading / AXButton / AXCheckBox / AXRadioButton / AXSlider / AXIncrementor / AXTextField / AXStaticText)、値、AXPress / AXIncrement / 値の設定、live region が正しい。
+- ヘッドレステストは 3 OS とも通る (Linux はリポジトリのルートを絶対パスで渡すこと。相対パスだとフォントが読めない)。
+
+Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a11y とは独立):
+
+- **終了時の abort (macOS)**: `app::~app()` が測定用の scratch canvas を残したまま `tvg::Initializer::term()` を呼んでいた。canvas が生きていると term がフォントローダを畳まずに戻り、atexit で破棄済みのフォントマネージャの mutex を触って abort していた。elements_modal の `shutdown()` と同じく、先に `detail::release_shared_scratch()` を呼ぶようにした (Win32 / SDL ホストとも)。
+
+- **論理座標の換算**: ウィンドウ座標を表示倍率で割って論理座標にしていたが、macOS / Wayland のウィンドウ座標はすでにポイントなので、二重に割って半分になっていた。「ウィンドウ座標 / 論理単位 = 表示倍率 ÷ ピクセル密度」に直した (Windows 150% → 1.5、macOS Retina → 1、X11 → 表示倍率、Wayland → 1)。描画の倍率 (canvas) は従来どおり表示倍率。
+- **macOS のフォント**: .app では `SDL_GetBasePath()` が `Contents/Resources/` を返すため、その下の `resources/` を探してフォントが 1 つも読めていなかった。`Contents/Resources/` 自体も探すようにした。
+
+実装で決めたこと:
+
+- **座標**: Windows / macOS には物理ピクセル (`SDL_GetWindowSizeInPixels` / クライアント矩形 ÷ view 幅)、Unix にはウィンドウ座標 (`SDL_GetWindowSize` ÷ view 幅) で渡す。倍率が変わったら全体を送り直す。
+- **ノードの矩形は、祖先の矩形との共通部分にする** (walker)。横スクロールする入力欄の中身などは、表示より広く (幅 200 万 px など) レイアウトされているため。
+- **AccessKit の LABEL / STATUS は、テキストを value に入れる** (UIA の Name になる)。HEADING は label に入れる。入力欄は空でも value を付ける (UIA は value がないと Value パターンを出さない)。
+- **起動は遅延**: AT が接続するまで view はツリーを作らない (`sink::is_active`)。Windows / macOS は接続時 (UI スレッド) に `snapshot_now` でその場のツリーを返す。Unix は別スレッドなので、それまでに受け取ったツリーを返し、あとから view が全体を送る。
+- **CRT**: prebuilt の static lib は static CRT (`/MT`) の構成にそのままリンクでき、警告も出ない (実行ファイルは vcruntime に依存しない)。
+
 ## 7. リスクと未決事項
 
 - **AccessKit の C API の追従**: 0.x 系で破壊的変更がある。prebuilt のバージョンは CMake で固定し、L3 に閉じ込める (L0〜L2 の公開 API は AccessKit 型を出さない)。
