@@ -105,6 +105,7 @@ namespace cycfi::elements::a11y
       std::map<int, slot_data> slots;
       std::string             window_label;
       std::atomic<bool>       active{false};
+      std::function<void(bool)> active_changed;
       bool                    need_full = true;
       std::vector<std::pair<int, node>> pending;
       std::unordered_map<accesskit_node_id, std::pair<int, node_id>> reverse;
@@ -306,7 +307,9 @@ namespace cycfi::elements::a11y
       static accesskit_tree_update* on_activate(void* ud)
       {
          auto* self = static_cast<impl*>(ud);
-         self->active = true;
+         const bool was = self->active.exchange(true);
+         if (!was && self->active_changed)
+            self->active_changed(true);
 
          // On Windows and macOS this runs on the UI thread: ask the sources
          // for their tree right now, so the first answer is complete.
@@ -350,7 +353,9 @@ namespace cycfi::elements::a11y
       static void on_deactivate(void* ud)
       {
          auto* self = static_cast<impl*>(ud);
-         self->active = false;
+         const bool was = self->active.exchange(false);
+         if (was && self->active_changed)
+            self->active_changed(false);
       }
 
       static void on_action(accesskit_action_request* req, void* ud)
@@ -727,6 +732,11 @@ namespace cycfi::elements::a11y
    bool accesskit_host::is_active() const
    {
       return _impl->active;
+   }
+
+   void accesskit_host::on_active_changed(std::function<void(bool)> f)
+   {
+      _impl->active_changed = std::move(f);
    }
 
    float accesskit_host::native_scale() const

@@ -1,6 +1,6 @@
 # アクセシビリティ (スクリーンリーダー) 対応 設計
 
-状態: **設計案 (未実装)**。対象 OS は Windows / macOS / Linux のデスクトップ 3 系統。
+状態: **Phase 0〜3 実装済み (2026-10-04)**。対象 OS は Windows / macOS / Linux のデスクトップ 3 系統で、3 OS の実機 (ナレーター / VoiceOver / Orca と UIA / AX / AT-SPI の外部クライアント) で確認した。第 1 部・第 2 部の本文は設計時の記録で、実装との違いは §6.1〜§6.4 に書いてある。未着手: テキスト編集の読み上げ (Phase 5)、elements_console のパネル UI の A11y タブ。
 
 この文書は 2 部構成になっている。
 
@@ -537,6 +537,14 @@ Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a1
 | `a11y::role` | `list` / `list_item` を追加 (選択肢の並び)。AccessKit では List / ListItem、`list_item` の `selected` は選択状態として出る |
 | `a11y::role_from_name()` / `state_from_name()` | スクリプトやレイアウトファイルに書いた名前 (`"check_box"` / `"checkbox"` / `"group"` / `"text"` / `"progress"` … と `role_name()` の綴り) からロールと状態ビットを引く。elements_modal の JSON `"a11y".role` もこれを使う |
 | `accesskit_host` (Windows) | AT の操作を UIA のスレッドで受けたら、ウィンドウへメッセージで投げ直し、ウィンドウのスレッドで `perform` を呼ぶ。メッセージループで待機しているホスト (描画が止まっている静止画面) もこれで起きる。それまでは次の描画まで操作が届かなかった |
+| `accesskit_host::native_scale()` | アダプタが 1 ポイントあたり何ピクセルと数えるか (macOS は NSWindow の `backingScaleFactor`、他は 1)。高解像度でない SDL ウィンドウを Retina で使うホストは描画面がポイント単位なので、transform にこれを掛ける。掛けないと座標と大きさが半分になる |
+| `accesskit_host::on_active_changed(f)` | `is_active()` が変わったときの通知。Windows / macOS は AT の要求の中 (ウィンドウのスレッド) で呼ばれるので、ここではキューに積むだけにする。Unix は別スレッド。静止画面でも «AT が繋がった» をすぐ拾える |
+| `attach_sdl` (macOS) | SDL のウィンドウクラスへのフォーカス転送パッチはプロセスで一度だけ当てる (付け直すと panic していた) |
+
+埋め込みホスト側の注意 (krkrz で分かったこと):
+
+- **live region は先に置いておく**。文字の入った live region が後から現れても、スクリーンリーダー (ナレーター) は読まないことがある。空の status を最初から置き、announce では中身だけ変える。
+- **`is_active()` は «AT が初めて問い合わせた» 時点で真になる**。Windows ではウィンドウが前面になったとき。起動直後に一度だけ見て決めると外れるので、`on_active_changed` で追う。
 
 ## 7. リスクと未決事項
 

@@ -104,6 +104,11 @@ namespace cycfi::elements::a11y
       // True once an assistive technology has asked for the tree.
       bool                    is_active() const;
 
+      // Called when is_active() changes: on the window's thread on Windows and
+      // macOS (inside the AT's request, so keep it short: queue work, don't
+      // run scripts), from another thread on Unix. Set it right after attach.
+      void                    on_active_changed(std::function<void(bool)> f);
+
       // What the adapter counts as one physical pixel per window point: the
       // NSWindow's backingScaleFactor on macOS, 1 elsewhere. A host that
       // renders at one pixel per point (an SDL window without high pixel
