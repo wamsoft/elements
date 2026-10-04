@@ -78,11 +78,14 @@ namespace cycfi::elements::a11y
          return ACCESSKIT_ROLE_GROUP;
       }
 
-      // Static text: AccessKit takes its text as the value. A heading is
-      // named like any other node.
+      // Static text: AccessKit takes a label's text as the value (only the
+      // Label role names itself from its value). Everything else, a status
+      // (live region) and a heading included, is named. A live region must
+      // be: the Windows adapter raises LiveRegionChanged only when the name
+      // changes, so a status carrying its text as the value is never read.
       bool is_text_role(role r)
       {
-         return r == role::label || r == role::status;
+         return r == role::label;
       }
    }
 
