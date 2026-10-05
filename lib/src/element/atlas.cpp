@@ -209,6 +209,15 @@ namespace cycfi::elements
          _index = i;
    }
 
+   void atlas_sprite::frames(std::vector<rect> f)
+   {
+      if (f.empty())
+         return;
+      _frames = std::move(f);
+      if (_index >= _frames.size())
+         _index = 0;
+   }
+
    //---------------------------------------------------------------------
    // animated_sprite
    //---------------------------------------------------------------------

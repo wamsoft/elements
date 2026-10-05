@@ -147,6 +147,10 @@ namespace cycfi::elements
       std::size_t             index() const override      { return _index; }
       void                    index(std::size_t i) override;
 
+      // frame 一式の差し替え (押すたびに絵の組が変わるボタン等)。 空の配列は
+      // 受けない (無視する)。 現 index が新しい frame 数を超えたら 0 に戻す。
+      void                    frames(std::vector<rect> f);
+
    private:
 
       point                   max_extent() const;

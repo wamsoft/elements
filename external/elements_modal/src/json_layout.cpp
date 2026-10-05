@@ -2412,6 +2412,7 @@ private:
 	element_ptr build_animated_sprite(const picojson::object& o);
 	element_ptr build_atlas_button(const picojson::object& o);
 	element_ptr build_atlas_toggle(const picojson::object& o);
+	element_ptr build_atlas_cycle_button(const picojson::object& o);
 	element_ptr build_atlas_choice(const picojson::object& o);
 	element_ptr build_atlas_slider(const picojson::object& o);
 	element_ptr build_atlas_scrollbar(const picojson::object& o);
@@ -3356,6 +3357,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 	if (type == "atlas_button")   return build_atlas_button(o);
 	if (type == "atlas_toggle")   return build_atlas_toggle(o);
 	if (type == "atlas_check")    return build_atlas_toggle(o);  // alias
+	if (type == "atlas_cycle_button") return build_atlas_cycle_button(o);
 	if (type == "atlas_choice")   return build_atlas_choice(o);
 	if (type == "atlas_radio")    return build_atlas_choice(o);  // alias
 	if (type == "atlas_slider")   return build_atlas_slider(o);
@@ -6609,13 +6611,32 @@ namespace
 }
 
 //---------------------------------------------------------------------------
+// "focus_hilite": true のボタン。 hilite の絵を «フォーカスを持っている間»
+// 出す (マウスオーバーで出るのではなく)。 マウスオーバーは hover_focus で
+// フォーカス移動を経由するので、 マウスでもキーボード / パッドでも «いま
+// フォーカスのある 1 個だけが hilite» という同じ見え方になる (マウスを
+// 載せたまま矢印キーで動かしても、 hilite が 2 個に増えない)。
+// sprite_button_styler は this->hilite() で絵を選ぶので、 それを隠す
+// (非 virtual。 styler の基底をこのクラスにして名前で拾わせる)。
+//---------------------------------------------------------------------------
+namespace {
+class focus_hilite_button : public ce::basic_button
+{
+public:
+	using ce::basic_button::hilite;
+	bool hilite() const { return focused(); }
+};
+} // anonymous
+
+//---------------------------------------------------------------------------
 // atlas_button — アトラスから状態別 sub-rect を sprite_button_styler に乗せて
 // momentary button にする。
 //   { "type": "atlas_button", "atlas": "ui", "id": "ok",
 //     "frames": { "normal": [...], "hilite": [...], "pressed": [...],
 //                 "pressed_hilite": [...], "disabled": [...] },
 //     "text": "OK", "text_size": 24,            // 任意: ラベル overlay
-//     "text_color": [r,g,b,a], "text_offset": [dx, dy] }
+//     "text_color": [r,g,b,a], "text_offset": [dx, dy],
+//     "focus_hilite": true }    // 任意: hilite をフォーカス中に出す (上記)
 // frames は object (名前→rect、 normal/hilite/pressed/pressed_hilite/disabled
 // の順で値があるところまで使う) または array (順番固定 0..N) を受ける。
 // 通常は 4 つ以上揃える (= sprite_button_styler の既定計算が 4 frame を仮定)。
@@ -6646,15 +6667,19 @@ element_ptr LayoutBuilder::build_atlas_button(const picojson::object& o)
 
 	auto sprite = ce::atlas_sprite(pm, std::move(frames),
 	                               truthy_field(get_field(o, "native_frames")));
-	auto btn = ce::momentary_button(std::move(sprite));
-	if (!id.empty()) {
-		auto cb_id = id;
-		auto user_cb = _cb;
-		btn.on_click = [cb_id, user_cb](bool) {
-			if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
-		};
-	}
-	auto shared = ce::share(std::move(btn));
+	auto make = [&](auto&& btn) -> element_ptr {
+		if (!id.empty()) {
+			auto cb_id = id;
+			auto user_cb = _cb;
+			btn.on_click = [cb_id, user_cb](bool) {
+				if (user_cb) user_cb(cb_id, /*is_button_click=*/true, value_t{});
+			};
+		}
+		return ce::share(std::move(btn));
+	};
+	auto shared = truthy_field(get_field(o, "focus_hilite"))
+		? make(ce::momentary_button<focus_hilite_button>(std::move(sprite)))
+		: make(ce::momentary_button(std::move(sprite)));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
@@ -6739,6 +6764,126 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 	wire_toggle_var(_vars, shared, value_var);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
+	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
+}
+
+//---------------------------------------------------------------------------
+// atlas_cycle_button — 押すたびに状態が 0 → 1 → … → N-1 → 0 と巡回する
+// アトラスボタン (リピート «なし / 1 曲 / 全曲» のような 3 値以上のトグル)。
+// 状態ごとに絵の組 (atlas_button と同じ normal / hilite / pressed /
+// pressed_hilite / disabled) を持ち、 いまの状態の組で描く。 押した瞬間の
+// 見た目は押す前の状態の pressed で、 離して状態が進むと次の組の絵になる。
+//   { "type": "atlas_cycle_button", "atlas": "ui", "id": "repeat",
+//     "frames": [
+//       { "normal": [...], "hilite": [...], "pressed": [...] },   // 状態 0
+//       { "normal": [...], "hilite": [...], "pressed": [...] },   // 状態 1
+//       { "normal": [...], "hilite": [...], "pressed": [...] } ], // 状態 2
+//     "initial": 0,             // 初期状態 (= "value")
+//     "index_var": "repeat",    // 任意: 状態を "0".."N-1" で変数と連動 (双方向)
+//     "focus_hilite": true }    // 任意: atlas_button と同じ
+// 状態が進むと value_t{int64 新しい状態} を発火する。 index_var は picker の
+// index_var と同じ規約 (変数に値があれば初期状態をそれで上書き、 外部からの
+// 書き換えは on_click を起こさずに絵だけ追従。 範囲外の値は無視)。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_atlas_cycle_button(const picojson::object& o)
+{
+	auto atlas_name = string_or(o, "atlas");
+	if (atlas_name.empty()) {
+		em_logf("elements_modal: atlas_cycle_button without 'atlas'");
+		return nullptr;
+	}
+	auto pm = lookup_atlas(atlas_name);
+	if (!pm) return nullptr;
+
+	static const char* btn_states[] = {
+		"normal", "hilite", "pressed", "pressed_hilite", "disabled", nullptr
+	};
+	std::vector<std::vector<ce::rect>> sets;
+	if (auto* fa = get_array(o, "frames")) {
+		for (const auto& fv : *fa) {
+			std::vector<ce::rect> fr;
+			if (!parse_frames(&fv, btn_states, fr)) {
+				sets.clear();
+				break;
+			}
+			sets.push_back(std::move(fr));
+		}
+	}
+	if (sets.empty()) {
+		em_logf("elements_modal: atlas_cycle_button \"%s\" needs 'frames' as an "
+		        "array of {normal, hilite, pressed, ...} (one per state)",
+		        atlas_name.c_str());
+		return nullptr;
+	}
+
+	std::string id = string_or(o, "id");
+	std::size_t initial = 0;
+	{
+		auto* iv = get_field(o, "initial");
+		if (!iv) iv = get_field(o, "value");
+		if (iv && iv->is<double>()) {
+			double d = iv->get<double>();
+			if (d >= 0 && static_cast<std::size_t>(d) < sets.size())
+				initial = static_cast<std::size_t>(d);
+		}
+	}
+	std::string index_var = resolve_index_var(o, sets.size(), initial);
+
+	// 状態ごとの絵の組と、 いまの状態。 クリックと変数購読の両方から触る。
+	struct cycle_state {
+		std::vector<std::vector<ce::rect>> sets;
+		std::size_t index = 0;
+	};
+	auto st = std::make_shared<cycle_state>();
+	st->sets = std::move(sets);
+	st->index = initial;
+
+	auto sprite = ce::atlas_sprite(pm, st->sets[initial],
+	                               truthy_field(get_field(o, "native_frames")));
+	auto make = [&](auto&& btn) -> element_ptr {
+		auto sp = ce::share(std::move(btn));
+		ce::atlas_sprite* spr = &sp->actual_subject();
+		std::weak_ptr<ce::element> w = sp;
+		auto cb_id = id;
+		auto user_cb = _cb;
+		auto vars = _vars;
+		sp->on_click = [st, spr, w, cb_id, user_cb, vars, index_var](bool) {
+			if (w.expired()) return;
+			st->index = (st->index + 1) % st->sets.size();
+			spr->frames(st->sets[st->index]);
+			if (!index_var.empty())
+				vars->set(index_var, std::to_string(st->index));
+			if (user_cb && !cb_id.empty()) {
+				user_cb(cb_id, /*is_button_click=*/false,
+				        value_t{static_cast<std::int64_t>(st->index)});
+			}
+		};
+		if (!index_var.empty()) {
+			_vars->subscribe(index_var, [st, spr, w](const std::string& v) {
+				if (w.expired()) return;
+				long idx = 0;
+				try { idx = std::stol(v); } catch (...) { return; }
+				if (idx < 0 || static_cast<std::size_t>(idx) >= st->sets.size())
+					return;
+				if (static_cast<std::size_t>(idx) == st->index) return;
+				st->index = static_cast<std::size_t>(idx);
+				spr->frames(st->sets[st->index]);
+			}, sp);
+		}
+		return sp;
+	};
+	auto shared = truthy_field(get_field(o, "focus_hilite"))
+		? make(ce::momentary_button<focus_hilite_button>(std::move(sprite)))
+		: make(ce::momentary_button(std::move(sprite)));
+	register_id(o, shared);
+	note_initial_focus(o, shared);
+	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
+		note_focusable(id, bp);
+	}
+	wire_button_enabled_var(shared, o);
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
+	if (!index_var.empty()) _vars->set(index_var, std::to_string(st->index));
 	return maybe_wrap_text_overlay(o, shared, _default_locale, _strings.get());
 }
 
