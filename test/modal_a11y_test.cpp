@@ -53,6 +53,8 @@ namespace
                { "type": "slider", "id": "vol", "display_var": "vol_text" } },
             { "type": "label", "text": "Secret", "visible_var": "show_secret" },
             { "type": "label", "text": "Ready", "a11y": { "role": "status", "live": "polite" } },
+            { "type": "label", "text": "Ornament", "a11y": { "hidden": true } },
+            { "type": "label", "text": "Divider", "a11y": { "hidden": 1 } },
             { "type": "vtile", "id": "group1", "children": [
                { "type": "label", "text": "Inner text" } ] }
          ] } }
@@ -124,6 +126,9 @@ namespace
       auto* status = by_name(s, "Ready");
       check(status && status->role == a11y::role::status && status->live == a11y::live::polite,
          "\"a11y\" role and live");
+      check(!by_name(s, "Ornament"), "\"a11y\".hidden removes the element");
+      // Hosts without a bool type (TJS dictionaries turned into JSON) send true as 1.
+      check(!by_name(s, "Divider"), "\"a11y\".hidden accepts a number");
       check(!by_id(s, "group1"), "layout-type id is not applied");
       check(by_name(s, "Inner text") != nullptr, "children of a layout are still read");
       bool announced = false;

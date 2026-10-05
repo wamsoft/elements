@@ -3156,8 +3156,7 @@ element_ptr LayoutBuilder::apply_a11y(const picojson::object& o, element_ptr el)
 			std::string lv = string_or(a, "live");
 			if (lv == "polite") spec->live = ce::a11y::live::polite;
 			else if (lv == "assertive") spec->live = ce::a11y::live::assertive;
-			if (auto* h = get_field(a, "hidden"); h && h->is<bool>())
-				spec->hidden = h->get<bool>();
+			bool_field(get_field(a, "hidden"), spec->hidden);
 			any = true;
 		}
 	}
