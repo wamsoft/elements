@@ -5112,11 +5112,38 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
 			try { d = std::stod(v); } catch (...) { return; }
 			if (d < 0.0) d = 0.0;
 			if (d > 1.0) d = 1.0;
-			if (auto s = ws.lock()) s->value(d);
+			// "snap" 付きのスライダは目盛へ丸めた値を表示側にも使う。
+			if (auto s = ws.lock()) { s->value(d); d = s->value(); }
 			if (auto g = wg.lock()) g->set_value(d);
 			if (!display_var.empty()) vars->set(display_var, disp.format(d));
 		});
 	}
+}
+
+// スライダ 1 目盛の大きさ (0..1)。 "step" 明示 → "display" の 1 目盛
+// (step / (max - min)) → 5% の順で決める。 増減矢印の 1 クリック分と
+// "snap" の刻みの両方がこれを使う。
+double resolve_slider_step(const picojson::object& o, const value_display& disp)
+{
+	double stp = number_or(o, "step", 0.0);
+	if (stp <= 0.0) {
+		const double span = disp.max - disp.min;
+		if (disp.step > 0.0 && span != 0.0)
+			stp = disp.step / (span < 0.0 ? -span : span);
+	}
+	if (stp <= 0.0) stp = 0.05;
+	return stp;
+}
+
+// "snap": true — 値を 1 目盛 (resolve_slider_step) 単位に制約する。 つまみは
+// ドラッグ中も目盛から目盛へ飛び、 キー / ホイール / パッドも 1 目盛ずつ動く。
+// 変数連動 (wire_slider_vars) より前に呼ぶこと (初期値も目盛へ丸めるため)。
+void apply_slider_snap(const picojson::object& o,
+                       const std::shared_ptr<ce::basic_slider_base>& sb,
+                       const value_display& disp)
+{
+	if (!sb || !truthy_field(get_field(o, "snap"))) return;
+	sb->snap_step(resolve_slider_step(o, disp));
 }
 } // anonymous
 
@@ -5172,8 +5199,10 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
+		const auto disp = parse_value_display(o);
+		apply_slider_snap(o, sb, disp);
 		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
-		                 string_or(o, "display_var"), parse_value_display(o));
+		                 string_or(o, "display_var"), disp);
 	}
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
@@ -5228,6 +5257,7 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 			disp.min = static_cast<double>(min_v);
 			disp.max = static_cast<double>(max_v);
 		}
+		apply_slider_snap(o, sb, disp);
 		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
 		                 string_or(o, "display_var"), disp);
 	}
@@ -7209,6 +7239,13 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 // ("repeat" / "repeat_delay_ms" / "repeat_rate_ms")、 キー / パッドで値が
 // 動いたときは向きの矢印が "flash_ms" だけ光る。
 //
+// 目盛への制約: "snap": true を書くと値が 1 目盛 (上の "step" と同じ決め方)
+// の倍数にしか止まらなくなる。 つまみはドラッグ中も目盛から目盛へ飛び、
+// キー / ホイール (1 ノッチ) / パッド / 読み上げの増減も 1 目盛ずつ動く。
+//   { "type": "atlas_slider", ..., "snap": true,
+//     "display": { "min": 50, "max": 0, "step": 5, "suffix": "ms" } }  // 10 段階
+// "snap" は slider / slider_with_range でも同じ意味で使える。
+//
 // **矢印の名前は左右上下ではなく «減 (dec) / 増 (inc)»**。 縦 ("vertical": true)
 // のスライダは value 0 が下なので dec の絵は下端に置くことになるが、 それは
 // "dec_at" が決めるのでキー名は変わらない。 幾何名 ("left"/"right"、 縦なら
@@ -7436,14 +7473,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	                        "atlas_slider", scfg)) {
 		// 1 クリックの増減量 (0..1)。 "step" 明示 → "display" の 1 目盛 →
 		// 5% (arrow_button の make_step_arrows_for_slider と同じ既定)。
-		double stp = number_or(o, "step", 0.0);
-		if (stp <= 0.0) {
-			const auto disp = parse_value_display(o);
-			const double span = disp.max - disp.min;
-			if (disp.step > 0.0 && span != 0.0)
-				stp = disp.step / (span < 0.0 ? -span : span);
-		}
-		if (stp <= 0.0) stp = 0.05;
+		const double stp = resolve_slider_step(o, parse_value_display(o));
 
 		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(shared)));
 		std::weak_ptr<ce::basic_slider_base> w = sb;
@@ -7453,6 +7483,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 			double v = t->value() + dir * stp;
 			if (v < 0.0) v = 0.0;
 			if (v > 1.0) v = 1.0;
+			v = t->snap(v);
 			// edit_value = ユーザ操作の経路。 on_change から value_var /
 			// display_var / onAction まで既存の配線がそのまま流れる。
 			if (v != t->value()) t->edit_value(v);
@@ -7468,11 +7499,14 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_initial_focus(o, part);
 	if (sb) {
 		note_focusable(id, sb);
+		const auto disp = parse_value_display(o);
+		apply_slider_snap(o, sb, disp);
+		if (gauge) gauge->set_value(sb->value());   // 目盛へ丸めた初期値で描く
 		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
 		// 書く。 数値表示は label の "text_var": display_var で受ける。
 		wire_slider_vars(_vars, sb, value_var, string_or(o, "display_var"),
-		                 parse_value_display(o), gauge);
+		                 disp, gauge);
 	}
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);

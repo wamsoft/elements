@@ -52,6 +52,13 @@ namespace cycfi::elements
       void                    edit(view& view_, double val) override;
       virtual void            edit_value(double val) { value(val);}
 
+      // Step snapping: the value only rests on multiples of `step` (0..1),
+      // plus both ends. 0 (the default) keeps the value continuous. Mouse,
+      // keys, wheel, pad and accessibility all move in whole steps.
+      void                    snap_step(double step);
+      double                  snap_step() const { return _snap_step; }
+      double                  snap(double val) const;
+
       // Exposed as 0..100 (percent), stepping like the arrow keys.
       void                    accessible(context const& ctx, a11y::info& out) const override;
       bool                    a11y_perform(context const& ctx, a11y::action act, a11y::action_arg const& arg) override;
@@ -77,9 +84,18 @@ namespace cycfi::elements
 
    private:
 
+      // Sub-step motion (wheel / pad) accumulated until it adds up to a
+      // whole step. Returns true if the value changed.
+      bool                    nudge(double& pending, double amount, double per_step);
+      // The value `steps` whole steps away from the current one.
+      double                  step_value(double steps) const;
+
       double                  _value;
       mutable bool            _is_horiz = false;
       bool                    _has_focus = false;
+      double                  _snap_step = 0.0;
+      double                  _wheel_pending = 0.0;
+      double                  _pad_pending = 0.0;
    };
 
    inline void slider_base::edit(view& view_, double val)

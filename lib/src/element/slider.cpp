@@ -82,9 +82,17 @@ namespace cycfi::elements
    bool slider_base::scroll(context const& ctx, point dir, point p)
    {
       auto sdir = scroll_direction();
-      double new_value = value() + (_is_horiz ? dir.x*sdir.x + !dir.x*dir.y*-sdir.y : dir.y * -sdir.y) * 0.005;
-      clamp(new_value, 0.0, 1.0);
+      double amount = _is_horiz ? dir.x*sdir.x + !dir.x*dir.y*-sdir.y : dir.y * -sdir.y;
       track_scroll(ctx, dir, p);
+      if (_snap_step > 0.0)
+      {
+         // One wheel notch (1.0) moves one step.
+         if (nudge(_wheel_pending, amount, 1.0))
+            ctx.view.refresh(ctx);
+         return true;
+      }
+      double new_value = value() + amount * 0.005;
+      clamp(new_value, 0.0, 1.0);
       edit_value(new_value);
       ctx.view.refresh(ctx);
       return true;
@@ -180,7 +188,7 @@ namespace cycfi::elements
    {
       if (track_info.current != track_info.previous)
       {
-         double new_value = value_from_point(ctx, track_info.current);
+         double new_value = snap(value_from_point(ctx, track_info.current));
          if (_value != new_value)
          {
             edit_value(new_value);
@@ -191,7 +199,7 @@ namespace cycfi::elements
 
    void slider_base::end_tracking(context const& ctx, tracker_info& track_info)
    {
-      double new_value = value_from_point(ctx, track_info.current);
+      double new_value = snap(value_from_point(ctx, track_info.current));
       if (_value != new_value)
       {
          edit_value(new_value);
@@ -229,6 +237,12 @@ namespace cycfi::elements
       double delta = double(v)
                    * ctx.view.stick_value_speed()
                    * ctx.view.frame_dt();
+      if (_snap_step > 0.0)
+      {
+         if (nudge(_pad_pending, delta, _snap_step))
+            ctx.view.refresh(ctx);
+         return true;
+      }
       double new_val = value() + delta;
       clamp(new_val, 0.0, 1.0);
       if (new_val != value())
@@ -319,7 +333,22 @@ namespace cycfi::elements
             return false;
       }
 
-      double new_value = absolute ? abs_val : (value() + delta);
+      double new_value = 0.0;
+      if (absolute)
+      {
+         new_value = abs_val;
+      }
+      else if (_snap_step > 0.0)
+      {
+         // Arrows move one step; page keys about 10%, at least one step.
+         double n = (std::abs(delta) > 0.05)
+            ? std::max(1.0, std::round(0.1 / _snap_step)) : 1.0;
+         new_value = step_value(delta > 0.0 ? n : -n);
+      }
+      else
+      {
+         new_value = value() + delta;
+      }
       new_value = clamp(new_value, 0.0, 1.0);
       if (new_value != value())
       {
@@ -331,7 +360,59 @@ namespace cycfi::elements
 
    void slider_base::value(double val)
    {
-      _value = clamp(val, 0.0, 1.0);
+      _value = snap(clamp(val, 0.0, 1.0));
+   }
+
+   void slider_base::snap_step(double step)
+   {
+      _snap_step = (step > 0.0 && step <= 1.0) ? step : 0.0;
+      _wheel_pending = _pad_pending = 0.0;
+      _value = snap(_value);
+   }
+
+   double slider_base::snap(double val) const
+   {
+      if (_snap_step <= 0.0)
+         return val;
+
+      // Evenly dividing steps (0.1, 0.01, ...) are rounded on the step
+      // count so that repeated stepping does not drift.
+      double inv = 1.0 / _snap_step;
+      double n = std::round(inv);
+      if (n >= 1.0 && std::abs(inv - n) < 1e-6)
+         return std::clamp(std::round(val * n) / n, 0.0, 1.0);
+
+      // Otherwise the top end (1.0) is a stop of its own.
+      double s = std::round(val / _snap_step) * _snap_step;
+      if (s > 1.0 || (1.0 - val) < std::abs(s - val))
+         s = 1.0;
+      return std::clamp(s, 0.0, 1.0);
+   }
+
+   double slider_base::step_value(double steps) const
+   {
+      double pos = value() / _snap_step;
+      double idx = (steps > 0.0)
+         ? std::floor(pos + 1e-6) + steps
+         : std::ceil(pos - 1e-6) + steps;
+      return snap(std::clamp(idx * _snap_step, 0.0, 1.0));
+   }
+
+   bool slider_base::nudge(double& pending, double amount, double per_step)
+   {
+      // Reversing drops what was accumulated in the other direction.
+      if ((pending > 0.0 && amount < 0.0) || (pending < 0.0 && amount > 0.0))
+         pending = 0.0;
+      pending += amount;
+      double steps = std::trunc(pending / per_step);
+      if (steps == 0.0)
+         return false;
+      pending -= steps * per_step;
+      double new_value = step_value(steps);
+      if (new_value == value())
+         return false;
+      edit_value(new_value);
+      return true;
    }
 
    double slider_base::value() const
@@ -343,7 +424,7 @@ namespace cycfi::elements
    {
       slider_base::edit_value(val);
       if (on_change)
-         on_change(val);
+         on_change(value());
    }
 
    void basic_selector_base::select(size_t val)
@@ -364,7 +445,7 @@ namespace cycfi::elements
       out.num_value = pct;
       out.num_min = 0.0;
       out.num_max = 100.0;
-      out.num_step = 5.0;
+      out.num_step = (_snap_step > 0.0) ? _snap_step * 100.0 : 5.0;
       out.value = std::to_string(int(std::lround(pct))) + "%";
       out.actions = bit(action::focus) | bit(action::increment)
          | bit(action::decrement) | bit(action::set_value);
@@ -376,8 +457,9 @@ namespace cycfi::elements
       double v = value();
       switch (act)
       {
-         case action::increment: v += 0.05; break;    // same step as the arrow keys
-         case action::decrement: v -= 0.05; break;
+         // same step as the arrow keys
+         case action::increment: v = (_snap_step > 0.0) ? step_value(+1) : v + 0.05; break;
+         case action::decrement: v = (_snap_step > 0.0) ? step_value(-1) : v - 0.05; break;
          case action::set_value:
             if (!arg.number)
                return true;
