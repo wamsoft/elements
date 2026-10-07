@@ -20,6 +20,7 @@
 #include "elements_modal/animator.h"
 #include "json_layout.h"
 #include "em_platform.h"
+#include "virtual_scroller.h"
 
 #include <elements.hpp>
 #include <elements/support/resource_loader.hpp>
@@ -268,6 +269,9 @@ struct overlay_session::impl
 
 	// focus_link 装飾の要素 (フォーカス変化時にまとめてダーティにする)。
 	std::vector<std::weak_ptr<ce::element>> focus_link_elements;
+
+	// 毎フレーム状態を進める要素 (スムーズスクロールの一覧など)。
+	std::vector<std::weak_ptr<frame_ticker>> frame_tickers;
 
 	// JSON top-level "transitions" を読んだ辞書。 ランナが get_result の
 	// action と照合して次画面を決める。
@@ -833,6 +837,7 @@ bool overlay_session::start(const std::string& json_utf8,
 	_impl->focus_poll = std::move(layout.focus_poll);
 	_impl->hover_poll = std::move(layout.hover_poll);
 	_impl->focus_link_elements = std::move(layout.focus_link_elements);
+	_impl->frame_tickers = std::move(layout.frame_tickers);
 	_impl->hovered_id_slot = layout.hovered_id_slot;
 	_impl->focus_anim = layout.focus_anim;
 	_impl->transitions = std::move(layout.transitions);
@@ -1545,6 +1550,14 @@ bool overlay_session::update()
 			_impl->exiting_ = false;
 			_impl->finished_ = true;
 		}
+	}
+
+	// 毎フレーム状態を進める要素 (スクロールの送り / 慣性)。 見た目が変わった
+	// 要素は tick の中で view.refresh(要素) を出すので、 下の回収で拾われる。
+	if (!_impl->frame_tickers.empty()) {
+		const std::uint64_t now = em_now_ms();
+		for (auto& w : _impl->frame_tickers)
+			if (auto t = w.lock()) t->tick(*_impl->view, now);
 	}
 
 	// 遅延タスク (focus 適用 / キャレット点滅タイマ / shortcut 発火 等) を実行

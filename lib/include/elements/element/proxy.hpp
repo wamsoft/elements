@@ -57,6 +57,12 @@ namespace cycfi::elements
       virtual void            prepare_subject(context& ctx, point& p);
       virtual void            restore_subject(context& ctx);
 
+      // True for proxies that move their subject (prepare_subject offsets
+      // its bounds) and clip it to their own bounds, such as a scrolling
+      // list. 2D focus navigation then measures the subject's focusables
+      // with the offset applied and skips the ones clipped away.
+      virtual bool            clips_subject() const { return false; }
+
       using element::refresh;
 
    // Control

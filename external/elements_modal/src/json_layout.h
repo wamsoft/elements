@@ -23,6 +23,8 @@
 
 namespace elements_modal {
 
+class frame_ticker;   // virtual_scroller.h
+
 // transition_spec / app_manifest は modal.h (public) に定義済。
 
 // event_callback は modal.h で公開定義済 (std::string id ベース)。
@@ -142,6 +144,10 @@ struct parsed_layout
 	//! 別の要素なので、 部分再描画のホストはフォーカス変化時にこれらの矩形も
 	//! ダーティにする必要がある (でないと装飾の切替が消え残る)。
 	std::vector<std::weak_ptr<cycfi::elements::element>> focus_link_elements;
+
+	//! 毎フレーム状態を進める要素 (スムーズスクロールの一覧など)。 ホストは
+	//! 毎フレーム tick(view, 現在 ms) を呼ぶ (overlay_session::update が行う)。
+	std::vector<std::weak_ptr<frame_ticker>> frame_tickers;
 
 	//! focus トリガ演出を有効にするか (JSON "input":{"focus_anim":false} で無効化)。
 	//! hover_focus 併用時に focus と hover の多重発火を避けるための逃がし。 既定 true。

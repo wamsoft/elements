@@ -8,6 +8,7 @@
 #include "json_layout.h"
 
 #include "em_platform.h"
+#include "virtual_scroller.h"
 #include <picojson/picojson.h>
 #include <elements/element/anchored_text.hpp>   // C6: 絶対 baseline アンカー描画
 #include <elements/element/atlas_stepper.hpp>   // 増減矢印 (dec / inc) を足すプロキシ
@@ -1576,7 +1577,19 @@ public:
 	               std::function<void(const std::string&)> cb,
 	               element_ptr owner = {})
 	{
-		_subs[name].push_back(sub{ std::move(cb), owner });
+		_subs[name].push_back(sub{ std::move(cb), owner, _sub_seq++ });
+	}
+	// 購読の登録位置 (reown_since 用)。
+	std::size_t sub_mark() const { return _sub_seq; }
+	// mark 以降に登録された購読の owner を差し替える。 スクロール一覧の中の
+	// 要素は一覧ごと描き直すので、 一覧を owner にすると、 変数の変化で
+	// 再描画範囲を求めるときに要素ツリーを奥まで探さずに済む (セルが多い
+	// 一覧では変数 1 つごとに 1ms 以上かかり、 行の境目で引っかかる)。
+	void reown_since(std::size_t mark, const element_ptr& owner)
+	{
+		for (auto& kv : _subs)
+			for (auto& sb : kv.second)
+				if (sb.seq >= mark) sb.owner = owner;
 	}
 	// 変数変化で見た目が変わった要素の通知先 (ホストが仕掛ける)。
 	void set_change_notifier(std::function<void(ce::element&)> f)
@@ -1602,9 +1615,11 @@ private:
 	{
 		std::function<void(const std::string&)> cb;
 		std::weak_ptr<ce::element> owner;
+		std::size_t seq = 0;
 	};
 	std::map<std::string, std::string> _values;
 	std::map<std::string, std::vector<sub>> _subs;
+	std::size_t _sub_seq = 0;
 	std::function<void(ce::element&)> _on_changed;
 	std::function<void(const std::string&, const std::string&)> _watcher;
 	std::function<void(const std::string&, const std::string&)> _mirror;
@@ -1975,6 +1990,9 @@ public:
 	// take 系メソッドなので 1 回しか呼ばない。
 	std::vector<std::weak_ptr<ce::element>> take_focus_link_elements()
 	{ return std::move(_focus_link_elements); }
+	// 毎フレーム進める要素 (parsed_layout::frame_tickers 用)。
+	std::vector<std::weak_ptr<frame_ticker>> take_frame_tickers()
+	{ return std::move(_frame_tickers); }
 
 	// build 中に install する「view& を引数に取る」追加 set-up クロージャ。
 	// 主に bind_shortcut を仕掛けたい widget (tab_view など) が使う。
@@ -2103,6 +2121,7 @@ private:
 	std::vector<std::function<void(const std::string&)>> _focus_links;
 	// focus_link 装飾の要素本体 (部分再描画ホストのダーティ登録用)。
 	std::vector<std::weak_ptr<ce::element>> _focus_link_elements;
+	std::vector<std::weak_ptr<frame_ticker>> _frame_tickers;
 	// focus_link 装飾のホバー配線 (target id は deferred で element へ解決)
 	std::vector<std::pair<std::shared_ptr<hover_link_wire>,
 	                      std::vector<std::string>>> _hover_link_wires;
@@ -2359,6 +2378,7 @@ private:
 	element_ptr build_vspacer     (const picojson::object& o);
 	element_ptr build_spacer      (const picojson::object& o);
 	element_ptr build_scroller    (const picojson::object& o);
+	element_ptr build_virtual_scroller(const picojson::object& o);
 	element_ptr build_text_box    (const picojson::object& o);
 	element_ptr build_text_area   (const picojson::object& o);
 	element_ptr build_checkbox    (const picojson::object& o);
@@ -3317,6 +3337,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 	if (type == "vspacer")       return build_vspacer(o);
 	if (type == "spacer")        return build_spacer(o);
 	if (type == "scroller")      return build_scroller(o);
+	if (type == "virtual_scroller") return build_virtual_scroller(o);
 	if (type == "text_box")      return build_text_box(o);
 	if (type == "text_area")     return build_text_area(o);
 	if (type == "checkbox")      return build_checkbox(o);
@@ -4366,6 +4387,171 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 }
 
 //---------------------------------------------------------------------------
+// virtual_scroller — 行を使い回すスムーズスクロール一覧
+//   { "type": "virtual_scroller", "id": "list", "at": [x, y, w, h],   // 窓
+//     "row_height": 192, "rows_visible": 4,
+//     "row_count_var": "rows",      // 総行数 (ホスト → 一覧)
+//     "top_row_var": "top",         // 先頭行 (一覧 → ホスト。 onAction(id, 行) も出る)
+//     "row_ready_var": "top_ready", // ホストが中身を差し替え終えた行 (任意)
+//     "pos_var": "v_scroll",        // 位置 0..1 (双方向。 スクロールバーと共有)
+//     "pos_reverse": true,          // 1.0 = 上端 (縦 atlas_slider に直結するため)
+//     "bar_active_var": "bar_on",   // スクロールバーを掴んでいる間 "1"
+//     "reveal_row_var": "reveal",   // その行が見える位置へ送る (ホスト → 一覧)
+//     "scroll_ms": 200, "rest_snap": "row", "wheel_rows": 1,
+//     "drag_scroll": false, "drag_threshold": 2,
+//     "flick": { "sample_ms": 100, "dist_coef": 2, "time_coef": 50 },
+//     "stop_tap": "click",
+//     "child": { "type": "canvas", ... } }   // 表示行数 + 1 行ぶんのセル
+//
+// 子 canvas の座標は窓の左上が原点。 セルは «行 0 の先頭行のセル» から
+// row_height 間隔で並べ、 最後の 1 行は窓の下にはみ出す予備の行にする。
+// 先頭行が変わるとホストへ onAction(id, 行) が届くので、 ホストはセルの
+// 中身をその行基準で差し替える。 その後 "row_ready_var" に同じ行を書くと、
+// 差し替えが届くまでの間 (アニメーション中はイベントが 1 フレーム遅れて
+// 届く) にセルが中身とずれて見えることがない。
+//
+// 詳細は virtual_scroller.h。
+//---------------------------------------------------------------------------
+element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
+{
+	const std::size_t sub_mark = _vars->sub_mark();
+	auto child = build_child(o);
+	if (!child) return nullptr;
+
+	const std::string id             = string_or(o, "id");
+	const std::string row_count_var  = string_or(o, "row_count_var");
+	const std::string top_row_var    = string_or(o, "top_row_var");
+	const std::string row_ready_var  = string_or(o, "row_ready_var");
+	const std::string pos_var        = string_or(o, "pos_var");
+	const std::string bar_active_var = string_or(o, "bar_active_var");
+	const std::string reveal_row_var = string_or(o, "reveal_row_var");
+	const bool pos_reverse = truthy_field(get_field(o, "pos_reverse"));
+
+	virtual_scroller::config cfg;
+	cfg.row_height     = static_cast<float>(number_or(o, "row_height", 0.0));
+	cfg.rows_visible   = static_cast<int>(number_or(o, "rows_visible", 1.0));
+	cfg.scroll_ms      = static_cast<int>(number_or(o, "scroll_ms", 200.0));
+	cfg.rest_snap_row  = string_or(o, "rest_snap", "row") != "none";
+	cfg.wheel_rows     = number_or(o, "wheel_rows", 1.0);
+	cfg.drag_scroll    = truthy_field(get_field(o, "drag_scroll"));
+	cfg.drag_threshold = static_cast<float>(number_or(o, "drag_threshold", 2.0));
+	if (auto* fv = get_field(o, "flick"); fv && fv->is<picojson::object>()) {
+		const auto& f = fv->get<picojson::object>();
+		cfg.flick_sample_ms = number_or(f, "sample_ms", cfg.flick_sample_ms);
+		cfg.flick_dist_coef = number_or(f, "dist_coef", cfg.flick_dist_coef);
+		cfg.flick_time_coef = number_or(f, "time_coef", cfg.flick_time_coef);
+	}
+	cfg.stop_tap_click = string_or(o, "stop_tap", "click") != "stop";
+	cfg.ack_rows       = !row_ready_var.empty();
+	if (cfg.row_height <= 0.0f)
+		em_logf("elements_modal: virtual_scroller \"%s\" needs 'row_height'", id.c_str());
+
+	auto vs = std::make_shared<virtual_scroller>(child, cfg);
+	auto vars = _vars;
+	auto to_int = [](const std::string& v, int& out) {
+		try { out = std::stoi(v); return true; } catch (...) { return false; }
+	};
+
+	// --- 初期値 (通知の口を繋ぐ前に入れる。 画面を作っている途中でホストへ
+	//     先頭行や位置を知らせない) ---
+	// 総行数 → 位置 → 中身が表示している行、 の順 (範囲が無いと位置を受け取れない)。
+	if (!row_count_var.empty()) {
+		int n = 0;
+		if (auto* v = vars->get(row_count_var); v && to_int(*v, n)) vs->row_count(n);
+	}
+	auto pos_of = [pos_reverse](const std::string& v, double& r) {
+		try { r = std::clamp(std::stod(v), 0.0, 1.0); } catch (...) { return false; }
+		if (pos_reverse) r = 1.0 - r;
+		return true;
+	};
+	if (!pos_var.empty()) {
+		double r = 0.0;
+		if (auto* v = vars->get(pos_var); v && pos_of(*v, r)) vs->ratio(r);
+		else vars->set_initial(pos_var, fmt_slider_raw(pos_reverse ? 1.0 : 0.0));
+	}
+	{
+		// ホストが書いていなければ、 初期の先頭行で中身を作ってあるとみなす
+		int n = vs->top_row();
+		if (!row_ready_var.empty()) {
+			if (auto* v = vars->get(row_ready_var)) to_int(*v, n);
+		}
+		vs->row_ready(n);
+	}
+	if (!top_row_var.empty() && !vars->get(top_row_var))
+		vars->set_initial(top_row_var, std::to_string(vs->top_row()));
+
+	// --- 一覧 → ホスト ---
+	// 先頭行: 変数と onAction(id, 行) の両方で知らせる。
+	{
+		auto cb = _cb;
+		vs->on_top_row = [vars, top_row_var, cb, id](int row) {
+			if (!top_row_var.empty()) vars->set(top_row_var, std::to_string(row));
+			if (cb && !id.empty())
+				cb(id, /*is_button_click=*/false, value_t{static_cast<std::int64_t>(row)});
+		};
+	}
+	// 位置 (双方向)。 自分が書いた値を読み戻して位置を丸め直さないよう、
+	// 書いている間は受信を無視する。
+	auto publishing = std::make_shared<bool>(false);
+	if (!pos_var.empty()) {
+		vs->on_ratio = [vars, pos_var, pos_reverse, publishing](double r) {
+			*publishing = true;
+			vars->set(pos_var, fmt_slider_raw(pos_reverse ? 1.0 - r : r));
+			*publishing = false;
+		};
+	}
+
+	// --- ホスト → 一覧 ---
+	std::weak_ptr<virtual_scroller> w = vs;
+	if (!row_count_var.empty()) {
+		vars->subscribe(row_count_var, [w, to_int](const std::string& v) {
+			int n = 0;
+			if (auto p = w.lock(); p && to_int(v, n)) p->row_count(n);
+		}, vs);
+	}
+	if (!row_ready_var.empty()) {
+		vars->subscribe(row_ready_var, [w, to_int](const std::string& v) {
+			int n = 0;
+			if (auto p = w.lock(); p && to_int(v, n)) p->row_ready(n);
+		}, vs);
+	}
+	if (!pos_var.empty()) {
+		// スクロールバーを掴んでいる間はつまみに 1px 単位で付いていく。
+		// 掴んでいないときの変化 (スクロールバーのホイール / 増減 / 溝
+		// クリック、 ホストからの指定) は行へ揃えて送る。 掴んでいるかが
+		// 分からない (bar_active_var 無し) ときは従来どおり即時。
+		const bool knows_bar = !bar_active_var.empty();
+		vars->subscribe(pos_var, [w, publishing, pos_of, knows_bar](const std::string& v) {
+			if (*publishing) return;
+			double r = 0.0;
+			auto p = w.lock();
+			if (!p || !pos_of(v, r)) return;
+			if (knows_bar && !p->bar_held()) p->ratio_to(r);
+			else p->ratio(r);
+		}, vs);
+	}
+	if (!bar_active_var.empty()) {
+		vars->subscribe(bar_active_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->bar_active(v == "1");
+		}, vs);
+	}
+	if (!reveal_row_var.empty()) {
+		vars->subscribe(reveal_row_var, [w, to_int](const std::string& v) {
+			int n = 0;
+			if (auto p = w.lock(); p && to_int(v, n)) p->reveal_row(n);
+		}, vs);
+	}
+
+	// 中のセルの変数変化は一覧ごと描き直す (再描画範囲を一覧の矩形にまとめる)
+	vars->reown_since(sub_mark, vs);
+
+	_frame_tickers.push_back(vs);
+	element_ptr out = vs;
+	register_id(o, out);
+	return out;
+}
+
+//---------------------------------------------------------------------------
 // text_box — 複数行・自動折返しの静的テキスト (cycfi static_text_box)。
 //   { "type": "text_box", "text": "...", "text_file": "credits.txt",
 //     "size": 13, "color": [r,g,b,a], "mono": 1, "font": "Noto Sans JP",
@@ -5077,10 +5263,16 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 // 既存の on_change (ホストへの event callback / fill ゲージ更新) は保持して
 // 変数更新の後に呼ぶ。 VariableStore::set は同値なら no-op なので、
 // var → widget → var のエコーは 1 往復で自然に止まる。
+//
+// owner = 値が変わったときに描き直す要素 (矢印やゲージを含む外側)。 変数の
+// 変化で再描画範囲を求めるのに使う。 ホストの set_var 以外 (スクロール一覧の
+// 毎フレームの送りなど) から value_var が書かれたときも、 これが無いと
+// スライダの矩形がダーティにならず、 つまみが古い位置のまま残る。
 //---------------------------------------------------------------------------
 namespace {
 void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
                       const std::shared_ptr<ce::basic_slider_base>& sb,
+                      const element_ptr& owner,
                       const std::string& value_var,
                       const std::string& display_var,
                       const value_display& disp,
@@ -5116,7 +5308,7 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
 			if (auto s = ws.lock()) { s->value(d); d = s->value(); }
 			if (auto g = wg.lock()) g->set_value(d);
 			if (!display_var.empty()) vars->set(display_var, disp.format(d));
-		});
+		}, owner);
 	}
 }
 
@@ -5201,7 +5393,7 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 		note_focusable(id, sb);
 		const auto disp = parse_value_display(o);
 		apply_slider_snap(o, sb, disp);
-		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
+		wire_slider_vars(_vars, sb, shared, string_or(o, "value_var"),
 		                 string_or(o, "display_var"), disp);
 	}
 	note_vars_on_focus(o, id);
@@ -5258,7 +5450,7 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 			disp.max = static_cast<double>(max_v);
 		}
 		apply_slider_snap(o, sb, disp);
-		wire_slider_vars(_vars, sb, string_or(o, "value_var"),
+		wire_slider_vars(_vars, sb, rs.focus, string_or(o, "value_var"),
 		                 string_or(o, "display_var"), disp);
 	}
 	note_vars_on_focus(o, id);
@@ -7246,6 +7438,9 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 //     "display": { "min": 50, "max": 0, "step": 5, "suffix": "ms" } }  // 10 段階
 // "snap" は slider / slider_with_range でも同じ意味で使える。
 //
+// "active_var": つまみ / 溝を押している間 "1"、 離したら "0" をその変数へ書く
+// (virtual_scroller の "bar_active_var" に渡すと、 離したときに行へ揃う)。
+//
 // **矢印の名前は左右上下ではなく «減 (dec) / 増 (inc)»**。 縦 ("vertical": true)
 // のスライダは value 0 が下なので dec の絵は下端に置くことになるが、 それは
 // "dec_at" が決めるのでキー名は変わらない。 幾何名 ("left"/"right"、 縦なら
@@ -7271,6 +7466,20 @@ struct em_null_thumb : cycfi::elements::element
 struct em_slider_base : cycfi::elements::basic_slider_base
 {
 	using cycfi::elements::basic_slider_base::basic_slider_base;
+	// つまみ / 溝を押している間 true ("active_var")
+	std::function<void(bool)> on_active;
+	void begin_tracking(cycfi::elements::context const& ctx,
+	                    cycfi::elements::tracker_info& ti) override
+	{
+		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
+		if (on_active) on_active(true);
+	}
+	void end_tracking(cycfi::elements::context const& ctx,
+	                  cycfi::elements::tracker_info& ti) override
+	{
+		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
+		if (on_active) on_active(false);
+	}
 	cycfi::elements::rect
 	track_bounds(cycfi::elements::context const& ctx) const override
 	{
@@ -7287,6 +7496,19 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 struct em_fill_slider_base : cycfi::elements::basic_slider_base
 {
 	using cycfi::elements::basic_slider_base::basic_slider_base;
+	std::function<void(bool)> on_active;   // em_slider_base と同じ
+	void begin_tracking(cycfi::elements::context const& ctx,
+	                    cycfi::elements::tracker_info& ti) override
+	{
+		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
+		if (on_active) on_active(true);
+	}
+	void end_tracking(cycfi::elements::context const& ctx,
+	                  cycfi::elements::tracker_info& ti) override
+	{
+		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
+		if (on_active) on_active(false);
+	}
 	float fx = 0.0f;   // ゲージ左端 (トラック幅比)
 	float fw = 1.0f;   // ゲージ幅 (トラック幅比)
 	bool  fill_vertical = false;
@@ -7505,8 +7727,19 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
 		// 書く。 数値表示は label の "text_var": display_var で受ける。
-		wire_slider_vars(_vars, sb, value_var, string_or(o, "display_var"),
-		                 disp, gauge);
+		wire_slider_vars(_vars, sb, part, value_var,
+		                 string_or(o, "display_var"), disp, gauge);
+		// "active_var": つまみ / 溝を押している間 "1"、 離したら "0"。
+		// virtual_scroller が «離したら行へ揃える» のに使う。
+		if (std::string av = string_or(o, "active_var"); !av.empty()) {
+			auto vars = _vars;
+			auto set_active = [vars, av](bool on) { vars->set(av, on ? "1" : "0"); };
+			if (auto* a = dynamic_cast<em_slider_base*>(sb.get()))
+				a->on_active = set_active;
+			else if (auto* f = dynamic_cast<em_fill_slider_base*>(sb.get()))
+				f->on_active = set_active;
+			if (!_vars->get(av)) _vars->set_initial(av, "0");
+		}
 	}
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
@@ -7986,6 +8219,18 @@ element_ptr LayoutBuilder::build_list(const picojson::object& o)
 // **縦のときの向きの対応がスライダと逆**である点に注意: offset 0 は先頭 = 上
 // なので、 **dec (減) の絵は上端**、 inc (増) の絵は下端に置くことになる
 // ("dec_at" / "inc_at" がそれを決めるので、 キー名は縦横で変わらない)。
+//
+// スムーズスクロール一覧 (virtual_scroller) と組む場合は value モードにする:
+//   { "type": "atlas_scrollbar", ..., "value_var": "pos",
+//     "count_var": "rows", "visible": 4,      // つまみの長さ = 表示行数 / 総行数
+//     "row_steps": true,                      // ホイール / 増減 / 溝クリックを行単位に
+//     "active_var": "bar_on" }                // つまみを掴んでいる間 "1"
+//   { "type": "virtual_scroller", ..., "pos_var": "pos",
+//     "row_count_var": "rows", "bar_active_var": "bar_on" }
+// つまみは一覧の位置に 1px 単位で追従し、 ドラッグを離すと一覧が行へ揃う。
+// ホイール / 増減 / 溝クリックは行単位の位置を書き、 一覧がそこまで送る。
+// "row_steps" は value モードでも送り量を «行» で数える指定 (1 行 =
+// 1 / (count - visible))。 指定しなければ従来どおり 5% / 10%。
 //---------------------------------------------------------------------------
 namespace {
 class atlas_scrollbar_element : public ce::element
@@ -8008,6 +8253,8 @@ public:
 		int         visible = 0;
 		int         page = 0;        // 溝クリックの送り量 (0 = visible)
 		int         wheel_step = 1;  // ホイール 1 ノッチの送り量
+		bool        row_steps = false;  // value モードでも送り量を行で数える
+		std::string active_var;      // つまみを掴んでいる間 "1"
 	};
 
 	atlas_scrollbar_element(ce::pixmap_ptr pm, spec sp,
@@ -8054,7 +8301,11 @@ public:
 
 	bool click(ce::context const& ctx, ce::mouse_button btn) override
 	{
-		if (!btn.down) { _dragging = false; return true; }
+		if (!btn.down) {
+			if (_dragging) set_active(false);
+			_dragging = false;
+			return true;
+		}
 		if (btn.state != ce::mouse_button::left) return false;
 		const ce::rect tb = thumb_bounds(ctx.bounds);
 		const float p  = _spec.vertical ? btn.pos.y : btn.pos.x;
@@ -8063,6 +8314,7 @@ public:
 		if (p >= t0 && p <= t1) {
 			_dragging = true;
 			_grab = p - t0;          // 掴んだ位置をつまみ内で保つ
+			set_active(true);
 			return true;
 		}
 		move_by_page(p < t0 ? -1 : +1);
@@ -8176,6 +8428,26 @@ private:
 		if (_cb && !_spec.id.empty()) _cb(_spec.id, /*is_button_click=*/false, v);
 	}
 
+	void set_active(bool on)
+	{
+		if (!_spec.active_var.empty() && _vars)
+			_vars->set(_spec.active_var, on ? "1" : "0");
+	}
+
+	// value モードで行単位に送る (row_steps)。 いまの位置を最寄りの行に
+	// 揃えてから rows 行進める。 送れない (件数が分からない) ときは false。
+	bool move_rows(int rows)
+	{
+		if (!_spec.row_steps || index_mode()) return false;
+		const int mo = max_offset();
+		if (mo <= 0) return false;
+		long row = std::lround(pos01() * mo) + rows;
+		if (row < 0) row = 0;
+		if (row > mo) row = mo;
+		set_pos01(double(row) / mo);
+		return true;
+	}
+
 	void set_offset(int off)
 	{
 		const int mo = max_offset();
@@ -8207,6 +8479,11 @@ private:
 			set_offset(var_int(_spec.offset_var, 0) + dir * p);
 			return;
 		}
+		if (_spec.row_steps) {
+			int p = _spec.page > 0 ? _spec.page : visible_of();
+			if (p <= 0) p = 1;
+			if (move_rows(dir * p)) return;
+		}
 		set_pos01(pos01() + dir * 0.1);
 	}
 
@@ -8217,6 +8494,7 @@ private:
 			set_offset(var_int(_spec.offset_var, 0) + dir * st);
 			return;
 		}
+		if (move_rows(dir * (_spec.wheel_step > 0 ? _spec.wheel_step : 1))) return;
 		set_pos01(pos01() + dir * 0.05);
 	}
 
@@ -8266,6 +8544,10 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 	sp.page        = static_cast<int>(number_or(o, "page", 0));
 	sp.wheel_step  = static_cast<int>(number_or(o, "wheel_step", 1));
 	sp.thumb_min   = static_cast<float>(number_or(o, "thumb_min", 16.0));
+	sp.row_steps   = truthy_field(get_field(o, "row_steps"));
+	sp.active_var  = string_or(o, "active_var");
+	if (!sp.active_var.empty() && !_vars->get(sp.active_var))
+		_vars->set_initial(sp.active_var, "0");
 	if (sp.value_var.empty() && sp.offset_var.empty()) {
 		em_logf("elements_modal: atlas_scrollbar \"%s\": no 'value_var' / "
 		        "'index_offset_var' (つなぎ先が無いと動かせない)",
@@ -9753,6 +10035,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 	result.focus_poll = builder.take_focus_poll();
 	result.hover_poll = builder.take_hover_poll();
 	result.focus_link_elements = builder.take_focus_link_elements();
+	result.frame_tickers = builder.take_frame_tickers();
 	return result;
 }
 

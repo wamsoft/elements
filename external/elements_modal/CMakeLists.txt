@@ -22,6 +22,7 @@ set(_em_sources
 	src/overlay_session.cpp
 	src/navigator.cpp
 	src/em_platform.cpp
+	src/virtual_scroller.cpp
 )
 
 # 独立ウィンドウ modal (run_modal) は SDL host 専用 (SDL_CreateWindow /

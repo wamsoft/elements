@@ -495,6 +495,26 @@
                out.push_back({&current, ctx.bounds});
                return;
             }
+            if (p->clips_subject())
+            {
+               context sctx{ctx, &p->subject(), ctx.bounds};
+               p->prepare_subject(sctx);
+               auto const first = out.size();
+               collect_focusables(sctx, p->subject(), out);
+               p->restore_subject(sctx);
+               rect const clip = ctx.bounds;
+               out.erase(
+                  std::remove_if(out.begin() + first, out.end(),
+                     [&clip](focusable_entry const& f)
+                     {
+                        return !(f.bounds.left < clip.right
+                              && f.bounds.right > clip.left
+                              && f.bounds.top < clip.bottom
+                              && f.bounds.bottom > clip.top);
+                     }),
+                  out.end());
+               return;
+            }
             if (proxy_chain_has_composite(&p->subject()))
             {
                context sctx{ctx, &p->subject(), ctx.bounds};
