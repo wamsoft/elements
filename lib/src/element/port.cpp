@@ -632,10 +632,12 @@ namespace cycfi::elements
       {
          scrollbar_bounds sb = get_scrollbar_bounds(ctx);
 
+         // The horizontal bar runs along the bottom, the vertical one
+         // along the right.
          if (sb.has_h)
-            bounds.right -= thm.scrollbar_width;
-         if (sb.has_v)
             bounds.bottom -= thm.scrollbar_width;
+         if (sb.has_v)
+            bounds.right -= thm.scrollbar_width;
       }
 
       if (!bounds.includes(r))
