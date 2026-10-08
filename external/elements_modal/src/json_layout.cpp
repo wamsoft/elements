@@ -3285,21 +3285,63 @@ element_ptr LayoutBuilder::apply_opacity(const picojson::object& o, element_ptr 
 // "visible_var" — 表示 / 非表示を変数で切り替える (値 "0"/"false"/空 で非表示)。
 // 機種によって不要な項目を消す用途。 場所は空けたままなので注意 (visible_element
 // のコメント参照)。
+//
+// "visible_focus_link" — 別の要素のフォーカスに連動して表示する。 値は id の
+// 文字列か id の配列で、 そのどれかがフォーカスを持っている間だけ表示する
+// (一覧の枠のように «フォーカスのある項目にだけ説明の文字と下地を出す» 用途)。
+// 判定は focus_link 装飾と同じフォーカス通知で行うのでホストを往復しない。
+// visible_var と両方あるときは AND (どちらも満たしたときだけ表示)。
+// 画面を組んだ直後はフォーカスが無いので非表示から始まる。
 element_ptr LayoutBuilder::apply_visible(const picojson::object& o, element_ptr el)
 {
 	if (!el) return el;
 	std::string var = string_or(o, "visible_var");
-	if (var.empty()) return el;
+	std::vector<std::string> focus_targets;
+	if (auto* lv = get_field(o, "visible_focus_link")) {
+		if (lv->is<std::string>()) {
+			if (!lv->get<std::string>().empty())
+				focus_targets.push_back(lv->get<std::string>());
+		} else if (lv->is<picojson::array>()) {
+			for (auto& e : lv->get<picojson::array>())
+				if (e.is<std::string>() && !e.get<std::string>().empty())
+					focus_targets.push_back(e.get<std::string>());
+		}
+	}
+	if (var.empty() && focus_targets.empty()) return el;
 
+	// 表示 = 変数の条件 AND フォーカスの条件。 それぞれを別に持ち、 どちらかが
+	// 変わったら合成し直す (visible_element は合成結果だけを見る)。
+	struct vis_state { bool by_var = true; bool by_focus = true; };
+	auto st  = std::make_shared<vis_state>();
 	auto vis = std::make_shared<bool>(true);
-	auto parse = [](const std::string& v) {
-		return !(v == "0" || v == "false" || v.empty());
-	};
-	if (auto* cur = _vars->get(var)) *vis = parse(*cur);
-	_vars->subscribe(var, [vis, parse](const std::string& v) {
-		*vis = parse(v);
-	}, el);
-	return ce::share(visible_element(ce::hold_any(std::move(el)), vis));
+	auto update = [st, vis]() { *vis = st->by_var && st->by_focus; };
+
+	if (!var.empty()) {
+		auto parse = [](const std::string& v) {
+			return !(v == "0" || v == "false" || v.empty());
+		};
+		if (auto* cur = _vars->get(var)) st->by_var = parse(*cur);
+		_vars->subscribe(var, [st, update, parse](const std::string& v) {
+			st->by_var = parse(v);
+			update();
+		}, el);
+	}
+	if (!focus_targets.empty()) {
+		st->by_focus = false;
+		_focus_links.push_back(
+			[st, update, focus_targets](const std::string& focused) {
+				st->by_focus = !focused.empty()
+					&& std::find(focus_targets.begin(), focus_targets.end(), focused)
+					   != focus_targets.end();
+				update();
+			});
+	}
+	update();
+	auto wrapped = ce::share(visible_element(ce::hold_any(std::move(el)), vis));
+	// フォーカスの変化で出入りするので、 部分再描画のダーティ対象に載せる
+	// (focus_link 装飾と同じ扱い)
+	if (!focus_targets.empty()) _focus_link_elements.push_back(wrapped);
+	return wrapped;
 }
 
 element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
@@ -4401,6 +4443,9 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 //     "drag_scroll": false, "drag_threshold": 2,
 //     "flick": { "sample_ms": 100, "dist_coef": 2, "time_coef": 50 },
 //     "stop_tap": "click",
+//     "item_nav": "linear",         // 矢印キーを項目の順番での移動にする (任意)
+//     "item_cols": 5,               //   1 行の項目数
+//     "item_mask_var": "open",      //   項目ごとの選べる "1" / 選べない "0" の並び
 //     "child": { "type": "canvas", ... } }   // 表示行数 + 1 行ぶんのセル
 //
 // 子 canvas の座標は窓の左上が原点。 セルは «行 0 の先頭行のセル» から
@@ -4443,8 +4488,15 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 	}
 	cfg.stop_tap_click = string_or(o, "stop_tap", "click") != "stop";
 	cfg.ack_rows       = !row_ready_var.empty();
+	// 項目の順番での移動 ("item_nav": "linear")。 1 行の項目数と、 項目ごとの
+	// 選べる / 選べないの並び ("item_mask_var") を使う
+	cfg.item_cols      = static_cast<int>(number_or(o, "item_cols", 0.0));
+	cfg.item_linear    = string_or(o, "item_nav") == "linear";
+	const std::string item_mask_var = string_or(o, "item_mask_var");
 	if (cfg.row_height <= 0.0f)
 		em_logf("elements_modal: virtual_scroller \"%s\" needs 'row_height'", id.c_str());
+	if (cfg.item_linear && cfg.item_cols <= 0)
+		em_logf("elements_modal: virtual_scroller \"%s\": item_nav needs 'item_cols'", id.c_str());
 
 	auto vs = std::make_shared<virtual_scroller>(child, cfg);
 	auto vars = _vars;
@@ -4479,6 +4531,9 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 	}
 	if (!top_row_var.empty() && !vars->get(top_row_var))
 		vars->set_initial(top_row_var, std::to_string(vs->top_row()));
+	if (!item_mask_var.empty()) {
+		if (auto* v = vars->get(item_mask_var)) vs->item_mask(*v);
+	}
 
 	// --- 一覧 → ホスト ---
 	// 先頭行: 変数と onAction(id, 行) の両方で知らせる。
@@ -4539,6 +4594,11 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 		vars->subscribe(reveal_row_var, [w, to_int](const std::string& v) {
 			int n = 0;
 			if (auto p = w.lock(); p && to_int(v, n)) p->reveal_row(n);
+		}, vs);
+	}
+	if (!item_mask_var.empty()) {
+		vars->subscribe(item_mask_var, [w](const std::string& v) {
+			if (auto p = w.lock()) p->item_mask(v);
 		}, vs);
 	}
 

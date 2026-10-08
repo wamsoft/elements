@@ -12,6 +12,10 @@
 //   ↑↓ (キー/パッド) … フォーカスが窓の端の行にあり、 その先にまだ行が
 //                      あれば 1 行送ってフォーカスは同じセルのまま
 //                      (中身が 1 行ずれるので次の項目へ移ったように見える)
+//   ←→↑↓ (item_linear 時) … 項目の順番で前 (← ↑) / 次 (→ ↓) の選べる項目へ。
+//                      行の端では折り返し、 選べない項目は飛ばし、 窓の外なら
+//                      送ってからそのセルへフォーカスを移す。 先頭より前は
+//                      一覧の外の上方向へ、 末尾より後ろは何もしない
 //   スクロールバー  … ratio() で位置を直接指定 (アニメーションなし)。
 //                      bar_active(false) で行へ揃える
 //   ドラッグ         … drag_scroll 有効時。 しきい値を超えたらセルの押下を
@@ -24,6 +28,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 namespace elements_modal {
@@ -64,6 +69,8 @@ public:
 		double flick_time_coef = 50.0;   // 速度 → 時間 (ms)
 		bool   stop_tap_click  = true;   // 慣性中に押した押下をクリックにも使う
 		bool   ack_rows        = false;  // ホストの差し替え完了 (row_ready) を待って描く
+		int    item_cols       = 0;      // 1 行の項目数 (項目の順番での移動に使う)
+		bool   item_linear     = false;  // 矢印キーを項目の順番での移動にする
 	};
 
 	virtual_scroller(element_ptr subject, config cfg);
@@ -93,6 +100,9 @@ public:
 	void                 reveal_row(int row);       // その行が見える位置へ (最小移動)
 	void                 row_ready(int row);        // ホストが中身を差し替え終えた行
 	void                 bar_active(bool on);       // スクロールバーを掴んでいる間 true
+	// 項目ごとの選べる ("1") / 選べない ("0") の並び (一覧の先頭から)。
+	// 長さが項目の総数になる。 空なら全項目を選べる扱い
+	void                 item_mask(std::string mask) { _item_mask = std::move(mask); }
 
 	int                  top_row() const { return _top; }
 	bool                 bar_held() const { return _bar_held; }
@@ -127,6 +137,8 @@ private:
 	void                 stop_anim();
 	void                 snap_rest();
 	bool                 edge_step(context const& ctx, int dir);
+	bool                 item_step(context const& ctx, int dir);
+	bool                 item_selectable(int idx) const;
 	void                 cancel_child_press(context const& ctx, mouse_button btn);
 	void                 start_flick();
 
@@ -153,6 +165,7 @@ private:
 	bool                 _pointer_scroll = false;
 	bool                 _bar_held = false;  // スクロールバーを掴んでいる間
 	bool                 _drawn = false;     // 一度でも描いたか
+	std::string          _item_mask;         // 項目ごとの選べる / 選べない
 
 	// ポインタ
 	point                _last_cursor{};

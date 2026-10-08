@@ -751,6 +751,21 @@
       }
    }
 
+   void collect_focusable_elements(
+      context const& ctx, element& e, std::vector<focusable_element>& out)
+   {
+      std::vector<focusable_entry> list;
+      collect_focusables(ctx, e, list);
+      out.reserve(out.size() + list.size());
+      for (auto const& f : list)
+         out.push_back({f.el, f.bounds});
+   }
+
+   void view::redirect_arrow_focus(key_code k)
+   {
+      _arrow_redirect = k;
+   }
+
    void view::arrow_focus_navigation(bool on)
    {
       _arrow_focus_nav = on;
@@ -977,6 +992,7 @@
       }
 
       bool handled = false;
+      _arrow_redirect = key_code::unknown;
       with_context_do(
          [k, &handled](auto const& ctx, auto& _main_element)
          {
@@ -984,6 +1000,11 @@
          },
          *this, _current_bounds
       );
+      // An element may decline the arrow but ask for a different direction
+      // (redirect_arrow_focus). It only applies to this key event.
+      key_code const nav_key =
+         (_arrow_redirect != key_code::unknown) ? _arrow_redirect : k.key;
+      _arrow_redirect = key_code::unknown;
 
       // Arrow-based 2D focus navigation, opt-in via
       // view::arrow_focus_navigation(true). Runs only when the focused
@@ -995,7 +1016,7 @@
       {
          arrow_dir d;
          bool is_arrow = true;
-         switch (k.key)
+         switch (nav_key)
          {
             case key_code::left:  d = arrow_dir::left;  break;
             case key_code::right: d = arrow_dir::right; break;

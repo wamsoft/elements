@@ -283,6 +283,20 @@ bool virtual_scroller::key(context const& ctx, key_info k)
 	if (!press || _cfg.row_height <= 0.0f) return false;
 	_pointer_scroll = false;
 
+	// 項目の順番での移動: ← ↑ は前、 → ↓ は次の項目へ (行の端で折り返す)
+	if (_cfg.item_linear && _cfg.item_cols > 0) {
+		switch (k.key) {
+		case key_code::left:
+		case key_code::up:
+			return item_step(ctx, -1);
+		case key_code::right:
+		case key_code::down:
+			return item_step(ctx, +1);
+		default:
+			break;
+		}
+	}
+
 	const double rh = _cfg.row_height;
 	const double base = _anim.active ? _anim.to : _px;
 	switch (k.key) {
@@ -345,6 +359,124 @@ bool virtual_scroller::edge_step(context const& ctx, int dir)
 	stop_anim();
 	_pointer_scroll = false;
 	move_to((_top + dir) * double(_cfg.row_height));
+	ctx.view.refresh(ctx);
+	return true;
+}
+
+// 項目 idx を選べるか。 マスクが無ければすべて選べる
+bool virtual_scroller::item_selectable(int idx) const
+{
+	if (_item_mask.empty()) return true;
+	if (idx < 0 || idx >= int(_item_mask.size())) return false;
+	return _item_mask[std::size_t(idx)] != '0';
+}
+
+// 項目の順番での移動 (item_linear)。 フォーカス中のセルを «窓の何行目・何列目»
+// から項目の番号に直し、 dir 方向に選べる項目を探す。 見つかればその行が窓に
+// 収まるように送ってから (アニメーションしない。 edge_step と同じ理由)、
+// 送ったあとの窓で同じ行・列にあたるセルへフォーカスを移す。 セルの中身は
+// ホストが先頭行の通知 (と row_ready) で差し替えるので、 移った先のセルが
+// その項目を表示する。
+// 先頭より前に選べる項目が無ければ、 一覧の外の上方向へ任せる (view の矢印
+// ナビを «上» として続けさせる。 ← でも上の部品へ出られる)。 末尾より後ろに
+// 無ければキーを使い切って何もしない。
+bool virtual_scroller::item_step(context const& ctx, int dir)
+{
+	const int cols = _cfg.item_cols;
+	const double rh = _cfg.row_height;
+	if (cols <= 0 || rh <= 0.0) return false;
+
+	// フォーカスの連鎖を一番奥までたどる (edge_step と同じ)
+	element* f = &subject();
+	for (;;) {
+		element* nf = f->focus();
+		if (!nf || nf == f) break;
+		f = nf;
+	}
+	if (f == &subject()) return false;   // 一覧の中にフォーカスが無い
+	bool found = false;
+	cycfi::elements::rect fr{};
+	in_context_do(ctx, *f, [&](context const& fctx) {
+		fr = fctx.bounds;
+		found = true;
+	});
+	if (!found) return false;
+
+	// 窓の中のセル (フォーカスを取れる要素) を «窓の行» ごとに x の順で並べる。
+	// 行はセルの配置 (ずらし込みを戻した位置) から求めるので、 送りの途中でも
+	// 窓の何行目のセルかは変わらない。 予備の行 (窓の外) は使わない。
+	struct cell { float x; element* el; cycfi::elements::rect b; };
+	std::vector<std::vector<cell>> slots(std::size_t(_cfg.rows_visible));
+	{
+		std::vector<ce::focusable_element> list;
+		ce::collect_focusable_elements(ctx, *this, list);
+		for (auto const& e : list) {
+			const double cy = (e.bounds.top + e.bounds.bottom) * 0.5
+			                - ctx.bounds.top + draw_offset();
+			const int s = int(std::floor(cy / rh));
+			if (s < 0 || s >= _cfg.rows_visible) continue;
+			slots[std::size_t(s)].push_back(
+				{ (e.bounds.left + e.bounds.right) * 0.5f, e.el, e.bounds });
+		}
+		for (auto& row : slots)
+			std::sort(row.begin(), row.end(),
+				[](cell const& a, cell const& b) { return a.x < b.x; });
+	}
+
+	// フォーカス中のセルの行・列
+	const float fx = (fr.left + fr.right) * 0.5f;
+	const float fy = (fr.top + fr.bottom) * 0.5f;
+	int cur_slot = -1, cur_col = -1;
+	for (int s = 0; s < _cfg.rows_visible && cur_slot < 0; ++s) {
+		const auto& row = slots[std::size_t(s)];
+		for (int c = 0; c < int(row.size()); ++c) {
+			if (row[std::size_t(c)].b.includes({fx, fy})) {
+				cur_slot = s;
+				cur_col = c;
+				break;
+			}
+		}
+	}
+	if (cur_slot < 0 || cur_col >= cols) return false;
+
+	// 選べる項目を探す (セルが今表示している先頭行 _applied が基準)
+	int count = _rows * cols;
+	if (!_item_mask.empty()) count = std::min(count, int(_item_mask.size()));
+	const int cur = (_applied + cur_slot) * cols + cur_col;
+	int target = -1;
+	for (int i = cur + dir; i >= 0 && i < count; i += dir) {
+		if (item_selectable(i)) {
+			target = i;
+			break;
+		}
+	}
+	if (target < 0) {
+		if (dir < 0) {
+			ctx.view.redirect_arrow_focus(ce::key_code::up);
+			return false;
+		}
+		return true;
+	}
+
+	// その行が窓に収まるように送る
+	const int row = target / cols;
+	const int col = target % cols;
+	const double base = _anim.active ? _anim.to : _px;
+	stop_anim();
+	_pointer_scroll = false;
+	int top = std::clamp(int(std::lround(base / rh)), 0, max_top());
+	if (row < top)
+		top = row;
+	else if (row > top + _cfg.rows_visible - 1)
+		top = row - _cfg.rows_visible + 1;
+	top = std::clamp(top, 0, max_top());
+	move_to(top * rh);
+
+	const int slot = row - top;
+	if (slot < 0 || slot >= _cfg.rows_visible) return true;
+	const auto& cells = slots[std::size_t(slot)];
+	if (col >= int(cells.size())) return true;
+	ctx.view.focus(*cells[std::size_t(col)].el);
 	ctx.view.refresh(ctx);
 	return true;
 }
@@ -499,8 +631,11 @@ void virtual_scroller::tick(ce::view& v, std::uint64_t now_ms)
 		_dirty = false;
 		v.refresh(*this);
 	}
-	// 止まったら、 カーソルの下にあるセルのホバーを付け直す
-	if (_rehover && !_press && !_anim.active) {
+	// 止まったら、 カーソルの下にあるセルのホバーを付け直す。 ホストの差し替え
+	// (row_ready) を待つ一覧では、 届くまでセルが 1 行ずれた位置で描かれて
+	// いるので、 届いてから付け直す (先に付け直すと、 ずれた位置にあった別の
+	// セルへホバーとフォーカスが移ってしまう)
+	if (_rehover && !_press && !_anim.active && (!_cfg.ack_rows || _applied == _top)) {
 		_rehover = false;
 		if (_cursor_inside)
 			v.cursor(_last_cursor, cursor_tracking::hovering);

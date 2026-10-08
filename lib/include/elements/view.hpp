@@ -24,6 +24,7 @@
 #include <elements/support/task_queue.hpp>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 #include <chrono>
 #include <map>
 
@@ -32,6 +33,21 @@ namespace cycfi::elements
    class context;
    class window;
    class idle_tasks;
+
+   // A focusable element and the bounds it occupies, as seen by the
+   // arrow-key focus navigation.
+   struct focusable_element
+   {
+      element* el;
+      rect     bounds;
+   };
+
+   // Collect every currently-visible focusable element under 'e' (in the
+   // context 'ctx') — the same set arrow_focus_navigation picks from.
+   // Lets an element run its own navigation over its children (e.g. a
+   // list that moves focus in item order instead of by position).
+   void collect_focusable_elements(
+      context const& ctx, element& e, std::vector<focusable_element>& out);
 
    class view : public base_view
    {
@@ -106,6 +122,13 @@ namespace cycfi::elements
       using focus_nav_override_function =
          std::function<element*(element* current, int dir)>;
       void                    focus_nav_override(focus_nav_override_function f);
+
+      // Called by an element from inside key() when it declines an arrow
+      // key (returns false) but wants arrow_focus_navigation to move in
+      // another direction for this key event — e.g. a list whose first
+      // item hands "left" over to the widgets above it as "up". Only the
+      // current key event is affected.
+      void                    redirect_arrow_focus(key_code k);
 
       // When enabled, moving the mouse over a focusable widget also moves
       // keyboard focus to it, so the hovered widget and the focused widget
@@ -380,6 +403,7 @@ namespace cycfi::elements
       focus_nav_override_function _focus_nav_override;
       bool                    _focus_skip_disabled = false;
       bool                    _arrow_focus_enter_dir = false;
+      key_code                _arrow_redirect = key_code::unknown;
       bool                    _hover_focus = true;
 
       struct pad_key_binding
