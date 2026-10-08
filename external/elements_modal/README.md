@@ -164,6 +164,10 @@ int main()
   PageDown と上下キーで送れる (パッド駆動の長文ビューア向け)。 既定は
   フォーカスを取らない — ふつうのコントロールを包むスクローラが余計な
   フォーカス停止点になるのを避けるため。
+- `virtual_scroller` — **行を使い回すスムーズスクロール一覧**。 窓に収まる行数 + 1 行ぶんの
+  セルだけを持ち、 位置を 1px 単位で送りながら、 行の境目で «先頭行» を知らせて中身を
+  差し替えさせる。 件数が何千行でもセル数は一定。 ホイール / キー / ドラッグ・慣性に
+  アニメーション付きで追従する。 詳細は下記「スムーズスクロール一覧 (`virtual_scroller`)」。
 - `filler` — 親 tile の余り領域を埋める素の (透明 + 完全 stretchy) スペーサ。 引数なし。
 - `floating` — `"at": [x, y, w, h]` + `"child"`。 親 bounds に関係なく child を指定矩形に固定配置 (lib の `floating_element` 薄ラッパ)。 PSD でデザインされたレイアウトをそのまま絶対座標で組む用。
 - `locale_variant` — 現在言語に一致する子だけを表示するデッキ (`"children"` の各要素に `"lang"` を付ける)。 詳細は「i18n」節。
@@ -249,6 +253,19 @@ int main()
 - 初期値は build 時に両変数へ書かれるので、 最初のフレームから正しい数値が出る。
 - ホストが `set_var(value_var, "0.8")` で外から動かした場合も `display_var` は追従する。
 - 生値が要るとき (保存など) は `value_var` を読む。 従来の `event_callback` も変わらず発火する。
+
+#### スライダの目盛 (`snap`)
+
+`slider` / `slider_with_range` / `atlas_slider` に共通。 `"snap": true` を書くと値が **1 目盛の倍数にしか止まらなくなる**。 つまみはドラッグ中も目盛から目盛へ飛び、 キー / ホイール (1 ノッチ) / パッド / 読み上げの増減も 1 目盛ずつ動く。 初期値と、 ホストが `value_var` へ書いた値も目盛へ丸められる (`display_var` もその値で整形される)。
+
+```jsonc
+{ "type": "atlas_slider", "atlas": "ui", "id": "wait",
+  "track": [220, 140, 256, 16], "thumb": [220, 170, 32, 32],
+  "value_var": "wait", "display_var": "wait_text", "snap": true,
+  "display": { "min": 50, "max": 0, "step": 5, "suffix": "ms" } }   // 10 段階
+```
+
+1 目盛の大きさ (0..1) は **`"step"` 明示 → `"display"` の `step / (max - min)` → 5%** の順で決まる。 増減矢印 (`"dec"` / `"inc"`) の 1 クリック分と同じ決め方なので、 矢印と snap の刻みは常に揃う。
 - `labeled_row` — 左カラム固定幅ラベル + 残り child の 1 行コンテナ。 `"label": string` + `"label_width": int` (default 180) + `"font_size": double` (**px 絶対**) または `"font_size_scale"` (倍率) + `"child"`。 child の最初の focusable を click-focus target にする。
 - `tab_view` — タブ + ページの組合せ (1 画面内で複数 pane を切替)。 `"tabs": [{ "label": string, "child": element, "id"?: string }, ...]` + `"initial": int` (初期 index、 default 0) + `"tab_size": double` (タブ文字 px、 任意) または `"tab_size_scale"` (倍率)。 lib の `deck_composite` + `tab` (basic_choice ベース) を組み合わせて生成。 タブクリックで該当 pane に瞬時切替、 兄弟タブは自動 deselect (basic_choice の choice 機構)。 タブの見た目は **lib 既定の button_styler (角丸 / アクティブ色)**。 各タブの `id` を付ければ shortcut / vars_on_focus 等で参照可能。 状態 (focus 位置 / 入力途中の値 / 変数 store) は session が同じなので保持される。 さらに **PageUp/PageDown** キーが前/次タブ切替に bind される (force shortcut、 テキスト入力中もスキップ)。 **LB/RB** パッドボタンは組込デフォルトの `page_prev/next` アクション (PageUp/Down 合成) 経由で同じ切替に届く (画面 JSON の `"bindings"` で差替可)。
 - `pad_icon` — Kenney input-prompts のコントローラアイコン。 `"name": logical_name` (例 `"face_south"` / `"a"` / `"dpad_up"` 等、 下記参照) + 以下のいずれか:
@@ -344,6 +361,8 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
   - **両端の増減矢印** (`"dec"` / `"inc"`): アトラス素材の矢印ボタンを両脇に置いて **矢印 + スライダを 1 パーツ**にできる。 `"dec"` / `"inc"` はフレーム指定 (`{ "normal": [x,y,w,h], "hilite": …, "pressed": …, "disabled": … }`、 配列 1 本なら normal のみ)、 置き場所は `"dec_at"` / `"inc_at"` (widget `at` 左上原点の相対 px、 必須)。 本体の領域は `"track_at"` (省略時は矢印の外側から自動算出)。 1 クリックの増減は `"step"` (0..1。 省略時は `display` の 1 目盛、 それも無ければ 5%)、 押し続けの自動リピートは `"repeat"` / `"repeat_delay_ms"` / `"repeat_rate_ms"`、 キー / パッドで値が動いたときは向きの矢印が `"flash_ms"` だけ光る。 **名前は左右上下ではなく «減 (dec) / 増 (inc)»** — 縦にしたときの増える側が widget の種類で逆になるため。 幾何名 (`left`/`right`、 縦なら `down`/`up`) もエイリアスで受ける。 矢印はフォーカスを取らず、 クリック時はフォーカスを本体へ渡す。 送りの実体は値編集そのものなので既存の `value_var` / `display_var` / `onAction` 配線にそのまま乗る。
+  - **目盛単位の制約** (`"snap": true`): 値を 1 目盛の倍数にしか止めない。 下記「スライダの目盛 (`snap`)」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
+  - **押している間の通知** (`"active_var": "name"`): つまみ / 溝を押している間 `"1"`、 離したら `"0"` をその変数へ書く。 `virtual_scroller` の `"bar_active_var"` に渡すと、 縦スライダをスクロールバー代わりにしたとき «離したら行へ揃う» になる。
 - `atlas_number` — **数字素材 (0-9 の sub-rect) で数値を描く**表示専用パーツ。 フォントではなく «絵の数字» を出したいスコア / 残数 / 音量表示用。
 
   ```jsonc
@@ -370,6 +389,9 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - 操作: つまみドラッグ / **溝クリックでページ送り** (`"page"` 行、 既定 = visible) / **ホイール** (`"wheel_step"` 行、 既定 1)。 `"thumb_min"` (既定 16) でつまみの最小長 px。
   - 値が変わると変数へ書かれ、 `id` があれば `onAction` にも流れる (index モードは行 index の整数、 value モードは 0..1 の double)。
   - **両端の増減ボタン**: atlas_slider と同じ `"dec"` / `"inc"` (+ `"dec_at"` / `"inc_at"` / `"track_at"` / `"repeat*"` / `"flash_ms"`) を書くと «両端にボタンのあるスクロールバー» になる。 送り量はホイールと同じ (`"wheel_step"` 行、 value モードは 5%)。 送りの実体は既存のスクロール処理に委ねるので、 矢印・ホイール・溝クリックが同じ規則で動く。
+  - **value モードで行単位に送る** (`"row_steps": true`): ホイール / 増減ボタン / 溝クリックの送り量を «行» で数える (1 行 = 1 / (count - visible))。 いまの位置を最寄りの行へ揃えてから送る。 count / visible が無いと効かない。 指定しなければ従来どおり 5% / 10%。
+  - **つまみを掴んでいる間の通知** (`"active_var": "name"`): つまみをドラッグしている間 `"1"`、 離したら `"0"`。
+  - `virtual_scroller` と組む場合は value モード + `"row_steps"` + `"active_var"` にする (下記「スムーズスクロール一覧」)。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `animated_sprite` — **アトラスのフレーム列を fps で自動送りするスプライトアニメ** (パラパラ / スプライトシート再生)。 `"atlas": name` + `"frames": [[u,v,w,h], ...]` (配列順 = 再生順) + `"fps": double` (既定 12) + `"loop": bool` (既定 true。 false は最終フレームで停止) + `"native_frames": bool` (実寸のまま中央へ)。 アニメアイコン、 スピナー、 待機ループ等の表示専用パーツ。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
@@ -692,6 +714,11 @@ bool on = elements_modal::focus_ring_enabled();
 | `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
 | `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
 | `count_var` / `visible_count_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
+| `active_var` | atlas_slider / atlas_scrollbar | 書き (押している / 掴んでいる間) | `"1"` / `"0"` |
+| `row_count_var` / `row_ready_var` / `reveal_row_var` | virtual_scroller | 読み (総行数 / 差し替え済みの行 / 見せたい行) | 10 進整数 |
+| `top_row_var` | virtual_scroller | 書き (先頭行が変わったとき) | 10 進整数 |
+| `pos_var` | virtual_scroller | **双方向** (送りで書き + 変数変更でその位置へ送る) | 10 進小数 (`pos_reverse` で 1.0 = 上端) |
+| `bar_active_var` | virtual_scroller | 読み (スクロールバーを掴んでいる間) | `"1"` / それ以外 |
 | `hover_var` / `select_var` | list | 書き (行に乗った / 行を選んだ) | 10 進整数のデータ index (hover 無しは `"-1"`) |
 | `row_hover_var` / `row_select_var` | list | 書き (行ごと) | `"1"` / `""` (`#index` で行番号へ展開) |
 | `drag_at_var` | 全 widget 共通 | 書き (ドラッグ中) | `"x,y"` (10 進 px) |
@@ -829,6 +856,97 @@ hover / 選択の色は 2 通りの受け方がある。 画面 JSON の中で�
 
 スクロールは `atlas_scrollbar` に同じ `index_offset_var` / `count_var` を挿すだけ
 (上記)。 一覧側にホイールを付けたい場合もスクロールバーが受ける。
+
+#### スムーズスクロール一覧 (`virtual_scroller`)
+
+«窓» と `list` は **1 行単位**で送る。 `virtual_scroller` は位置を **1px 単位**で
+送る一覧で、 ホイール / キーの送りはアニメーションし、 ドラッグでは指に付いてきて
+離した速度で慣性移動する (スマートフォンの一覧に近い動き)。
+
+窓に収まる行数 + 1 行ぶんのセルだけを子 canvas に並べ、 位置に合わせてセル全体を
+ずらす。 行の境目をまたいだら «先頭行» を知らせ、 セルの中身をその行基準で差し替え
+させる。 件数が何千行あってもセルの数は変わらない。
+
+```jsonc
+{ "type": "virtual_scroller", "id": "list", "at": [148, 192, 676, 400],   // 窓
+  "row_height": 100, "rows_visible": 4,
+  "row_count_var": "rows",        // 総行数 (ホスト → 一覧)
+  "top_row_var": "top",           // 先頭行 (一覧 → ホスト)
+  "pos_var": "pos",               // 位置 0..1 (双方向。 スクロールバーと共有)
+  "child": { "type": "canvas", "children": [
+      // 表示行数 + 1 行ぶんのセル。 窓の左上が原点、 row_height 間隔で並べる
+      { "at": [0,   0, 676, 96], "type": "label", "index": 0,
+        "index_offset_var": "top", "text_list_var": "items" },
+      { "at": [0, 100, 676, 96], "type": "label", "index": 1,
+        "index_offset_var": "top", "text_list_var": "items" },
+      { "at": [0, 200, 676, 96], "type": "label", "index": 2,
+        "index_offset_var": "top", "text_list_var": "items" },
+      { "at": [0, 300, 676, 96], "type": "label", "index": 3,
+        "index_offset_var": "top", "text_list_var": "items" },
+      { "at": [0, 400, 676, 96], "type": "label", "index": 4,     // 窓の下にはみ出す予備の行
+        "index_offset_var": "top", "text_list_var": "items" } ] } }
+```
+
+セルの中身の差し替え方は 2 通り:
+
+- **画面 JSON の中で閉じる**: 上の例のように、 セルが «窓» (`index` + `index_offset_var`)
+  で一覧を引いていれば、 `top_row_var` と同じ変数を `index_offset_var` に挿すだけで
+  中身が先頭行に付いてくる。 ホストは一覧データ (`text_list_var`) と総行数
+  (`row_count_var`) を書くだけ。
+- **ホストが差し替える**: 先頭行が変わると `onAction(id, 先頭行)` が届く (`top_row_var`
+  にも書かれる)。 ホストはセルの中身 (画像・文字の変数など) をその行基準で差し替え、
+  最後に `"row_ready_var"` へ同じ行番号を書く。 `row_ready_var` を指定すると、 一覧は
+  差し替えが届くまでセルを前の中身の位置に留めるので、 送りの途中で中身と位置が
+  ずれて見えない (アニメーション中はイベントが 1 フレーム遅れて届くため)。
+
+| キー | 型 | 説明 |
+|---|---|---|
+| `row_height` | number | 1 行の送り量 px (**必須**) |
+| `rows_visible` | int | 窓に収まる行数 (既定 1)。 PageUp / PageDown の送り量 |
+| `row_count_var` | string | 総行数 (ホスト → 一覧) |
+| `top_row_var` | string | 先頭行 (一覧 → ホスト)。 `id` があれば `onAction(id, 行)` も出る |
+| `row_ready_var` | string | ホストが中身を差し替え終えた行 (ホスト → 一覧、 任意) |
+| `pos_var` | string | 位置 0..1 (**双方向**)。 スクロールバー / スライダと共有する |
+| `pos_reverse` | bool | `true` で 1.0 = 上端 (縦の `atlas_slider` は値 0 が下なので、 これで直結できる) |
+| `bar_active_var` | string | スクロールバーを掴んでいる間 `"1"` (スクロールバー / スライダの `active_var` を挿す) |
+| `reveal_row_var` | string | 書いた行が見える位置まで送る (最小の移動。 ホスト → 一覧) |
+| `scroll_ms` | number | 送りアニメーションの時間 (既定 200) |
+| `rest_snap` | `"row"` / `"none"` | 止まったときに行の境目へ揃えるか (既定 `"row"`) |
+| `wheel_rows` | number | ホイール 1 ノッチで送る行数 (既定 1)。 端数 (タッチパッド) はためて送る |
+| `drag_scroll` | bool | 中身のドラッグでスクロールする (既定 false) |
+| `drag_threshold` | number | ドラッグとみなす移動量 px (既定 2)。 超えたらセルの押下は取り消す |
+| `flick` | object | 慣性の調整 `{ "sample_ms": 100, "dist_coef": 2, "time_coef": 50 }` (速度を測る直近の範囲 / 速度 → 距離 / 速度 → 時間) |
+| `stop_tap` | `"click"` / `"stop"` | 慣性中に押したとき、 止めるだけでなくセルのクリックにもするか (既定 `"click"`) |
+
+操作:
+
+- **ホイール** — `wheel_rows` 行ぶんアニメーションで送る。 送り中に回し足すと送り先から更に進む。
+- **PageUp / PageDown** — 表示行数ぶん。 **Home / End** — 両端。 キーは一覧の中の
+  セル (ボタン等) にフォーカスがあるときに届く (中のセルが先に受け、 使わなかった
+  キーを一覧が受ける)。
+- **↑ / ↓ (キー / パッド)** — フォーカスのあるセルが窓の端の行にいて、 その先にまだ
+  行があれば 1 行送る。 フォーカスは同じセルのまま (中身が 1 行ずれるので次の項目へ
+  移ったように見える)。 端でなければ通常のフォーカス移動。
+- **ドラッグ** (`drag_scroll`) — しきい値を超えたら 1:1 で付いてきて、 離した速度で慣性移動。
+- 止まると `rest_snap` に従って行の境目へ揃う。
+
+スクロールバーと組むときは `atlas_scrollbar` を value モードにし、 行単位の送りと
+掴んでいる間の通知を付ける:
+
+```jsonc
+{ "type": "atlas_scrollbar", ..., "value_var": "pos",
+  "count_var": "rows", "visible": 4,      // つまみの長さ = 表示行数 / 総行数
+  "row_steps": true,                      // ホイール / 増減 / 溝クリックを行単位に
+  "active_var": "bar_on" }                // つまみを掴んでいる間 "1"
+{ "type": "virtual_scroller", ..., "pos_var": "pos",
+  "row_count_var": "rows", "bar_active_var": "bar_on" }
+```
+
+つまみは一覧の位置に 1px 単位で付いていき、 ドラッグを離すと一覧が行へ揃う。
+ホイール / 増減 / 溝クリックは行単位の位置を書き、 一覧がそこまでアニメーションで
+送る。 `bar_active_var` が無いときは、 スクロールバーからの位置の変化をすべて即時に
+反映する。 縦の `atlas_slider` をスクロールバー代わりにする場合は、 スライダの
+`"active_var"` と一覧の `"pos_reverse": true` を使う。
 
 ### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
 
