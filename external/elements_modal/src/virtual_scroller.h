@@ -15,7 +15,10 @@
 //   ←→↑↓ (item_linear 時) … 項目の順番で前 (← ↑) / 次 (→ ↓) の選べる項目へ。
 //                      行の端では折り返し、 選べない項目は飛ばし、 窓の外なら
 //                      送ってからそのセルへフォーカスを移す。 先頭より前は
-//                      一覧の外の上方向へ、 末尾より後ろは何もしない
+//                      一覧の外の上方向へ、 末尾より後ろは一覧の外の下方向へ。
+//                      キー操作で一覧の外からフォーカスが入ったセルが選べない
+//                      項目なら、 いちばん近い選べる項目へ移す (窓の上半分に
+//                      入ったときは後ろ、 下半分なら前を先に探す)
 //   スクロールバー  … ratio() で位置を直接指定 (アニメーションなし)。
 //                      bar_active(false) で行へ揃える
 //   ドラッグ         … drag_scroll 有効時。 しきい値を超えたらセルの押下を
@@ -88,6 +91,8 @@ public:
 	bool                 click(context const& ctx, mouse_button btn) override;
 	void                 drag(context const& ctx, mouse_button btn) override;
 	bool                 key(context const& ctx, key_info k) override;
+	void                 begin_focus(focus_request req) override;
+	bool                 end_focus() override;
 	bool                 scroll(context const& ctx, point dir, point p) override;
 	bool                 cursor(context const& ctx, point p, cursor_tracking status) override;
 
@@ -126,6 +131,9 @@ private:
 		std::uint64_t t0 = 0;
 		double        dur = 0.0;
 	};
+	// 窓の中のセル (フォーカスを取れる要素)。 «窓の行» ごとに x の順で並べる
+	struct slot_cell { float x; element* el; cycfi::elements::rect b; };
+	using slot_cells = std::vector<std::vector<slot_cell>>;
 
 	double               max_px() const;
 	int                  max_top() const;
@@ -139,6 +147,11 @@ private:
 	bool                 edge_step(context const& ctx, int dir);
 	bool                 item_step(context const& ctx, int dir);
 	bool                 item_selectable(int idx) const;
+	bool                 locate_focus(context const& ctx, slot_cells& slots,
+	                                  int& cur_slot, int& cur_col, cycfi::elements::rect& fr);
+	void                 focus_item(cycfi::elements::view& v, slot_cells const& slots, int target);
+	void                 cache_cells(context const& ctx);
+	void                 check_entry(cycfi::elements::view& v);
 	void                 cancel_child_press(context const& ctx, mouse_button btn);
 	void                 start_flick();
 
@@ -166,6 +179,17 @@ private:
 	bool                 _bar_held = false;  // スクロールバーを掴んでいる間
 	bool                 _drawn = false;     // 一度でも描いたか
 	std::string          _item_mask;         // 項目ごとの選べる / 選べない
+	// 一覧の外からフォーカスが入ったときの補正。 フォーカスの移動は
+	// end_focus → begin_focus の順に同じ処理の中で届くので、 end_focus を
+	// 伴わない begin_focus を «外から入った» とみなす (_focus_moving は毎フレーム
+	// 戻す)。 判定と移し替えは次の tick で行う (同じフレームの描画より前に
+	// フォーカスが移るので、 選べない項目にフォーカスが載った姿は描かれない)。
+	// tick には描画の文脈が無いので、 セルの並びは描画のときに控えておく
+	// (セルの配置は固定なので一度でよい。 矩形は窓の左上・送り 0 を原点にした値)
+	bool                 _focus_moving = false;
+	bool                 _entry_check = false;
+	slot_cells           _cells;
+	cycfi::elements::rect _win{};            // 直近の描画での窓の矩形
 
 	// ポインタ
 	point                _last_cursor{};
