@@ -422,6 +422,14 @@ struct value_display
 		if (pos > 1.0) pos = 1.0;
 		double v = min + pos * (max - min);
 		if (step > 0.0) v = std::round(v / step) * step;
+		return format_value(v);
+	}
+
+	// 表示単位の値 v (min..max の範囲外でもよい) を digits / pad / prefix /
+	// suffix で整形する。 atlas_slider の "fixed_value" (つまみの範囲外の固定値)
+	// の表示にも使う。
+	std::string format_value(double v) const
+	{
 		char buf[64];
 		std::snprintf(buf, sizeof(buf), "%.*f", digits < 0 ? 0 : digits, v);
 		std::string body(buf);
@@ -5324,6 +5332,9 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 // 変数更新の後に呼ぶ。 VariableStore::set は同値なら no-op なので、
 // var → widget → var のエコーは 1 往復で自然に止まる。
 //
+// fixed / fixed_text = atlas_slider の "fixed_var"。 *fixed が true の間は
+// display_var に値の整形ではなく fixed_text を書く。
+//
 // owner = 値が変わったときに描き直す要素 (矢印やゲージを含む外側)。 変数の
 // 変化で再描画範囲を求めるのに使う。 ホストの set_var 以外 (スクロール一覧の
 // 毎フレームの送りなど) から value_var が書かれたときも、 これが無いと
@@ -5336,16 +5347,22 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
                       const std::string& value_var,
                       const std::string& display_var,
                       const value_display& disp,
-                      const std::shared_ptr<ce::atlas_progress>& gauge = {})
+                      const std::shared_ptr<ce::atlas_progress>& gauge = {},
+                      const std::shared_ptr<bool>& fixed = {},
+                      const std::string& fixed_text = {})
 {
 	if (!vars || !sb) return;
 	if (value_var.empty() && display_var.empty()) return;
 
+	auto text_of = [disp, fixed, fixed_text](double pos) {
+		return (fixed && *fixed) ? fixed_text : disp.format(pos);
+	};
+
 	// widget → var
 	auto prev = sb->on_change;
-	sb->on_change = [prev, vars, value_var, display_var, disp](double pos) {
+	sb->on_change = [prev, vars, value_var, display_var, text_of](double pos) {
 		if (!value_var.empty()) vars->set(value_var, fmt_slider_raw(pos));
-		if (!display_var.empty()) vars->set(display_var, disp.format(pos));
+		if (!display_var.empty()) vars->set(display_var, text_of(pos));
 		if (prev) prev(pos);
 	};
 
@@ -5353,13 +5370,13 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
 	const double init = sb->value();
 	if (!value_var.empty() && !vars->get(value_var))
 		vars->set_initial(value_var, fmt_slider_raw(init));
-	if (!display_var.empty()) vars->set(display_var, disp.format(init));
+	if (!display_var.empty()) vars->set(display_var, text_of(init));
 
 	// var → widget (+ display 追従)
 	if (!value_var.empty()) {
 		std::weak_ptr<ce::basic_slider_base> ws = sb;
 		std::weak_ptr<ce::atlas_progress> wg = gauge;
-		vars->subscribe(value_var, [ws, wg, vars, display_var, disp](const std::string& v) {
+		vars->subscribe(value_var, [ws, wg, vars, display_var, text_of](const std::string& v) {
 			double d = 0.0;
 			try { d = std::stod(v); } catch (...) { return; }
 			if (d < 0.0) d = 0.0;
@@ -5367,7 +5384,7 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
 			// "snap" 付きのスライダは目盛へ丸めた値を表示側にも使う。
 			if (auto s = ws.lock()) { s->value(d); d = s->value(); }
 			if (auto g = wg.lock()) g->set_value(d);
-			if (!display_var.empty()) vars->set(display_var, disp.format(d));
+			if (!display_var.empty()) vars->set(display_var, text_of(d));
 		}, owner);
 	}
 }
@@ -7501,12 +7518,83 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 // "active_var": つまみ / 溝を押している間 "1"、 離したら "0" をその変数へ書く
 // (virtual_scroller の "bar_active_var" に渡すと、 離したときに行へ揃う)。
 //
+// 固定値への差し替え: "fixed_var" の変数が立っている間 ("0" / "false" / 空
+// 以外) は、 値をスライダの範囲外の固定値へ差し替えている状態として扱う。
+// つまみ (thumb 形式) を描かず、 display_var には "fixed_text" (無ければ
+// "fixed_value" を "display" で整形した文字列) を書く。 «最速» «ミュート» の
+// チェックボックスと組む用途で、 チェックボックスの値変数をそのまま
+// "fixed_var" に書けばホスト実装なしで連動する。 固定中のスライダは操作を
+// 一切受け付けない (クリック・ドラッグ・キー・ホイール・増減矢印のどれも
+// 効かず、 フォーカスも取らない)。 スライダの位置は固定中も保たれているので、
+// 固定を外すと元の値に戻る。
+//   { "type": "atlas_slider", ..., "value_var": "v_speed",
+//     "display_var": "d_speed",
+//     "display": { "min": 50, "max": 5, "step": 5, "suffix": "ms" },
+//     "fixed_var": "v_fastest", "fixed_value": 0 }     // チェック中は «0ms»
+//
 // **矢印の名前は左右上下ではなく «減 (dec) / 増 (inc)»**。 縦 ("vertical": true)
 // のスライダは value 0 が下なので dec の絵は下端に置くことになるが、 それは
 // "dec_at" が決めるのでキー名は変わらない。 幾何名 ("left"/"right"、 縦なら
 // "down"/"up") もエイリアスとして受ける。
 //---------------------------------------------------------------------------
 namespace {
+// "fixed_var" で固定している間、 スライダ (増減矢印を含む) への入力を止める。
+// 描画はそのまま (つまみは thumb 側で別に消す)。 フォーカスも取らず、
+// 当たり判定にも出ない。
+template <typename Subject>
+class em_input_block : public ce::proxy<Subject>
+{
+public:
+	em_input_block(Subject subject, std::shared_ptr<bool> blocked)
+	 : ce::proxy<Subject>(std::move(subject)), _blocked(std::move(blocked))
+	{}
+
+	bool blocked() const { return _blocked && *_blocked; }
+
+	ce::element* hit_test(ce::context const& ctx, ce::point p,
+	                      bool leaf, bool control) override
+	{
+		if (blocked()) return nullptr;
+		return ce::proxy<Subject>::hit_test(ctx, p, leaf, control);
+	}
+	bool wants_focus() const override
+	{
+		return !blocked() && ce::proxy<Subject>::wants_focus();
+	}
+	bool wants_control() const override
+	{
+		return !blocked() && ce::proxy<Subject>::wants_control();
+	}
+	bool is_enabled() const override
+	{
+		return !blocked() && ce::proxy<Subject>::is_enabled();
+	}
+	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	{
+		if (blocked()) return false;
+		return ce::proxy<Subject>::click(ctx, btn);
+	}
+	bool key(ce::context const& ctx, ce::key_info k) override
+	{
+		if (blocked()) return false;
+		return ce::proxy<Subject>::key(ctx, k);
+	}
+	bool cursor(ce::context const& ctx, ce::point p,
+	            ce::cursor_tracking status) override
+	{
+		if (blocked()) return false;
+		return ce::proxy<Subject>::cursor(ctx, p, status);
+	}
+	bool scroll(ce::context const& ctx, ce::point dir, ce::point p) override
+	{
+		if (blocked()) return false;
+		return ce::proxy<Subject>::scroll(ctx, dir, p);
+	}
+
+private:
+	std::shared_ptr<bool> _blocked;
+};
+
 // fill 形式スライダの見えない thumb (0x0)。 slider_base は thumb の大きさを
 // 差し引いて可動域を計算するので、 0 サイズなら track 全域が可動域になる。
 struct em_null_thumb : cycfi::elements::element
@@ -7651,6 +7739,18 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		}
 	}
 
+	// "fixed_var" (固定値への差し替え中はつまみを描かず、 操作も止める)。 thumb_shown は
+	// つまみの表示条件で、 fixed の否定を保つ。
+	const std::string fixed_var = string_or(o, "fixed_var");
+	std::shared_ptr<bool> fixed, thumb_shown;
+	if (!fixed_var.empty()) {
+		fixed       = std::make_shared<bool>(false);
+		thumb_shown = std::make_shared<bool>(true);
+		if (auto* cur = _vars->get(fixed_var))
+			*fixed = !(*cur == "0" || *cur == "false" || cur->empty());
+		*thumb_shown = !*fixed;
+	}
+
 	element_ptr shared;
 	std::shared_ptr<ce::atlas_progress> gauge;   // fill 形式のみ
 	if (fill_mode) {
@@ -7724,6 +7824,11 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 			                                      /*stretch_h=*/false,
 			                                      /*stretch_v=*/false));
 		}
+		if (thumb_shown) {
+			auto bare = thumb_img;
+			thumb_img = ce::share(visible_element<decltype(ce::hold(bare))>(
+				ce::hold(bare), thumb_shown));
+		}
 		// track 画像は "at"(#範囲) と同じ矩形で書き出されており、 枠の角丸
 		// ボーダーまで込みで widget 全域を表現する素材。 slider_base の既定
 		// track_bounds() は thumb がはみ出さないよう thumb 半分だけ内側に
@@ -7776,6 +7881,12 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		};
 		part = st;
 	}
+	// 固定中は増減矢印も含めて操作を止める
+	if (fixed) {
+		auto inner = part;
+		part = ce::share(em_input_block<decltype(ce::hold(inner))>(
+			ce::hold(inner), fixed));
+	}
 
 	register_id(o, part);
 	note_initial_focus(o, part);
@@ -7787,8 +7898,26 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
 		// 書く。 数値表示は label の "text_var": display_var で受ける。
-		wire_slider_vars(_vars, sb, part, value_var,
-		                 string_or(o, "display_var"), disp, gauge);
+		const std::string display_var = string_or(o, "display_var");
+		std::string fixed_text = string_or(o, "fixed_text");
+		if (fixed_text.empty() && get_field(o, "fixed_value"))
+			fixed_text = disp.format_value(number_or(o, "fixed_value", 0.0));
+		wire_slider_vars(_vars, sb, part, value_var, display_var, disp, gauge,
+		                 fixed, fixed_text);
+		if (fixed) {
+			// 固定の切り替え: つまみの表示と数値表示を追従させる
+			auto vars = _vars;
+			std::weak_ptr<ce::basic_slider_base> ws = sb;
+			vars->subscribe(fixed_var,
+				[fixed, thumb_shown, ws, vars, display_var, disp, fixed_text](
+					const std::string& v) {
+					*fixed = !(v == "0" || v == "false" || v.empty());
+					*thumb_shown = !*fixed;
+					if (display_var.empty()) return;
+					if (*fixed) vars->set(display_var, fixed_text);
+					else if (auto s = ws.lock()) vars->set(display_var, disp.format(s->value()));
+				}, part);
+		}
 		// "active_var": つまみ / 溝を押している間 "1"、 離したら "0"。
 		// virtual_scroller が «離したら行へ揃える» のに使う。
 		if (std::string av = string_or(o, "active_var"); !av.empty()) {

@@ -363,6 +363,7 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - **両端の増減矢印** (`"dec"` / `"inc"`): アトラス素材の矢印ボタンを両脇に置いて **矢印 + スライダを 1 パーツ**にできる。 `"dec"` / `"inc"` はフレーム指定 (`{ "normal": [x,y,w,h], "hilite": …, "pressed": …, "disabled": … }`、 配列 1 本なら normal のみ)、 置き場所は `"dec_at"` / `"inc_at"` (widget `at` 左上原点の相対 px、 必須)。 本体の領域は `"track_at"` (省略時は矢印の外側から自動算出)。 1 クリックの増減は `"step"` (0..1。 省略時は `display` の 1 目盛、 それも無ければ 5%)、 押し続けの自動リピートは `"repeat"` / `"repeat_delay_ms"` / `"repeat_rate_ms"`、 キー / パッドで値が動いたときは向きの矢印が `"flash_ms"` だけ光る。 **名前は左右上下ではなく «減 (dec) / 増 (inc)»** — 縦にしたときの増える側が widget の種類で逆になるため。 幾何名 (`left`/`right`、 縦なら `down`/`up`) もエイリアスで受ける。 矢印はフォーカスを取らず、 クリック時はフォーカスを本体へ渡す。 送りの実体は値編集そのものなので既存の `value_var` / `display_var` / `onAction` 配線にそのまま乗る。
   - **目盛単位の制約** (`"snap": true`): 値を 1 目盛の倍数にしか止めない。 下記「スライダの目盛 (`snap`)」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
   - **押している間の通知** (`"active_var": "name"`): つまみ / 溝を押している間 `"1"`、 離したら `"0"` をその変数へ書く。 `virtual_scroller` の `"bar_active_var"` に渡すと、 縦スライダをスクロールバー代わりにしたとき «離したら行へ揃う» になる。
+  - **固定値への差し替え** (`"fixed_var"` + `"fixed_value"` / `"fixed_text"`): «最速» «ミュート» のようなチェックボックスと組む。 `fixed_var` の変数が立っている間 (`"0"` / `"false"` / 空 以外) は、 つまみ (thumb 形式) を描かず、 `display_var` に `fixed_text` (無ければ `fixed_value` を `display` で整形した文字列) を書く。 チェックボックス (`atlas_toggle`) の `value_var` をそのまま `fixed_var` に書けばホスト実装なしで連動する。 固定中のスライダは操作を一切受け付けない (クリック・ドラッグ・キー・ホイール・増減矢印のどれも効かず、 フォーカスも取らない)。 スライダの位置は固定中も保たれ、 外すと元の値の表示に戻る。 `fixed_value` はスライダの範囲外でもよい — 例: スライダ 50ms〜5ms + 最速 0ms = `"display": {"min": 50, "max": 5, "step": 5, "suffix": "ms"}, "fixed_var": "v_fastest", "fixed_value": 0`。
 - `atlas_number` — **数字素材 (0-9 の sub-rect) で数値を描く**表示専用パーツ。 フォントではなく «絵の数字» を出したいスコア / 残数 / 音量表示用。
 
   ```jsonc
@@ -715,6 +716,7 @@ bool on = elements_modal::focus_ring_enabled();
 | `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
 | `count_var` / `visible_count_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
 | `active_var` | atlas_slider / atlas_scrollbar | 書き (押している / 掴んでいる間) | `"1"` / `"0"` |
+| `fixed_var` | atlas_slider | 読み (立っている間つまみを消して固定値を表示し、 操作を止める) | `"0"` / `"false"` / 空 = 固定なし、 それ以外 = 固定 |
 | `row_count_var` / `row_ready_var` / `reveal_row_var` | virtual_scroller | 読み (総行数 / 差し替え済みの行 / 見せたい行) | 10 進整数 |
 | `top_row_var` | virtual_scroller | 書き (先頭行が変わったとき) | 10 進整数 |
 | `pos_var` | virtual_scroller | **双方向** (送りで書き + 変数変更でその位置へ送る) | 10 進小数 (`pos_reverse` で 1.0 = 上端) |
