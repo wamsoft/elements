@@ -206,6 +206,10 @@ struct overlay_session::impl
 	bool started        = false;
 	bool finished_      = false;
 
+	// start() から初期フォーカスの確定 (次 idle) までの間に、 ホストが
+	// focus_by_id() でフォーカス先を指定した。 確定時にこの指定を上書きしない。
+	bool host_focus_requested_ = false;
+
 	// 退場 (exit) 演出の再生中フラグ。 finish 要求時に exit 束縛があれば、
 	// すぐ finished_ にせず exit 演出を再生し、 完了してから finished_ にする
 	// (退場×遷移の協調)。 この間は入力を受け付けない (active() が false)。
@@ -969,13 +973,18 @@ bool overlay_session::start(const std::string& json_utf8,
 			        layout.actions.initial_focus_id.c_str());
 		}
 	}
+	// start() 直後にホストが focus_by_id() を呼んだときは、 そちらを優先する
+	// (initial_focus はその画面の既定。 前回の位置へ戻す等のホスト指定が勝つ)。
+	_impl->host_focus_requested_ = false;
 	if (focus_by_id || !layout.initial_focus_list.empty() || layout.initial_focus) {
 		auto cands = layout.initial_focus_list;
 		auto fb    = layout.initial_focus;
+		auto* iraw = _impl.get();
 		auto* vraw = _impl->view.get();
 		_impl->view->post(
-			[vraw, byid = std::move(focus_by_id), cands = std::move(cands),
+			[iraw, vraw, byid = std::move(focus_by_id), cands = std::move(cands),
 			 fb = std::move(fb)]() {
+				if (iraw->host_focus_requested_) return;
 				if (byid) { vraw->focus(byid); return; }
 				for (auto const& e : cands) {
 					if (e && e->is_enabled()) { vraw->focus(e); return; }
@@ -1060,6 +1069,7 @@ void overlay_session::focus_by_id(const std::string& id)
 	}
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
+	_impl->host_focus_requested_ = true;
 	_impl->view->focus(it->second);
 }
 
