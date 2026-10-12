@@ -7488,6 +7488,16 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 //                "insets": [l, t, r, b],     // 伸ばさずに保つ四辺
 //                "size": [w, h] } }          // つまみの表示サイズ (省略= rect)
 //
+// つまみの状態別の絵: "thumb_hilite" (フォーカス中) / "thumb_pressed" (つまみ /
+// 溝を押している間) を書くと、 つまみをその絵に差し替える (無い方は hilite →
+// normal の順に縮退)。 書き方は "thumb" と同じ ([x,y,w,h] / {"rect": …})。
+// 単一矩形は実寸のままつまみの中央へ描く (一回り大きい押し下げの絵も縮めない)。
+// 9-slice の insets と表示サイズは "thumb" のものを使う。 hover_focus が有効なら
+// マウスを載せたときもフォーカス経由で hilite になる (atlas_button の
+// "focus_hilite" と同じ見え方)。
+//   { "type": "atlas_slider", ..., "thumb": [...],
+//     "thumb_hilite": [...], "thumb_pressed": [...] }
+//
 // fill 形式 (ゲージ型スライダ): "thumb" の代わりに "fill" を指定すると、
 // atlas_progress と同じ track+fill 描画のまま**操作可能**なスライダになる
 // (クリック/ドラッグ/矢印キー/パッドで値変更)。 "fill_at" は fill の配置先を
@@ -7622,6 +7632,52 @@ struct em_null_thumb : cycfi::elements::element
 	}
 };
 
+// つまみの状態 (フォーカス中 / 押している間)。 スライダ本体が書き、 つまみの
+// 絵 (em_state_thumb) が読む。
+struct em_thumb_state
+{
+	bool focused = false;
+	bool pressed = false;
+};
+
+// 状態別の絵を持つつまみ。 押している間は pressed、 フォーカス中は hilite、
+// それ以外は normal を描く (無い絵は normal に縮退)。 大きさは normal が決める。
+class em_state_thumb : public cycfi::elements::element
+{
+public:
+	em_state_thumb(element_ptr normal, element_ptr hilite, element_ptr pressed,
+	               std::shared_ptr<em_thumb_state> state)
+	 : _normal(std::move(normal)), _hilite(std::move(hilite)),
+	   _pressed(std::move(pressed)), _state(std::move(state))
+	{}
+
+	cycfi::elements::view_limits
+	limits(cycfi::elements::basic_context const& ctx) const override
+	{
+		return _normal->limits(ctx);
+	}
+	void layout(cycfi::elements::context const& ctx) override
+	{
+		for (auto* e : {&_normal, &_hilite, &_pressed})
+			if (*e) (*e)->layout(ctx);
+	}
+	void draw(cycfi::elements::context const& ctx) override
+	{
+		current().draw(ctx);
+	}
+
+private:
+	cycfi::elements::element& current() const
+	{
+		if (_state->pressed && _pressed) return *_pressed;
+		if ((_state->pressed || _state->focused) && _hilite) return *_hilite;
+		return *_normal;
+	}
+
+	element_ptr _normal, _hilite, _pressed;
+	std::shared_ptr<em_thumb_state> _state;
+};
+
 // thumb 形式 atlas_slider の base。 track 画像は widget 全域 (= "at"/#範囲) を
 // そのまま埋める素材 (角丸ボーダー等の枠込み) を前提にしており、 slider_base
 // 既定の「thumb がはみ出さないよう track を thumb 半分だけ内側にインセット」
@@ -7632,17 +7688,34 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 	using cycfi::elements::basic_slider_base::basic_slider_base;
 	// つまみ / 溝を押している間 true ("active_var")
 	std::function<void(bool)> on_active;
+	// つまみの状態別の絵 ("thumb_hilite" / "thumb_pressed") があるとき
+	std::shared_ptr<em_thumb_state> thumb_state;
 	void begin_tracking(cycfi::elements::context const& ctx,
 	                    cycfi::elements::tracker_info& ti) override
 	{
 		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
+		if (thumb_state) thumb_state->pressed = true;
 		if (on_active) on_active(true);
 	}
 	void end_tracking(cycfi::elements::context const& ctx,
 	                  cycfi::elements::tracker_info& ti) override
 	{
 		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
+		if (thumb_state) {
+			thumb_state->pressed = false;
+			ctx.view.refresh(ctx);
+		}
 		if (on_active) on_active(false);
+	}
+	void begin_focus(focus_request req) override
+	{
+		cycfi::elements::basic_slider_base::begin_focus(req);
+		if (thumb_state) thumb_state->focused = true;
+	}
+	bool end_focus() override
+	{
+		if (thumb_state) thumb_state->focused = false;
+		return cycfi::elements::basic_slider_base::end_focus();
 	}
 	cycfi::elements::rect
 	track_bounds(cycfi::elements::context const& ctx) const override
@@ -7769,6 +7842,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 
 	element_ptr shared;
 	std::shared_ptr<ce::atlas_progress> gauge;   // fill 形式のみ
+	std::shared_ptr<em_thumb_state> thumb_state; // 状態別のつまみがあるときのみ
 	if (fill_mode) {
 		ce::rect fill_src = parse_xywh(*fl);
 		ce::rect fill_at{};
@@ -7830,15 +7904,30 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// 9-slice つまみは両軸 stretchable なので、 指定サイズで固定して
 		// «伸びる胴 + 潰れないキャップ» を作る (slider は thumb の limits から
 		// 可動域を出すため、 固定しないと widget いっぱいに伸びてしまう)。
-		element_ptr thumb_img;
-		if (thumb_nine) {
-			thumb_img = ce::share(ce::fixed_size(
-				ce::point{thumb_w, thumb_h},
-				ce::atlas_nine(pm, thumb_src, thumb_ins)));
-		} else {
-			thumb_img = ce::share(ce::atlas_image(pm, thumb_src,
-			                                      /*stretch_h=*/false,
-			                                      /*stretch_v=*/false));
+		// native: 矩形を実寸のまま bounds 中央へ描く (状態別の絵用)
+		auto make_thumb_img = [&](const ce::rect& src, bool native) -> element_ptr {
+			if (thumb_nine)
+				return ce::share(ce::fixed_size(
+					ce::point{thumb_w, thumb_h},
+					ce::atlas_nine(pm, src, thumb_ins)));
+			return ce::share(ce::atlas_image(pm, src,
+			                                 /*stretch_h=*/false,
+			                                 /*stretch_v=*/false, native));
+		};
+		element_ptr thumb_img = make_thumb_img(thumb_src, false);
+		// 状態別のつまみ ("thumb_hilite" = フォーカス中 / "thumb_pressed" =
+		// 押している間)。 書き方は "thumb" と同じ。 単一矩形は実寸のまま
+		// つまみの中央へ描く (押し下げの絵が一回り大きい素材でも縮めない)。
+		// 9-slice は "thumb" の insets と表示サイズで描く。
+		const thumb_spec ts_hi = parse_thumb_spec(o, "thumb_hilite");
+		const thumb_spec ts_pr = parse_thumb_spec(o, "thumb_pressed");
+		if (ts_hi.valid || ts_pr.valid) {
+			thumb_state = std::make_shared<em_thumb_state>();
+			thumb_img = ce::share(em_state_thumb(
+				thumb_img,
+				ts_hi.valid ? make_thumb_img(ts_hi.src, true) : nullptr,
+				ts_pr.valid ? make_thumb_img(ts_pr.src, true) : nullptr,
+				thumb_state));
 		}
 		if (thumb_shown) {
 			auto bare = thumb_img;
@@ -7855,6 +7944,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		auto sl = ce::basic_slider<
 			decltype(ce::hold(thumb_img)), decltype(ce::hold(track_img)),
 			em_slider_base>(ce::hold(thumb_img), ce::hold(track_img), initial);
+		sl.thumb_state = thumb_state;
 		if (!id.empty()) {
 			auto cb_id = id;
 			auto user_cb = _cb;
