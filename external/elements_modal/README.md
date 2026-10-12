@@ -545,6 +545,7 @@ button / checkbox / toggle_button / slide_switch / input_box / selection_menu (=
 |---|---|---|
 | `id` | string | event_callback / result.values のキー、 shortcut の `target` 参照先 |
 | `initial_focus` | bool / number | 起動時フォーカスの候補。 **複数の要素に指定でき**、 先頭候補が無効 (`enabled_var` で disabled) なら次の有効な候補へ落ちる。 数値を書くと明示優先度 (小さいほど優先。 `true` = 0)、 同値は build 順。 候補の確定は表示直後の idle まで遅延するので、 ホストが `set_var` で有効/無効を流し込んでから判定される |
+| `focus_nav` | `{left/right/up/down: id or [id, ...]}` | 矢印キー / 十字キーでのフォーカスの移動先を、 方向ごとに明示する (幾何ナビより優先。 書いていない方向は幾何ナビ)。 段ずれのレイアウト (ソフトキーボード等) で意図どおりに動かすためのもの。 値は id 1 つか **候補の id の配列** で、 配列なら前から順に «いまフォーカスを受け取れるもの» (表示中で、 `skip_disabled` なら有効なもの) へ移る。 自分の id を最後に置くと «どれも受け取れなければ動かない»。 どれも受け取れなければ幾何ナビにフォールバック。 例: `"focus_nav": {"right": ["unbind_3", "bind_3"], "down": "ok"}` |
 | `close_on_click` | bool | (button のみ) true で click 時に modal を閉じて `result.action = id` とする。 **デフォルト false** で、 click は外部 callback (= `on_event` / krkrz の `ElementsDialog.onAction`) を発火するだけ |
 | `vars_on_focus` | `{name: string, ...}` | この要素が focus を得たときに変数 store に書き込む値の dict。 同じ変数を `text_var` で見ている label に自動反映 (focus 連動ヘルプテキスト等) |
 
