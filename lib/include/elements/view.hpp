@@ -115,12 +115,16 @@ namespace cycfi::elements
       // Explicit focus-navigation override for arrow_focus_navigation.
       // Called with the currently focused element and the direction
       // (0=left, 1=right, 2=up, 3=down) before the geometric pick. Return
-      // the element to focus, or nullptr to fall back to the default
-      // geometric navigation. Lets hosts drive navigation from a
-      // declarative per-widget map (e.g. JSON "focus_nav") when the
-      // geometric heuristic does not match the intended layout.
+      // the candidate elements to focus in order of preference; the first
+      // one that can take the focus now (shown, and enabled when
+      // focus_skip_disabled is on) wins. Returning the current element
+      // keeps the focus where it is. An empty list, or a list with no
+      // usable candidate, falls back to the default geometric navigation.
+      // Lets hosts drive navigation from a declarative per-widget map
+      // (e.g. JSON "focus_nav") when the geometric heuristic does not
+      // match the intended layout.
       using focus_nav_override_function =
-         std::function<element*(element* current, int dir)>;
+         std::function<std::vector<element*>(element* current, int dir)>;
       void                    focus_nav_override(focus_nav_override_function f);
 
       // Called by an element from inside key() when it declines an arrow

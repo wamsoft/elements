@@ -1087,14 +1087,18 @@
                      // the host maps inner widgets — query the override
                      // down the proxy chain, then resolve the returned
                      // (possibly inner) element back to a collected entry.
-                     // Falls back to the geometric pick when unmapped.
+                     // Candidates are tried in order and only those still
+                     // in 'list' (shown, and enabled under skip_disabled)
+                     // count. Falls back to the geometric pick when
+                     // unmapped or when no candidate is usable.
                      if (nav_override)
                      {
-                        element* o = nullptr;
+                        std::vector<element*> cands;
                         element* c = cur_collected;
                         while (c)
                         {
-                           if ((o = nav_override(c, static_cast<int>(d))))
+                           cands = nav_override(c, static_cast<int>(d));
+                           if (!cands.empty())
                               break;
                            if (auto* p = dynamic_cast<proxy_base*>(c))
                            {
@@ -1108,14 +1112,18 @@
                            }
                            break;
                         }
-                        if (o)
+                        for (element* o : cands)
                         {
+                           if (!o)
+                              continue;
                            for (auto const& f : list)
                               if (entry_contains(f.el, o))
                               {
                                  target = f.el;
                                  break;
                               }
+                           if (target)
+                              break;
                         }
                      }
                      if (!target)

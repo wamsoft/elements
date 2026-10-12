@@ -2018,15 +2018,16 @@ public:
 		if (!_focus_nav_specs.empty()) {
 			auto tbl = std::make_shared<std::map<
 				cycfi::elements::element*,
-				std::array<element_ptr, 4>>>();
+				std::array<std::vector<element_ptr>, 4>>>();
 			for (auto& s : _focus_nav_specs) {
-				std::array<element_ptr, 4> t{};
+				std::array<std::vector<element_ptr>, 4> t{};
 				for (int i = 0; i < 4; ++i) {
-					if (s.ids[i].empty()) continue;
-					auto it = _id_to_element.find(s.ids[i]);
-					if (it != _id_to_element.end()) t[i] = it->second;
-					else em_logf("elements_modal: focus_nav target not found: %s",
-					             s.ids[i].c_str());
+					for (auto& id : s.ids[i]) {
+						auto it = _id_to_element.find(id);
+						if (it != _id_to_element.end()) t[i].push_back(it->second);
+						else em_logf("elements_modal: focus_nav target not found: %s",
+						             id.c_str());
+					}
 				}
 				(*tbl)[s.el.get()] = std::move(t);
 			}
@@ -2035,12 +2036,13 @@ public:
 				[tbl](cycfi::elements::view& vw) {
 					vw.focus_nav_override(
 						[tbl](cycfi::elements::element* cur, int dir)
-							-> cycfi::elements::element* {
-							if (dir < 0 || dir > 3) return nullptr;
+							-> std::vector<cycfi::elements::element*> {
+							std::vector<cycfi::elements::element*> r;
+							if (dir < 0 || dir > 3) return r;
 							auto it = tbl->find(cur);
-							if (it == tbl->end()) return nullptr;
-							auto& t = it->second;
-							return t[dir] ? t[dir].get() : nullptr;
+							if (it == tbl->end()) return r;
+							for (auto& e : it->second[dir]) r.push_back(e.get());
+							return r;
 						});
 				});
 		}
@@ -2072,7 +2074,7 @@ private:
 	// で id 解決 + view 配線に変換する)。 ids は left/right/up/down の順。
 	struct focus_nav_spec {
 		element_ptr el;
-		std::array<std::string, 4> ids;
+		std::array<std::vector<std::string>, 4> ids;   // 方向ごとの候補 (前が優先)
 	};
 	std::vector<focus_nav_spec> _focus_nav_specs;
 
@@ -3656,17 +3658,31 @@ void LayoutBuilder::register_id(const picojson::object& o,
 	// フォーカス移動先をウィジェット単位で明示する (幾何ナビより優先、
 	// 未指定方向は幾何ナビにフォールバック)。 ソフトキーボードのような
 	// 段ずれレイアウトで意図どおりの移動を定義するための機構。
+	// 値は id 1 つか、 候補の id の配列 (["unbind_3", "bind_3"])。 配列なら
+	// 前から順に、 いまフォーカスを受け取れるもの (表示中で、 skip_disabled
+	// なら有効なもの) へ移る。 自分の id を最後に置くと «どれも無理なら
+	// 動かない» になる。 どれも受け取れなければ幾何ナビにフォールバック。
 	// ターゲット id は build 完了後に解決するので文字列のまま控える。
 	if (auto* fv = get_field(o, "focus_nav"); fv && fv->is<picojson::object>()) {
 		const auto& fo = fv->get<picojson::object>();
 		focus_nav_spec spec;
 		spec.el = shared;
-		spec.ids[0] = string_or(fo, "left");
-		spec.ids[1] = string_or(fo, "right");
-		spec.ids[2] = string_or(fo, "up");
-		spec.ids[3] = string_or(fo, "down");
-		if (shared && (!spec.ids[0].empty() || !spec.ids[1].empty() ||
-		               !spec.ids[2].empty() || !spec.ids[3].empty()))
+		static const char* const dirs[4] = { "left", "right", "up", "down" };
+		bool any = false;
+		for (int i = 0; i < 4; ++i) {
+			const picojson::value* dv = get_field(fo, dirs[i]);
+			if (!dv) continue;
+			if (dv->is<std::string>()) {
+				if (!dv->get<std::string>().empty())
+					spec.ids[i].push_back(dv->get<std::string>());
+			} else if (dv->is<picojson::array>()) {
+				for (const auto& e : dv->get<picojson::array>())
+					if (e.is<std::string>() && !e.get<std::string>().empty())
+						spec.ids[i].push_back(e.get<std::string>());
+			}
+			any = any || !spec.ids[i].empty();
+		}
+		if (shared && any)
 			_focus_nav_specs.push_back(std::move(spec));
 	}
 }
