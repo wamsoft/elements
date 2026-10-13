@@ -357,13 +357,13 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
 - `atlas_slider` — 0..1 スライダ。 `"atlas": name` + `"track": [x,y,w,h]` + `"initial": double` (0..1、 既定 0.5) + `"vertical": bool` (既定 false) + `"id"`。 見た目は 2 形式:
   - **thumb 形式**: `"thumb": [x,y,w,h]`。 track はスライダ軸方向に stretchable / 直交軸固定、 thumb は完全固定。 track 画像は **widget の全域** (= canvas 配置なら `at` の矩形そのまま) に描かれる — 角丸ボーダー込みで書き出した枠素材の端が切り詰められないようにするため、 「thumb 半分だけ内側へインセット」という一般 slider の既定は使わない。 thumb は直交軸も素材本来のサイズでレール中央に置かれる (canvas 配置でつまみがレール高さに押し潰されない)。 **`track` は省略可** — 溝 (バー) が背景画像側に描いてある素材向けで、 見えない stretchable 要素が敷かれて thumb だけ描画される (可動域は widget の bounds いっぱい)。
   - **thumb の 9-slice (キャップ付きつまみ)**: `"thumb"` はオブジェクトでも書ける — `{ "rect": [x,y,w,h], "insets": [l,t,r,b], "size": [w,h] }`。 `insets` の四辺を潰さずに `size` のつまみへ伸ばす (`size` 省略時は `rect` 原寸)。 上下 (左右) にキャップがあり胴だけ伸びる資材を、 素材原寸に縛られずレールの長さに合わせて使える。 `insets` が全て 0 なら単一矩形と同じなので配列形式でよい。
-  - **つまみの状態別の絵** (`"thumb_hilite"` / `"thumb_pressed"`): フォーカスを持っている間は `thumb_hilite`、 つまみ / 溝を押している間は `thumb_pressed` の絵に差し替える (無い方は hilite → thumb の順に縮退)。 書き方は `"thumb"` と同じ。 単一矩形は実寸のままつまみの中央へ描く (一回り大きい押し下げの絵も縮めない)。 9-slice は `"thumb"` の insets と表示サイズで描く。 `hover_focus` が有効ならマウスを載せたときもフォーカス経由で hilite になるので、 キー / パッドでもマウスでも «オーバーの絵 = フォーカスの印» になる (`atlas_button` の `"focus_hilite"` と同じ見え方)。
+  - **つまみの状態別の絵** (`"thumb_hilite"` / `"thumb_pressed"`): フォーカスを持っている間は `thumb_hilite`、 つまみを押している間 (溝を押してからドラッグしたときを含む) は `thumb_pressed` の絵に差し替える (無い方は hilite → thumb の順に縮退)。 書き方は `"thumb"` と同じ。 単一矩形は実寸のままつまみの中央へ描く (一回り大きい押し下げの絵も縮めない)。 9-slice は `"thumb"` の insets と表示サイズで描く。 `hover_focus` が有効ならマウスを載せたときもフォーカス経由で hilite になるので、 キー / パッドでもマウスでも «オーバーの絵 = フォーカスの印» になる (`atlas_button` の `"focus_hilite"` と同じ見え方)。
   - **fill 形式 (ゲージ型)**: thumb の代わりに `"fill": [x,y,w,h]` を指定すると、 atlas_progress と同じ track+fill 描画のまま**操作可能** (クリック/ドラッグ/矢印キー/パッド) なスライダになる。 `"fill_at": [dx,dy,w,h]` (任意) で fill の配置先を track ソース矩形の左上原点 px で指定 (枠の内側にバーが入るインセット素材向け)。
   - どちらも値変化で `value_t{double pos}` を発火。 `"value_var": "name"` (任意) で変数 store と**双方向**連動: 変数変更で値が追従 (通知のみ、 イベント非発火)、 ユーザ操作では on_change 発火に加えて変数側も更新される。 値は `"0.75"` 形式の 10 進文字列 (常に 0..1)。
   - **数値表示** (`"display_var"` + `"display"`): 下記「スライダの数値表示」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
   - **両端の増減矢印** (`"dec"` / `"inc"`): アトラス素材の矢印ボタンを両脇に置いて **矢印 + スライダを 1 パーツ**にできる。 `"dec"` / `"inc"` はフレーム指定 (`{ "normal": [x,y,w,h], "hilite": …, "pressed": …, "disabled": … }`、 配列 1 本なら normal のみ)、 置き場所は `"dec_at"` / `"inc_at"` (widget `at` 左上原点の相対 px、 必須)。 本体の領域は `"track_at"` (省略時は矢印の外側から自動算出)。 1 クリックの増減は `"step"` (0..1。 省略時は `display` の 1 目盛、 それも無ければ 5%)、 押し続けの自動リピートは `"repeat"` / `"repeat_delay_ms"` / `"repeat_rate_ms"`、 キー / パッドで値が動いたときは向きの矢印が `"flash_ms"` だけ光る。 **名前は左右上下ではなく «減 (dec) / 増 (inc)»** — 縦にしたときの増える側が widget の種類で逆になるため。 幾何名 (`left`/`right`、 縦なら `down`/`up`) もエイリアスで受ける。 矢印はフォーカスを取らず、 クリック時はフォーカスを本体へ渡す。 送りの実体は値編集そのものなので既存の `value_var` / `display_var` / `onAction` 配線にそのまま乗る。
   - **目盛単位の制約** (`"snap": true`): 値を 1 目盛の倍数にしか止めない。 下記「スライダの目盛 (`snap`)」を参照。 `slider` / `slider_with_range` / `atlas_slider` 共通。
-  - **押している間の通知** (`"active_var": "name"`): つまみ / 溝を押している間 `"1"`、 離したら `"0"` をその変数へ書く。 `virtual_scroller` の `"bar_active_var"` に渡すと、 縦スライダをスクロールバー代わりにしたとき «離したら行へ揃う» になる。
+  - スクロールバー (一覧の位置の表示と操作) には `atlas_scrollbar` を使う。 `atlas_slider` の `"active_var"` は廃止した (書いてあっても警告を出して無視する)。
   - **固定値への差し替え** (`"fixed_var"` + `"fixed_value"` / `"fixed_text"`): «最速» «ミュート» のようなチェックボックスと組む。 `fixed_var` の変数が立っている間 (`"0"` / `"false"` / 空 以外) は、 つまみ (thumb 形式) を描かず、 `display_var` に `fixed_text` (無ければ `fixed_value` を `display` で整形した文字列) を書く。 チェックボックス (`atlas_toggle`) の `value_var` をそのまま `fixed_var` に書けばホスト実装なしで連動する。 固定中のスライダは操作を一切受け付けない (クリック・ドラッグ・キー・ホイール・増減矢印のどれも効かず、 フォーカスも取らない)。 スライダの位置は固定中も保たれ、 外すと元の値の表示に戻る。 `fixed_value` はスライダの範囲外でもよい — 例: スライダ 50ms〜5ms + 最速 0ms = `"display": {"min": 50, "max": 5, "step": 5, "suffix": "ms"}, "fixed_var": "v_fastest", "fixed_value": 0`。
 - `atlas_number` — **数字素材 (0-9 の sub-rect) で数値を描く**表示専用パーツ。 フォントではなく «絵の数字» を出したいスコア / 残数 / 音量表示用。
 
@@ -385,15 +385,18 @@ top-level の `"atlases"` でアトラスを名前付きで事前ロードして
   - 各グリフは縦中央に、 左から `spacing` 間隔で並ぶ。 `align` は widget bounds 内の水平寄せ。
   - `set_text()` を持つ (`text_writer`) ので、 ホストから直接書き換えることもできる。
 
-- `atlas_scrollbar` — **溝 + つまみのスクロールバー**。 `"atlas": name` + `"thumb"` (atlas_slider と同じ 2 形式。 9-slice でキャップ付き資材も可) + `"track": [x,y,w,h]` (省略可 = 溝が背景側に描いてある素材) + `"vertical": bool` (既定 true) + `"id"`。 **行を自前で並べる一覧** (下記「一覧の «窓»」) に、 溝・つまみ・ページ送り・ホイール・ドラッグをホスト実装なしで足すためのもの (本文が `scroller` に載っているなら `scroller` の `pos_var` で足りる)。 つなぎ方は 2 通り:
-  - **index モード** (`"index_offset_var": "top"`): つまみが «一覧の先頭 index» を指す。 総件数 `"count"` / `"count_var"`、 見えている行数 `"visible"` / `"visible_count_var"` を渡すと、 **つまみの長さが «見えている行数 ÷ 総件数» に比例**する (件数が変われば長さも追従)。 «窓» の行と同じ `index_offset_var` を挿すだけで一覧が動く。 (行数の変数キーが `visible_var` でないのは、 `visible_var` が全 widget 共通の «表示 / 非表示» キーとして先に使われているため — 行数 0 でスクロールバーごと消える衝突を避けて `visible_count_var` へ改名した。)
-  - **value モード** (`"value_var": "pos"`): 0..1 の位置。 `scroller` の `pos_var` と同じ変数を挿せば本文と連動する。 count / visible があればつまみは可変長、 無ければ素材の原寸で固定長。
-  - 操作: つまみドラッグ / **溝クリックでページ送り** (`"page"` 行、 既定 = visible) / **ホイール** (`"wheel_step"` 行、 既定 1)。 `"thumb_min"` (既定 16) でつまみの最小長 px。
+- `atlas_scrollbar` — **溝 + つまみのスクロールバー**。 `"atlas": name` + `"thumb"` (atlas_slider と同じ 2 形式。 9-slice でキャップ付き資材も可) + `"track": [x,y,w,h]` (省略可 = 溝が背景側に描いてある素材) + `"vertical": bool` (既定 true) + `"id"`。 行を自前で並べる一覧 (下記「一覧の «窓»」) や、 `scroller` / `virtual_scroller` の位置に、 溝・つまみ・ページ送り・ホイール・ドラッグ・キー操作をホスト実装なしで足す。 つなぎ方は 2 通り:
+  - **index モード** (`"index_offset_var": "top"`): つまみが «一覧の先頭 index» を指す。 総件数 `"count"` / `"count_var"`、 見えている行数 `"visible"` / `"visible_count_var"` を渡す (件数が変われば長さと位置も追従)。 «窓» の行と同じ `index_offset_var` を挿すだけで一覧が動く。 (行数の変数キーが `visible_var` でないのは、 `visible_var` が全 widget 共通の «表示 / 非表示» キーとして先に使われているため — 行数 0 でスクロールバーごと消える衝突を避けて `visible_count_var` へ改名した。)
+  - **value モード** (`"value_var": "pos"`): 0..1 の位置 (**0 = 上端 / 左端**)。 `scroller` / `virtual_scroller` の `pos_var` と同じ変数を挿せば本文と連動する。
+  - **つまみの長さ**: 既定は «見えている行数 ÷ 総件数» に比例 (count / visible が無ければ素材の原寸)。 `"thumb_min"` (既定 16) で最小長 px。 **`"thumb_fixed": true`** で常に素材の原寸 (count / visible は送り量の計算にだけ使う)。 固定長のつまみは伸ばさず、 太さ方向も溝の中央に置く。
+  - **つまみの状態別の絵** (`"thumb_hilite"` / `"thumb_pressed"`): atlas_slider と同じ。 フォーカス中 (hover_focus ならマウスを載せたときも) は hilite、 つまみを掴んでいる間は pressed。 溝クリックでは pressed にしない。
+  - **溝クリック** (`"track_click"`): `"page"` (既定) はクリックした側へ 1 ページ (`"page"` 段、 既定 = visible)。 `"jump"` はクリック位置 (つまみの中心がそこに来る位置) を 1 段に丸めた位置へ移動し、 丸めた結果が今と同じ段ならクリックした側へ 1 段だけ動かす (近くを押しても必ず動く)。 `"jump"` で押したままドラッグすると、 つまみを中央で掴んだ扱いで追従する。 押し続けると、 つまみがポインタに届くまで同じ向きに送り続ける (`"track_repeat"` 既定 true、 `"repeat_delay_ms"` 既定 400 / `"repeat_rate_ms"` 既定 60)。 溝クリックは押した瞬間に処理し、 離した位置では値を変えない。
+  - **その他の操作**: つまみのドラッグ (1px 単位)、 ホイール (`"wheel_step"` 段、 既定 1)、 キー (縦は ↑↓、 横は ←→ で 1 段 / PageUp・PageDown で 1 ページ / Home・End で両端)、 パッド (1 段ずつ)。 **フォーカスを取る**ので `focus_nav` / `initial_focus` / hover_focus が atlas_slider と同じように効く。
+  - **1 段の大きさ**: index モードは 1 行。 value モードは `"row_steps": true` なら 1 行 (= 1 / (count - visible))、 無ければ 5% (ページは 10%)。 段の途中にいるときは、 送る向きの段の境目までを 1 段と数える。
   - 値が変わると変数へ書かれ、 `id` があれば `onAction` にも流れる (index モードは行 index の整数、 value モードは 0..1 の double)。
-  - **両端の増減ボタン**: atlas_slider と同じ `"dec"` / `"inc"` (+ `"dec_at"` / `"inc_at"` / `"track_at"` / `"repeat*"` / `"flash_ms"`) を書くと «両端にボタンのあるスクロールバー» になる。 送り量はホイールと同じ (`"wheel_step"` 行、 value モードは 5%)。 送りの実体は既存のスクロール処理に委ねるので、 矢印・ホイール・溝クリックが同じ規則で動く。
-  - **value モードで行単位に送る** (`"row_steps": true`): ホイール / 増減ボタン / 溝クリックの送り量を «行» で数える (1 行 = 1 / (count - visible))。 いまの位置を最寄りの行へ揃えてから送る。 count / visible が無いと効かない。 指定しなければ従来どおり 5% / 10%。
-  - **つまみを掴んでいる間の通知** (`"active_var": "name"`): つまみをドラッグしている間 `"1"`、 離したら `"0"`。
-  - `virtual_scroller` と組む場合は value モード + `"row_steps"` + `"active_var"` にする (下記「スムーズスクロール一覧」)。
+  - **両端の増減ボタン**: atlas_slider と同じ `"dec"` / `"inc"` (+ `"dec_at"` / `"inc_at"` / `"track_at"` / `"repeat*"` / `"flash_ms"`) を書くと «両端にボタンのあるスクロールバー» になる。 送り量はホイールと同じ。 縦では位置 0 が上なので、 dec の絵は上端に置く。
+  - **つまみを掴んでいる間の通知** (`"active_var": "name"`): つまみを掴んでいる間 `"1"`、 離したら `"0"`。 溝クリック / キー / ホイールでは立てない。
+  - `virtual_scroller` と組む場合は value モード + `"count_var"` / `"visible"` + `"row_steps"` + `"active_var"` にする (下記「スムーズスクロール一覧」)。
 - `atlas_progress` — 非インタラクティブのゲージ。 `"atlas": name` + `"track": [x,y,w,h]` + `"fill": [x,y,w,h]` + `"fill_at": [dx,dy,w,h]` (任意、 fill の配置インセット。 atlas_slider と同義) + `"value": double` (0..1 静的) + `"value_var": "name"` (任意、 変数 store キー、 string→double で reactive) + `"vertical": bool`。
 - `animated_sprite` — **アトラスのフレーム列を fps で自動送りするスプライトアニメ** (パラパラ / スプライトシート再生)。 `"atlas": name` + `"frames": [[u,v,w,h], ...]` (配列順 = 再生順) + `"fps": double` (既定 12) + `"loop": bool` (既定 true。 false は最終フレームで停止) + `"native_frames": bool` (実寸のまま中央へ)。 アニメアイコン、 スピナー、 待機ループ等の表示専用パーツ。
 - `atlas_cycle_picker` — **画像矢印ボタン式ピッカー**。 選択モデル (step / wrap / ←→ キー / パッド横軸) は `cycle_picker` と同一で、 描画をアトラス素材に置き換えたもの。 **フォーカス中は左右矢印が hilite フレームになる (= フォーカス表示を兼ねる)**。 クリックは left_at / right_at のヒットで ∓1 ステップ、 それ以外はフォーカス取得のみ。
@@ -717,11 +720,11 @@ bool on = elements_modal::focus_ring_enabled();
 | `at_var_offset` | canvas の子 | (指定値) | `[dx, dy, dw, dh]` — `at_var` の値への差分 |
 | `index_offset_var` | atlas_scrollbar | **双方向** (操作で書き / 変化で追従) | 10 進整数 (先頭 index) |
 | `count_var` / `visible_count_var` | atlas_scrollbar | 読み | 10 進整数 (総件数 / 見えている行数) |
-| `active_var` | atlas_slider / atlas_scrollbar | 書き (押している / 掴んでいる間) | `"1"` / `"0"` |
+| `active_var` | atlas_scrollbar | 書き (つまみを掴んでいる間) | `"1"` / `"0"` |
 | `fixed_var` | atlas_slider | 読み (立っている間つまみを消して固定値を表示し、 操作を止める) | `"0"` / `"false"` / 空 = 固定なし、 それ以外 = 固定 |
 | `row_count_var` / `row_ready_var` / `reveal_row_var` | virtual_scroller | 読み (総行数 / 差し替え済みの行 / 見せたい行) | 10 進整数 |
 | `top_row_var` | virtual_scroller | 書き (先頭行が変わったとき) | 10 進整数 |
-| `pos_var` | virtual_scroller | **双方向** (送りで書き + 変数変更でその位置へ送る) | 10 進小数 (`pos_reverse` で 1.0 = 上端) |
+| `pos_var` | virtual_scroller | **双方向** (送りで書き + 変数変更でその位置へ送る) | 10 進小数 (0 = 上端) |
 | `bar_active_var` | virtual_scroller | 読み (スクロールバーを掴んでいる間) | `"1"` / それ以外 |
 | `hover_var` / `select_var` | list | 書き (行に乗った / 行を選んだ) | 10 進整数のデータ index (hover 無しは `"-1"`) |
 | `row_hover_var` / `row_select_var` | list | 書き (行ごと) | `"1"` / `""` (`#index` で行番号へ展開) |
@@ -911,9 +914,8 @@ hover / 選択の色は 2 通りの受け方がある。 画面 JSON の中で�
 | `row_count_var` | string | 総行数 (ホスト → 一覧) |
 | `top_row_var` | string | 先頭行 (一覧 → ホスト)。 `id` があれば `onAction(id, 行)` も出る |
 | `row_ready_var` | string | ホストが中身を差し替え終えた行 (ホスト → 一覧、 任意) |
-| `pos_var` | string | 位置 0..1 (**双方向**)。 スクロールバー / スライダと共有する |
-| `pos_reverse` | bool | `true` で 1.0 = 上端 (縦の `atlas_slider` は値 0 が下なので、 これで直結できる) |
-| `bar_active_var` | string | スクロールバーを掴んでいる間 `"1"` (スクロールバー / スライダの `active_var` を挿す) |
+| `pos_var` | string | 位置 0..1 (0 = 上端。 **双方向**)。 スクロールバー (`atlas_scrollbar` の `value_var`) と共有する |
+| `bar_active_var` | string | スクロールバーを掴んでいる間 `"1"` (`atlas_scrollbar` の `active_var` を挿す) |
 | `reveal_row_var` | string | 書いた行が見える位置まで送る (最小の移動。 ホスト → 一覧) |
 | `scroll_ms` | number | 送りアニメーションの時間 (既定 200) |
 | `rest_snap` | `"row"` / `"none"` | 止まったときに行の境目へ揃えるか (既定 `"row"`) |
@@ -949,18 +951,20 @@ hover / 選択の色は 2 通りの受け方がある。 画面 JSON の中で�
 
 ```jsonc
 { "type": "atlas_scrollbar", ..., "value_var": "pos",
-  "count_var": "rows", "visible": 4,      // つまみの長さ = 表示行数 / 総行数
-  "row_steps": true,                      // ホイール / 増減 / 溝クリックを行単位に
+  "count_var": "rows", "visible": 4,      // 行数 (送り量とつまみの長さ)
+  "row_steps": true,                      // ホイール / キー / 増減 / 溝クリックを行単位に
+  "thumb_fixed": true,                    // 固定長のつまみ素材なら
+  "track_click": "jump",                  // 溝クリックでその位置へ (近ければ 1 行)
   "active_var": "bar_on" }                // つまみを掴んでいる間 "1"
 { "type": "virtual_scroller", ..., "pos_var": "pos",
   "row_count_var": "rows", "bar_active_var": "bar_on" }
 ```
 
 つまみは一覧の位置に 1px 単位で付いていき、 ドラッグを離すと一覧が行へ揃う。
-ホイール / 増減 / 溝クリックは行単位の位置を書き、 一覧がそこまでアニメーションで
-送る。 `bar_active_var` が無いときは、 スクロールバーからの位置の変化をすべて即時に
-反映する。 縦の `atlas_slider` をスクロールバー代わりにする場合は、 スライダの
-`"active_var"` と一覧の `"pos_reverse": true` を使う。
+ホイール / キー / 増減 / 溝クリックは行に揃った位置を書き、 一覧がそこまで
+アニメーションで送る。 `bar_active_var` が無いときは、 スクロールバーからの位置の
+変化をすべて即時に反映する。 一覧の `"pos_reverse"` は廃止した (位置は常に 0 = 上端。
+書いてあっても警告を出して無視する)。
 
 ### 掴んで動かす (`drag_at_var` / `drag_events` / `drag_bounds`)
 

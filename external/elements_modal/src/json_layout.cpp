@@ -395,6 +395,16 @@ const picojson::array* get_array(const picojson::object& o, const char* key)
 	return nullptr;
 }
 
+// 廃止したキーが残っていたら知らせる (書き換え漏れを実機ログで見つけるため)。
+// 値は読まずに無視する。
+void warn_retired_key(const picojson::object& o, const char* type,
+                      const char* key, const char* hint)
+{
+	if (!get_field(o, key)) return;
+	em_logf("elements_modal: %s \"%s\": \"%s\" は廃止 (無視します。 %s)",
+	        type, string_or(o, "id").c_str(), key, hint);
+}
+
 //---------------------------------------------------------------------------
 // value_display — スライダ等の 0..1 値を «人が読む数値» の文字列にする整形指定。
 //
@@ -4459,8 +4469,7 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 //     "row_count_var": "rows",      // 総行数 (ホスト → 一覧)
 //     "top_row_var": "top",         // 先頭行 (一覧 → ホスト。 onAction(id, 行) も出る)
 //     "row_ready_var": "top_ready", // ホストが中身を差し替え終えた行 (任意)
-//     "pos_var": "v_scroll",        // 位置 0..1 (双方向。 スクロールバーと共有)
-//     "pos_reverse": true,          // 1.0 = 上端 (縦 atlas_slider に直結するため)
+//     "pos_var": "v_scroll",        // 位置 0..1 (0 = 上端。 双方向。 スクロールバーと共有)
 //     "bar_active_var": "bar_on",   // スクロールバーを掴んでいる間 "1"
 //     "reveal_row_var": "reveal",   // その行が見える位置へ送る (ホスト → 一覧)
 //     "scroll_ms": 200, "rest_snap": "row", "wheel_rows": 1,
@@ -4494,7 +4503,8 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 	const std::string pos_var        = string_or(o, "pos_var");
 	const std::string bar_active_var = string_or(o, "bar_active_var");
 	const std::string reveal_row_var = string_or(o, "reveal_row_var");
-	const bool pos_reverse = truthy_field(get_field(o, "pos_reverse"));
+	warn_retired_key(o, "virtual_scroller", "pos_reverse",
+	                 "位置は 0 = 上端。 スクロールバーは atlas_scrollbar を使う");
 
 	virtual_scroller::config cfg;
 	cfg.row_height     = static_cast<float>(number_or(o, "row_height", 0.0));
@@ -4535,15 +4545,14 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 		int n = 0;
 		if (auto* v = vars->get(row_count_var); v && to_int(*v, n)) vs->row_count(n);
 	}
-	auto pos_of = [pos_reverse](const std::string& v, double& r) {
+	auto pos_of = [](const std::string& v, double& r) {
 		try { r = std::clamp(std::stod(v), 0.0, 1.0); } catch (...) { return false; }
-		if (pos_reverse) r = 1.0 - r;
 		return true;
 	};
 	if (!pos_var.empty()) {
 		double r = 0.0;
 		if (auto* v = vars->get(pos_var); v && pos_of(*v, r)) vs->ratio(r);
-		else vars->set_initial(pos_var, fmt_slider_raw(pos_reverse ? 1.0 : 0.0));
+		else vars->set_initial(pos_var, fmt_slider_raw(0.0));
 	}
 	{
 		// ホストが書いていなければ、 初期の先頭行で中身を作ってあるとみなす
@@ -4573,9 +4582,9 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 	// 書いている間は受信を無視する。
 	auto publishing = std::make_shared<bool>(false);
 	if (!pos_var.empty()) {
-		vs->on_ratio = [vars, pos_var, pos_reverse, publishing](double r) {
+		vs->on_ratio = [vars, pos_var, publishing](double r) {
 			*publishing = true;
-			vars->set(pos_var, fmt_slider_raw(pos_reverse ? 1.0 - r : r));
+			vars->set(pos_var, fmt_slider_raw(r));
 			*publishing = false;
 		};
 	}
@@ -7488,8 +7497,9 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 //                "insets": [l, t, r, b],     // 伸ばさずに保つ四辺
 //                "size": [w, h] } }          // つまみの表示サイズ (省略= rect)
 //
-// つまみの状態別の絵: "thumb_hilite" (フォーカス中) / "thumb_pressed" (つまみ /
-// 溝を押している間) を書くと、 つまみをその絵に差し替える (無い方は hilite →
+// つまみの状態別の絵: "thumb_hilite" (フォーカス中) / "thumb_pressed" (つまみを
+// 押している間。 溝を押してドラッグしたときも含む) を書くと、 つまみをその絵に
+// 差し替える (無い方は hilite →
 // normal の順に縮退)。 書き方は "thumb" と同じ ([x,y,w,h] / {"rect": …})。
 // 単一矩形は実寸のままつまみの中央へ描く (一回り大きい押し下げの絵も縮めない)。
 // 9-slice の insets と表示サイズは "thumb" のものを使う。 hover_focus が有効なら
@@ -7541,8 +7551,7 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 //     "display": { "min": 50, "max": 0, "step": 5, "suffix": "ms" } }  // 10 段階
 // "snap" は slider / slider_with_range でも同じ意味で使える。
 //
-// "active_var": つまみ / 溝を押している間 "1"、 離したら "0" をその変数へ書く
-// (virtual_scroller の "bar_active_var" に渡すと、 離したときに行へ揃う)。
+// スクロールバー (一覧の位置の表示と操作) には atlas_scrollbar を使う。
 //
 // 固定値への差し替え: "fixed_var" の変数が立っている間 ("0" / "false" / 空
 // 以外) は、 値をスライダの範囲外の固定値へ差し替えている状態として扱う。
@@ -7678,6 +7687,40 @@ private:
 	std::shared_ptr<em_thumb_state> _state;
 };
 
+// つまみの絵を組む。 atlas_slider / atlas_scrollbar で共有する。
+//   stretch = false: 単一矩形は実寸、 9-slice は表示サイズ (ts.w, ts.h) で固定
+//   stretch = true : 両軸に伸ばす (可変長つまみ。 大きさは置き場所が決める)
+// 状態別の絵 ("thumb_hilite" = フォーカス中 / "thumb_pressed" = 押している間) が
+// あれば em_state_thumb で包み、 その状態の受け口を state に返す (無ければ null)。
+// 状態別の単一矩形は、 実寸指定なら実寸のままつまみの中央へ描く (押し下げの絵が
+// 一回り大きい素材でも縮めない)。 9-slice は "thumb" の insets を使う。
+element_ptr build_thumb_image(const ce::pixmap_ptr& pm, const picojson::object& o,
+                              const thumb_spec& ts, bool stretch,
+                              std::shared_ptr<em_thumb_state>& state)
+{
+	auto make = [&](const ce::rect& src, bool native) -> element_ptr {
+		if (ts.nine) {
+			if (stretch) return ce::share(ce::atlas_nine(pm, src, ts.ins));
+			return ce::share(ce::fixed_size(ce::point{ts.w, ts.h},
+			                                ce::atlas_nine(pm, src, ts.ins)));
+		}
+		return ce::share(ce::atlas_image(pm, src, /*stretch_h=*/stretch,
+		                                 /*stretch_v=*/stretch, native && !stretch));
+	};
+	element_ptr img = make(ts.src, false);
+	state.reset();
+	const thumb_spec hi = parse_thumb_spec(o, "thumb_hilite");
+	const thumb_spec pr = parse_thumb_spec(o, "thumb_pressed");
+	if (hi.valid || pr.valid) {
+		state = std::make_shared<em_thumb_state>();
+		img = ce::share(em_state_thumb(img,
+			hi.valid ? make(hi.src, true) : nullptr,
+			pr.valid ? make(pr.src, true) : nullptr,
+			state));
+	}
+	return img;
+}
+
 // thumb 形式 atlas_slider の base。 track 画像は widget 全域 (= "at"/#範囲) を
 // そのまま埋める素材 (角丸ボーダー等の枠込み) を前提にしており、 slider_base
 // 既定の「thumb がはみ出さないよう track を thumb 半分だけ内側にインセット」
@@ -7686,26 +7729,33 @@ private:
 struct em_slider_base : cycfi::elements::basic_slider_base
 {
 	using cycfi::elements::basic_slider_base::basic_slider_base;
-	// つまみ / 溝を押している間 true ("active_var")
-	std::function<void(bool)> on_active;
 	// つまみの状態別の絵 ("thumb_hilite" / "thumb_pressed") があるとき
 	std::shared_ptr<em_thumb_state> thumb_state;
+	// 押し下げの絵にするのはつまみを押したとき。 溝を押しただけでは変えず、
+	// そこからドラッグしてつまみが付いてきた時点で押し下げにする。
 	void begin_tracking(cycfi::elements::context const& ctx,
 	                    cycfi::elements::tracker_info& ti) override
 	{
+		const bool on_thumb = thumb_bounds(ctx).includes(ti.current);
 		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
-		if (thumb_state) thumb_state->pressed = true;
-		if (on_active) on_active(true);
+		if (thumb_state && on_thumb) thumb_state->pressed = true;
+	}
+	void keep_tracking(cycfi::elements::context const& ctx,
+	                   cycfi::elements::tracker_info& ti) override
+	{
+		if (thumb_state && !thumb_state->pressed
+		    && ti.current != ti.previous)
+			thumb_state->pressed = true;
+		cycfi::elements::basic_slider_base::keep_tracking(ctx, ti);
 	}
 	void end_tracking(cycfi::elements::context const& ctx,
 	                  cycfi::elements::tracker_info& ti) override
 	{
 		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
-		if (thumb_state) {
+		if (thumb_state && thumb_state->pressed) {
 			thumb_state->pressed = false;
 			ctx.view.refresh(ctx);
 		}
-		if (on_active) on_active(false);
 	}
 	void begin_focus(focus_request req) override
 	{
@@ -7733,19 +7783,6 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 struct em_fill_slider_base : cycfi::elements::basic_slider_base
 {
 	using cycfi::elements::basic_slider_base::basic_slider_base;
-	std::function<void(bool)> on_active;   // em_slider_base と同じ
-	void begin_tracking(cycfi::elements::context const& ctx,
-	                    cycfi::elements::tracker_info& ti) override
-	{
-		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
-		if (on_active) on_active(true);
-	}
-	void end_tracking(cycfi::elements::context const& ctx,
-	                  cycfi::elements::tracker_info& ti) override
-	{
-		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
-		if (on_active) on_active(false);
-	}
 	float fx = 0.0f;   // ゲージ左端 (トラック幅比)
 	float fw = 1.0f;   // ゲージ幅 (トラック幅比)
 	bool  fill_vertical = false;
@@ -7878,9 +7915,6 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 			        atlas_name.c_str());
 			return nullptr;
 		}
-		const ce::rect thumb_src = ts.src;
-		const ce::atlas_nine::insets thumb_ins = ts.ins;
-		const bool thumb_nine = ts.nine;
 		const float thumb_w = ts.w, thumb_h = ts.h;
 		// track はスライダ軸方向に stretchable、 直交軸は固定。 thumb は完全固定。
 		// track 省略時 (溝が背景側に描いてある素材) は見えない stretchable 要素を
@@ -7901,34 +7935,11 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		} else {
 			track_img = ce::share(ce::vsize(cross, cycfi::elements::element{}));
 		}
-		// 9-slice つまみは両軸 stretchable なので、 指定サイズで固定して
-		// «伸びる胴 + 潰れないキャップ» を作る (slider は thumb の limits から
-		// 可動域を出すため、 固定しないと widget いっぱいに伸びてしまう)。
-		// native: 矩形を実寸のまま bounds 中央へ描く (状態別の絵用)
-		auto make_thumb_img = [&](const ce::rect& src, bool native) -> element_ptr {
-			if (thumb_nine)
-				return ce::share(ce::fixed_size(
-					ce::point{thumb_w, thumb_h},
-					ce::atlas_nine(pm, src, thumb_ins)));
-			return ce::share(ce::atlas_image(pm, src,
-			                                 /*stretch_h=*/false,
-			                                 /*stretch_v=*/false, native));
-		};
-		element_ptr thumb_img = make_thumb_img(thumb_src, false);
-		// 状態別のつまみ ("thumb_hilite" = フォーカス中 / "thumb_pressed" =
-		// 押している間)。 書き方は "thumb" と同じ。 単一矩形は実寸のまま
-		// つまみの中央へ描く (押し下げの絵が一回り大きい素材でも縮めない)。
-		// 9-slice は "thumb" の insets と表示サイズで描く。
-		const thumb_spec ts_hi = parse_thumb_spec(o, "thumb_hilite");
-		const thumb_spec ts_pr = parse_thumb_spec(o, "thumb_pressed");
-		if (ts_hi.valid || ts_pr.valid) {
-			thumb_state = std::make_shared<em_thumb_state>();
-			thumb_img = ce::share(em_state_thumb(
-				thumb_img,
-				ts_hi.valid ? make_thumb_img(ts_hi.src, true) : nullptr,
-				ts_pr.valid ? make_thumb_img(ts_pr.src, true) : nullptr,
-				thumb_state));
-		}
+		// つまみは実寸 (9-slice は指定サイズ) で固定する。 slider は thumb の
+		// limits から可動域を出すため、 伸びるつまみだと widget いっぱいに
+		// 広がってしまう。 状態別の絵もここで組む。
+		element_ptr thumb_img = build_thumb_image(pm, o, ts, /*stretch=*/false,
+		                                          thumb_state);
 		if (thumb_shown) {
 			auto bare = thumb_img;
 			thumb_img = ce::share(visible_element<decltype(ce::hold(bare))>(
@@ -8024,18 +8035,9 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 					else if (auto s = ws.lock()) vars->set(display_var, disp.format(s->value()));
 				}, part);
 		}
-		// "active_var": つまみ / 溝を押している間 "1"、 離したら "0"。
-		// virtual_scroller が «離したら行へ揃える» のに使う。
-		if (std::string av = string_or(o, "active_var"); !av.empty()) {
-			auto vars = _vars;
-			auto set_active = [vars, av](bool on) { vars->set(av, on ? "1" : "0"); };
-			if (auto* a = dynamic_cast<em_slider_base*>(sb.get()))
-				a->on_active = set_active;
-			else if (auto* f = dynamic_cast<em_fill_slider_base*>(sb.get()))
-				f->on_active = set_active;
-			if (!_vars->get(av)) _vars->set_initial(av, "0");
-		}
 	}
+	warn_retired_key(o, "atlas_slider", "active_var",
+	                 "スクロールバーは atlas_scrollbar の active_var を使う");
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return part;
@@ -8494,312 +8496,428 @@ element_ptr LayoutBuilder::build_list(const picojson::object& o)
 // 値のつなぎ方は 2 通り:
 //
 //   - **index モード** ("index_offset_var"): つまみは先頭 index を指す。
-//     つまみの長さは «見えている行数 / 総件数» に比例する (可変長)。
 //     count / visible は数値直書き ("count" / "visible") でも変数
 //     ("count_var" / "visible_count_var") でもよい。 変数なら件数が変わると
-//     つまみの長さも追従する («見えている行数» の変数名が "visible_var" では
-//     なく "visible_count_var" なのは、 "visible_var" が全 widget 共通の
+//     つまみの長さと位置も追従する («見えている行数» の変数名が "visible_var"
+//     ではなく "visible_count_var" なのは、 "visible_var" が全 widget 共通の
 //     «表示 / 非表示» キーとして先に使われているため)。
-//   - **value モード** ("value_var"): 0..1 の位置。 本文が scroller に載って
-//     いる画面では scroller の "pos_var" と同じ変数を挿すと連動する。
-//     count / visible があればつまみは可変長、 無ければ素材の原寸。
+//   - **value モード** ("value_var"): 0..1 の位置 (0 = 上端 / 左端)。 本文が
+//     scroller / virtual_scroller に載っている画面では、 その "pos_var" と同じ
+//     変数を挿すと連動する。
 //
-// 操作: つまみドラッグ / 溝クリックでページ送り ("page"、 既定 = visible) /
-// ホイール ("wheel_step" 行、 既定 1)。 変化は変数へ書かれ、 id があれば
-// onAction にも流れる (index モードは行 index の整数、 value モードは 0..1)。
+// つまみの長さ: 既定は «見えている行数 / 総件数» に比例 (count / visible が
+// 無ければ素材の原寸。 "thumb_min" が下限)。 "thumb_fixed": true で常に素材の
+// 原寸 (count / visible は送り量の計算にだけ使う)。 固定長のつまみは伸ばさず、
+// 太さ方向も溝の中央に置く。
+//
+// つまみの状態別の絵: atlas_slider と同じ "thumb_hilite" (フォーカス中) /
+// "thumb_pressed" (つまみを掴んでいる間)。 書き方は "thumb" と同じ。
+//
+// 操作:
+//   - つまみのドラッグ (1px 単位で追従)
+//   - 溝クリック ("track_click"):
+//       "page" (既定) … クリックした側へ 1 ページ ("page"、 既定 = visible)
+//       "jump"        … クリック位置 (つまみの中心がそこに来る位置) を 1 段に
+//                       丸めた位置へ移動。 丸めた結果が今と同じ段なら、
+//                       クリックした側へ 1 段だけ動かす。 押したまま
+//                       ドラッグすると、 つまみを中央で掴んだ扱いで追従する
+//     押し続けると、 つまみがポインタに届くまで同じ向きに送り続ける
+//     ("track_repeat"、 既定 true。 "repeat_delay_ms" / "repeat_rate_ms")。
+//     溝クリックでは "active_var" を立てず、 つまみの絵も押し下げにしない。
+//   - ホイール ("wheel_step" 段、 既定 1) / キー (縦は ↑↓、 横は ←→ で 1 段、
+//     PageUp / PageDown で 1 ページ、 Home / End で両端) / パッド (1 段ずつ)
+//   - フォーカスを取る (focus_nav / hover_focus / initial_focus が効く)
+// 1 段 = index モードは 1 行。 value モードは "row_steps" があれば 1 行
+// (= 1 / (count - visible))、 無ければ 5% (ページは 10%)。
+// 変化は変数へ書かれ、 id があれば onAction にも流れる (index モードは行
+// index の整数、 value モードは 0..1)。
 //
 // 両端の増減ボタン: atlas_slider と同じ "dec" / "inc" (+ "dec_at" / "inc_at" /
 // "track_at" / "repeat*") を書くと «両端にボタンのあるスクロールバー» になる。
-// 送り量はホイールと同じ ("wheel_step" 行 / value モードは 5%)。
-// **縦のときの向きの対応がスライダと逆**である点に注意: offset 0 は先頭 = 上
-// なので、 **dec (減) の絵は上端**、 inc (増) の絵は下端に置くことになる
-// ("dec_at" / "inc_at" がそれを決めるので、 キー名は縦横で変わらない)。
+// 送り量はホイールと同じ。 **縦のときの向きの対応がスライダと逆**である点に
+// 注意: 位置 0 は先頭 = 上なので、 **dec (減) の絵は上端**、 inc (増) の絵は
+// 下端に置くことになる ("dec_at" / "inc_at" がそれを決めるので、 キー名は
+// 縦横で変わらない)。
 //
 // スムーズスクロール一覧 (virtual_scroller) と組む場合は value モードにする:
 //   { "type": "atlas_scrollbar", ..., "value_var": "pos",
-//     "count_var": "rows", "visible": 4,      // つまみの長さ = 表示行数 / 総行数
-//     "row_steps": true,                      // ホイール / 増減 / 溝クリックを行単位に
+//     "count_var": "rows", "visible": 4,      // 行数 (送り量とつまみの長さ)
+//     "row_steps": true,                      // 送りを行単位に
+//     "thumb_fixed": true,                    // 固定長のつまみ素材なら
+//     "track_click": "jump",
 //     "active_var": "bar_on" }                // つまみを掴んでいる間 "1"
 //   { "type": "virtual_scroller", ..., "pos_var": "pos",
 //     "row_count_var": "rows", "bar_active_var": "bar_on" }
 // つまみは一覧の位置に 1px 単位で追従し、 ドラッグを離すと一覧が行へ揃う。
-// ホイール / 増減 / 溝クリックは行単位の位置を書き、 一覧がそこまで送る。
-// "row_steps" は value モードでも送り量を «行» で数える指定 (1 行 =
-// 1 / (count - visible))。 指定しなければ従来どおり 5% / 10%。
+// ホイール / キー / 増減 / 溝クリックは行に揃った位置を書き、 一覧がそこまで
+// アニメーションで送る。
 //---------------------------------------------------------------------------
 namespace {
-class atlas_scrollbar_element : public ce::element
+// スクロールバー本体。 内部の値はスクロール位置 0..1 (0 = 上端 / 左端) で、
+// slider_base の «縦は 0 = 下» の規約には従わない。 向きと送り量の絡む操作は
+// すべてここで上書きする。
+struct em_scrollbar_base : ce::basic_slider_base
 {
-public:
+	using ce::basic_slider_base::basic_slider_base;
 
 	struct spec
 	{
-		std::string id;
 		bool        vertical = true;
-		bool        has_track = false;
-		ce::rect    track_src{};
-		thumb_spec  thumb{};
+		float       thumb_w = 0, thumb_h = 0;  // つまみの素材 (表示) サイズ
+		bool        thumb_fixed = false;       // 長さを素材の原寸に固定
 		float       thumb_min = 16.0f;
-		std::string value_var;    // 0..1 直結 (value モード)
-		std::string offset_var;   // 先頭 index 直結 (index モード)
+		std::string offset_var;                // index モード
 		std::string count_var;
 		std::string visible_var;
 		int         count = 0;
 		int         visible = 0;
-		int         page = 0;        // 溝クリックの送り量 (0 = visible)
-		int         wheel_step = 1;  // ホイール 1 ノッチの送り量
-		bool        row_steps = false;  // value モードでも送り量を行で数える
-		std::string active_var;      // つまみを掴んでいる間 "1"
+		int         page = 0;                  // 1 ページの段数 (0 = visible)
+		int         wheel_step = 1;            // ホイール / 増減の段数
+		bool        row_steps = false;         // value モードでも段を行で数える
+		bool        track_jump = false;        // 溝クリック = クリック位置へ
+		bool        track_repeat = true;
+		int         repeat_delay_ms = 400;
+		int         repeat_rate_ms = 60;
 	};
 
-	atlas_scrollbar_element(ce::pixmap_ptr pm, spec sp,
-	                        std::shared_ptr<VariableStore> vars,
-	                        event_callback cb)
-	 : _spec(std::move(sp)), _vars(std::move(vars)), _cb(std::move(cb))
+	spec                            sp;
+	std::shared_ptr<VariableStore>  vars;
+	std::shared_ptr<em_thumb_state> thumb_state;
+	std::function<void(bool)>       on_active;   // つまみを掴んでいる間 true
+
+	// ---- 件数と段 ----
+	int var_int(const std::string& name, int dflt) const
 	{
-		if (_spec.has_track) {
-			_track = ce::share(ce::atlas_image(pm, _spec.track_src,
-			                                   !_spec.vertical, _spec.vertical));
+		if (name.empty() || !vars) return dflt;
+		if (auto* v = vars->get(name)) {
+			try { return std::stoi(*v); } catch (...) { return dflt; }
 		}
-		if (_spec.thumb.nine) {
-			_thumb = ce::share(ce::atlas_nine(pm, _spec.thumb.src,
-			                                  _spec.thumb.ins));
-		} else {
-			_thumb = ce::share(ce::atlas_image(pm, _spec.thumb.src,
-			                                   /*stretch_h=*/true,
-			                                   /*stretch_v=*/true));
+		return dflt;
+	}
+	int  count_of()   const { return var_int(sp.count_var,   sp.count); }
+	int  visible_of() const { return var_int(sp.visible_var, sp.visible); }
+	int  max_offset() const
+	{
+		const int m = count_of() - visible_of();
+		return m > 0 ? m : 0;
+	}
+	bool index_mode() const { return !sp.offset_var.empty(); }
+	// 段を行で数えるか (index モード / row_steps)。 false なら 5% 単位。
+	bool counted()    const { return index_mode() || sp.row_steps; }
+
+	// pos から dir (-1 = 先頭側 / +1 = 末尾側) へ n 段。 段の途中にいるときは
+	// dir 側の段の境目までを 1 段と数える。 位置の変数は小数 4 桁に丸めて
+	// やり取りするので、 段の境目のわずかな手前 / 先は境目の上とみなす。
+	double step_from(double pos, int dir, int n) const
+	{
+		if (counted()) {
+			const int mo = max_offset();
+			if (mo <= 0) return pos;
+			const double r = pos * mo;
+			constexpr double eps = 0.01;
+			const double idx = (dir > 0) ? std::floor(r + eps) + n
+			                             : std::ceil(r - eps) - n;
+			return std::clamp(idx / mo, 0.0, 1.0);
 		}
+		return std::clamp(pos + dir * n * 0.05, 0.0, 1.0);
+	}
+	double page_from(double pos, int dir) const
+	{
+		if (counted()) {
+			int p = sp.page > 0 ? sp.page : visible_of();
+			if (p <= 0) p = 1;
+			return step_from(pos, dir, p);
+		}
+		return std::clamp(pos + dir * 0.1, 0.0, 1.0);
+	}
+	// 最寄りの段へ丸める
+	double round_step(double pos) const
+	{
+		if (counted()) {
+			const int mo = max_offset();
+			return mo > 0 ? std::round(pos * mo) / mo : pos;
+		}
+		return std::clamp(std::round(pos / 0.05) * 0.05, 0.0, 1.0);
+	}
+	// 増減ボタン / ホイールの 1 回ぶん
+	void step_by(int dir)
+	{
+		move_to(step_from(value(), dir, sp.wheel_step > 0 ? sp.wheel_step : 1));
+	}
+	void move_to(double v)
+	{
+		if (v != value()) edit_value(v);
+	}
+
+	// index モードは値を行の位置に丸めて持つ (つまみが行から行へ飛ぶ)
+	void edit_value(double val) override
+	{
+		if (index_mode()) {
+			const int mo = max_offset();
+			val = mo > 0 ? std::round(std::clamp(val, 0.0, 1.0) * mo) / mo : 0.0;
+		}
+		ce::basic_slider_base::edit_value(val);
+	}
+
+	// ---- 形 ----
+	float axis_len(ce::rect b) const { return sp.vertical ? b.height() : b.width(); }
+	float thumb_len(ce::rect b) const
+	{
+		const float tl = axis_len(b);
+		const float native = sp.vertical ? sp.thumb_h : sp.thumb_w;
+		float len = native;
+		if (!sp.thumb_fixed) {
+			const int c = count_of(), v = visible_of();
+			if (c > 0 && v > 0) len = (v < c) ? tl * float(v) / float(c) : tl;
+			if (len <= 0.0f) len = sp.thumb_min;
+			if (len < sp.thumb_min) len = sp.thumb_min;
+		}
+		if (len > tl) len = tl;
+		return len;
+	}
+	ce::rect thumb_rect(ce::rect b) const
+	{
+		const float tl  = axis_len(b);
+		const float len = thumb_len(b);
+		const float off = static_cast<float>(value()) * (tl - len);
+		ce::rect r = sp.vertical
+			? ce::rect{b.left, b.top + off, b.right, b.top + off + len}
+			: ce::rect{b.left + off, b.top, b.left + off + len, b.bottom};
+		if (sp.thumb_fixed) {
+			// 固定長のつまみは太さも素材どおり、 溝の中央に置く
+			if (sp.vertical) {
+				const float w = sp.thumb_w > 0 ? sp.thumb_w : b.width();
+				r.left  = b.left + (b.width() - w) * 0.5f;
+				r.right = r.left + w;
+			} else {
+				const float h = sp.thumb_h > 0 ? sp.thumb_h : b.height();
+				r.top    = b.top + (b.height() - h) * 0.5f;
+				r.bottom = r.top + h;
+			}
+		}
+		return r;
 	}
 
 	ce::view_limits limits(ce::basic_context const&) const override
 	{
 		// 太さは素材どおり、 軸方向は伸びる (canvas 配置なら "at" が効く)。
-		const float cross = _spec.vertical ? _spec.thumb.w : _spec.thumb.h;
+		const float cross = sp.vertical ? sp.thumb_w : sp.thumb_h;
 		const float c = (cross > 0) ? cross : 8.0f;
-		if (_spec.vertical) return {{c, c}, {c, ce::full_extent}};
+		if (sp.vertical) return {{c, c}, {c, ce::full_extent}};
 		return {{c, c}, {ce::full_extent, c}};
 	}
-
-	void draw(ce::context const& ctx) override
+	ce::rect track_bounds(ce::context const& ctx) const override
 	{
-		if (_track) {
-			ce::context tctx{ctx, _track.get(), ctx.bounds};
-			_track->draw(tctx);
-		}
-		if (_thumb) {
-			ce::context hctx{ctx, _thumb.get(), thumb_bounds(ctx.bounds)};
-			_thumb->draw(hctx);
-		}
+		return ctx.bounds;
+	}
+	ce::rect thumb_bounds(ce::context const& ctx) const override
+	{
+		return thumb_rect(ctx.bounds);
+	}
+	// p = つまみの中心を置きたい位置
+	double value_from_point(ce::context const& ctx, ce::point p) override
+	{
+		const ce::rect b = ctx.bounds;
+		const float tl  = axis_len(b);
+		const float len = thumb_len(b);
+		if (tl - len <= 0.0f) return value();
+		const float base = sp.vertical ? b.top : b.left;
+		const float pp   = sp.vertical ? p.y : p.x;
+		return std::clamp(double((pp - base - len * 0.5f) / (tl - len)), 0.0, 1.0);
 	}
 
-	bool wants_control() const override { return true; }
-
-	bool click(ce::context const& ctx, ce::mouse_button btn) override
+	// ---- フォーカス (つまみの hilite) ----
+	void begin_focus(focus_request req) override
 	{
-		if (!btn.down) {
-			if (_dragging) set_active(false);
-			_dragging = false;
-			return true;
+		ce::basic_slider_base::begin_focus(req);
+		if (thumb_state) thumb_state->focused = true;
+	}
+	bool end_focus() override
+	{
+		if (thumb_state) thumb_state->focused = false;
+		return ce::basic_slider_base::end_focus();
+	}
+
+	// ---- マウス ----
+	enum class press { none, thumb, track };
+
+	void begin_tracking(ce::context const& ctx, ce::tracker_info& ti) override
+	{
+		stop_repeat();
+		_bounds  = ctx.bounds;
+		_pointer = ti.current;
+		const ce::rect tb = thumb_rect(ctx.bounds);
+		if (tb.includes(ti.current)) {
+			ce::basic_slider_base::begin_tracking(ctx, ti);   // 掴んだ位置を保つ
+			grab(ctx);
+			return;
 		}
-		if (btn.state != ce::mouse_button::left) return false;
-		const ce::rect tb = thumb_bounds(ctx.bounds);
-		const float p  = _spec.vertical ? btn.pos.y : btn.pos.x;
-		const float t0 = _spec.vertical ? tb.top    : tb.left;
-		const float t1 = _spec.vertical ? tb.bottom : tb.right;
-		if (p >= t0 && p <= t1) {
-			_dragging = true;
-			_grab = p - t0;          // 掴んだ位置をつまみ内で保つ
-			set_active(true);
-			return true;
+		_press = press::track;
+		const float p  = sp.vertical ? ti.current.y : ti.current.x;
+		const float t0 = sp.vertical ? tb.top : tb.left;
+		_track_dir = (p < t0) ? -1 : +1;
+		if (sp.track_jump) {
+			// 丸めた先が今と同じ段 (クリックした側へ進まない) なら 1 段だけ動かす。
+			// 比べるときは 1 段の 1% を許容 (位置の変数の丸め誤差)。
+			const double pos = value();
+			const int mo = max_offset();
+			const double tol = 0.01 * ((counted() && mo > 0) ? 1.0 / mo : 0.05);
+			double v = round_step(value_from_point(ctx, ti.current));
+			if (_track_dir < 0 ? v >= pos - tol : v <= pos + tol)
+				v = step_from(pos, _track_dir, 1);
+			move_to(v);
+		} else {
+			move_to(page_from(value(), _track_dir));
 		}
-		move_by_page(p < t0 ? -1 : +1);
+		ctx.view.refresh(ctx);
+		start_repeat(ctx);
+	}
+
+	void keep_tracking(ce::context const& ctx, ce::tracker_info& ti) override
+	{
+		_pointer = ti.current;
+		if (_press == press::track) {
+			// "jump" のあと押したまま動かしたら、 つまみを中央で掴んだ扱いにする
+			// (わずかな手ぶれで掴み直さないよう、 少し動いてから)
+			if (!sp.track_jump) return;
+			const auto d = ti.distance();
+			if (std::abs(sp.vertical ? d.y : d.x) < drag_threshold) return;
+			stop_repeat();
+			grab(ctx);
+		}
+		if (_press == press::thumb)
+			ce::basic_slider_base::keep_tracking(ctx, ti);
+	}
+
+	void end_tracking(ce::context const& ctx, ce::tracker_info& ti) override
+	{
+		stop_repeat();
+		const press was = _press;
+		_press = press::none;
+		if (was != press::thumb) return;   // 溝クリックは離した位置で値を変えない
+		ce::basic_slider_base::end_tracking(ctx, ti);
+		if (thumb_state) thumb_state->pressed = false;
+		if (on_active) on_active(false);
+		ctx.view.refresh(ctx);
+	}
+
+	// ---- キー / ホイール / パッド ----
+	bool key(ce::context const& ctx, ce::key_info k) override
+	{
+		if (!ctx.enabled) return false;
+		if (k.action != ce::key_action::press && k.action != ce::key_action::repeat)
+			return false;
+		const auto prev_key = sp.vertical ? ce::key_code::up   : ce::key_code::left;
+		const auto next_key = sp.vertical ? ce::key_code::down : ce::key_code::right;
+		double v;
+		if (k.key == prev_key)                     v = step_from(value(), -1, 1);
+		else if (k.key == next_key)                v = step_from(value(), +1, 1);
+		else if (k.key == ce::key_code::page_up)   v = page_from(value(), -1);
+		else if (k.key == ce::key_code::page_down) v = page_from(value(), +1);
+		else if (k.key == ce::key_code::home)      v = 0.0;
+		else if (k.key == ce::key_code::end)       v = 1.0;
+		else return false;   // 向きの違う矢印は 2D フォーカス移動へ流す
+		move_to(v);
 		ctx.view.refresh(ctx);
 		return true;
-	}
-
-	void drag(ce::context const& ctx, ce::mouse_button btn) override
-	{
-		if (!_dragging) return;
-		const ce::rect b = ctx.bounds;
-		const float tl = axis_len(b);
-		const float len = thumb_len(b);
-		if (tl - len <= 0.0f) return;
-		const float p    = _spec.vertical ? btn.pos.y : btn.pos.x;
-		const float base = _spec.vertical ? b.top     : b.left;
-		set_pos01((p - _grab - base) / (tl - len));
-		ctx.view.refresh(ctx);
 	}
 
 	bool scroll(ce::context const& ctx, ce::point dir, ce::point) override
 	{
-		const float d = _spec.vertical ? dir.y : dir.x;
+		const float d = sp.vertical ? dir.y : dir.x;
 		if (d == 0.0f) return false;
-		move_by_step(d > 0.0f ? -1 : +1);   // ホイール上 = 前へ
+		step_by(d > 0.0f ? -1 : +1);   // ホイール上 = 先頭へ
 		ctx.view.refresh(ctx);
 		return true;
 	}
 
-	bool cursor(ce::context const&, ce::point, ce::cursor_tracking) override
+	bool pad_axis(ce::context const& ctx, ce::pad_axis_info info) override
 	{
-		return true;   // カーソルが乗っている間はこの要素が受け持つ
-	}
-
-	// 増減矢印 (atlas_stepper) から呼ぶ 1 ステップ送りと現在位置。 送り量の
-	// 意味 (index モード = 行数 / value モード = 0..1) は既存のホイールと同じ
-	// なので、 矢印とホイールで挙動が食い違わない。
-	void   step_by(int dir) { move_by_step(dir); }
-	double pos() const      { return pos01(); }
-
-private:
-
-	float axis_len(ce::rect b) const
-	{
-		return _spec.vertical ? b.height() : b.width();
-	}
-
-	int var_int(const std::string& name, int dflt) const
-	{
-		if (name.empty() || !_vars) return dflt;
-		if (auto* v = _vars->get(name)) {
-			try { return std::stoi(*v); } catch (...) { return dflt; }
-		}
-		return dflt;
-	}
-
-	int count_of()   const { return var_int(_spec.count_var,   _spec.count); }
-	int visible_of() const { return var_int(_spec.visible_var, _spec.visible); }
-	int max_offset() const
-	{
-		const int m = count_of() - visible_of();
-		return m > 0 ? m : 0;
-	}
-	bool index_mode() const { return !_spec.offset_var.empty(); }
-
-	double pos01() const
-	{
-		if (index_mode()) {
-			const int mo = max_offset();
-			return mo > 0 ? double(var_int(_spec.offset_var, 0)) / mo : 0.0;
-		}
-		if (_spec.value_var.empty() || !_vars) return 0.0;
-		if (auto* v = _vars->get(_spec.value_var)) {
-			try {
-				double d = std::stod(*v);
-				return d < 0.0 ? 0.0 : (d > 1.0 ? 1.0 : d);
-			} catch (...) { return 0.0; }
-		}
-		return 0.0;
-	}
-
-	float thumb_len(ce::rect b) const
-	{
-		const float tl = axis_len(b);
-		const int c = count_of(), v = visible_of();
-		float len;
-		if (c > 0 && v > 0) {
-			len = (v < c) ? tl * float(v) / float(c) : tl;
-		} else {
-			// 件数が分からなければ素材の原寸 (固定長つまみ)
-			len = _spec.vertical ? _spec.thumb.h : _spec.thumb.w;
-			if (len <= 0.0f) len = _spec.thumb_min;
-		}
-		if (len < _spec.thumb_min) len = _spec.thumb_min;
-		if (len > tl) len = tl;
-		return len;
-	}
-
-	ce::rect thumb_bounds(ce::rect b) const
-	{
-		const float tl = axis_len(b);
-		const float len = thumb_len(b);
-		const float off = static_cast<float>(pos01()) * (tl - len);
-		if (_spec.vertical)
-			return ce::rect{b.left, b.top + off, b.right, b.top + off + len};
-		return ce::rect{b.left + off, b.top, b.left + off + len, b.bottom};
-	}
-
-	void notify(const value_t& v) const
-	{
-		if (_cb && !_spec.id.empty()) _cb(_spec.id, /*is_button_click=*/false, v);
-	}
-
-	void set_active(bool on)
-	{
-		if (!_spec.active_var.empty() && _vars)
-			_vars->set(_spec.active_var, on ? "1" : "0");
-	}
-
-	// value モードで行単位に送る (row_steps)。 いまの位置を最寄りの行に
-	// 揃えてから rows 行進める。 送れない (件数が分からない) ときは false。
-	bool move_rows(int rows)
-	{
-		if (!_spec.row_steps || index_mode()) return false;
-		const int mo = max_offset();
-		if (mo <= 0) return false;
-		long row = std::lround(pos01() * mo) + rows;
-		if (row < 0) row = 0;
-		if (row > mo) row = mo;
-		set_pos01(double(row) / mo);
+		if (!ctx.enabled) return false;
+		const bool horiz = info.axis == ce::pad_axis::dpad_x
+		                || info.axis == ce::pad_axis::left_x
+		                || info.axis == ce::pad_axis::right_x;
+		const bool vert  = info.axis == ce::pad_axis::dpad_y
+		                || info.axis == ce::pad_axis::left_y
+		                || info.axis == ce::pad_axis::right_y;
+		if (sp.vertical ? !vert : !horiz) return false;
+		// SDL の Y 軸は下が +。 位置も下 (右) が + なのでそのまま使う。
+		// 1 段に満たない動きは溜めておき、 溜まったら 1 段ずつ送る。
+		const double unit = counted()
+			? (max_offset() > 0 ? 1.0 / max_offset() : 0.0) : 0.05;
+		if (unit <= 0.0) return true;
+		const double delta = double(info.value) * ctx.view.stick_value_speed()
+		                   * ctx.view.frame_dt();
+		if ((_pad_pending > 0.0 && delta < 0.0) || (_pad_pending < 0.0 && delta > 0.0))
+			_pad_pending = 0.0;
+		_pad_pending += delta;
+		const double steps = std::trunc(_pad_pending / unit);
+		if (steps == 0.0) return true;
+		_pad_pending -= steps * unit;
+		const double before = value();
+		move_to(step_from(before, steps > 0 ? +1 : -1, int(std::abs(steps))));
+		if (value() != before) ctx.view.refresh(ctx);
 		return true;
 	}
 
-	void set_offset(int off)
+private:
+	static constexpr float drag_threshold = 4.0f;
+
+	void grab(ce::context const& ctx)
 	{
-		const int mo = max_offset();
-		if (off < 0) off = 0;
-		if (off > mo) off = mo;
-		if (!_vars) return;
-		if (_vars->set(_spec.offset_var, std::to_string(off)))
-			notify(value_t{static_cast<std::int64_t>(off)});
+		_press = press::thumb;
+		if (thumb_state) thumb_state->pressed = true;
+		if (on_active) on_active(true);
+		ctx.view.refresh(ctx);
 	}
 
-	void set_pos01(double p)
+	// 溝を押している間の 1 回ぶん: つまみがポインタに届いていなければ送る
+	void track_step()
 	{
-		if (p < 0.0) p = 0.0;
-		if (p > 1.0) p = 1.0;
-		if (index_mode()) {
-			set_offset(static_cast<int>(std::lround(p * max_offset())));
-			return;
-		}
-		if (_spec.value_var.empty() || !_vars) return;
-		if (_vars->set(_spec.value_var, fmt_slider_raw(p)))
-			notify(value_t{p});
+		const ce::rect tb = thumb_rect(_bounds);
+		const float p  = sp.vertical ? _pointer.y : _pointer.x;
+		const float t0 = sp.vertical ? tb.top : tb.left;
+		const float t1 = sp.vertical ? tb.bottom : tb.right;
+		if (_track_dir < 0 ? p >= t0 : p <= t1) return;
+		move_to(sp.track_jump ? step_from(value(), _track_dir, 1)
+		                      : page_from(value(), _track_dir));
 	}
 
-	void move_by_page(int dir)
+	void start_repeat(ce::context const& ctx)
 	{
-		if (index_mode()) {
-			int p = _spec.page > 0 ? _spec.page : visible_of();
-			if (p <= 0) p = 1;
-			set_offset(var_int(_spec.offset_var, 0) + dir * p);
-			return;
-		}
-		if (_spec.row_steps) {
-			int p = _spec.page > 0 ? _spec.page : visible_of();
-			if (p <= 0) p = 1;
-			if (move_rows(dir * p)) return;
-		}
-		set_pos01(pos01() + dir * 0.1);
+		stop_repeat();
+		if (!sp.track_repeat) return;
+		auto& view_ = ctx.view;
+		std::weak_ptr<ce::element> self = shared_from_this();
+		const int rate = sp.repeat_rate_ms > 0 ? sp.repeat_rate_ms : 60;
+		_repeat_tick = std::make_shared<std::function<void()>>();
+		std::weak_ptr<std::function<void()>> tick = _repeat_tick;
+		*_repeat_tick = [this, self, tick, &view_, rate]() {
+			auto keep = self.lock();
+			if (!keep) return;                       // 要素が消えている
+			if (_press != press::track) return;      // 離した / 掴み直した
+			if (!is_enabled()) return;
+			track_step();
+			view_.refresh();
+			if (auto t = tick.lock())
+				_repeat_timer = view_.post(std::chrono::milliseconds(rate), *t);
+		};
+		const int delay = sp.repeat_delay_ms > 0 ? sp.repeat_delay_ms : 400;
+		_repeat_timer = view_.post(std::chrono::milliseconds(delay), *_repeat_tick);
+	}
+	void stop_repeat()
+	{
+		_repeat_timer.reset();
+		_repeat_tick.reset();
 	}
 
-	void move_by_step(int dir)
-	{
-		if (index_mode()) {
-			const int st = _spec.wheel_step > 0 ? _spec.wheel_step : 1;
-			set_offset(var_int(_spec.offset_var, 0) + dir * st);
-			return;
-		}
-		if (move_rows(dir * (_spec.wheel_step > 0 ? _spec.wheel_step : 1))) return;
-		set_pos01(pos01() + dir * 0.05);
-	}
-
-	spec                           _spec;
-	std::shared_ptr<VariableStore> _vars;
-	event_callback                 _cb;
-	element_ptr                    _track;
-	element_ptr                    _thumb;
-	bool                           _dragging = false;
-	float                          _grab = 0.0f;
+	press     _press = press::none;
+	int       _track_dir = 0;
+	ce::rect  _bounds{};
+	ce::point _pointer{};
+	double    _pad_pending = 0.0;
+	std::shared_ptr<void> _repeat_timer;
+	std::shared_ptr<std::function<void()>> _repeat_tick;
 };
 } // anonymous (atlas_scrollbar)
 
@@ -8813,21 +8931,19 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 	auto pm = lookup_atlas(atlas_name);
 	if (!pm) return nullptr;
 
-	atlas_scrollbar_element::spec sp;
-	sp.id = string_or(o, "id");
-	sp.vertical = true;
-	bool_field(get_field(o, "vertical"), sp.vertical);
-	if (auto* tr = get_array(o, "track"); tr && tr->size() >= 4) {
-		sp.track_src = parse_xywh(*tr);
-		sp.has_track = true;
-	}
-	sp.thumb = parse_thumb_spec(o, "thumb");
-	if (!sp.thumb.valid) {
+	const thumb_spec ts = parse_thumb_spec(o, "thumb");
+	if (!ts.valid) {
 		em_logf("elements_modal: atlas_scrollbar \"%s\" needs 'thumb' as "
 		        "[x, y, w, h] or an object with 'rect'", atlas_name.c_str());
 		return nullptr;
 	}
-	sp.value_var   = string_or(o, "value_var");
+
+	em_scrollbar_base::spec sp;
+	bool_field(get_field(o, "vertical"), sp.vertical);
+	sp.thumb_w     = ts.w;
+	sp.thumb_h     = ts.h;
+	sp.thumb_fixed = truthy_field(get_field(o, "thumb_fixed"));
+	sp.thumb_min   = static_cast<float>(number_or(o, "thumb_min", 16.0));
 	sp.offset_var  = string_or(o, "index_offset_var");
 	sp.count_var   = string_or(o, "count_var");
 	// «見えている行数» の変数。 汎用の "visible_var" (表示 / 非表示) と衝突する
@@ -8838,52 +8954,131 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 	sp.visible     = static_cast<int>(number_or(o, "visible", 0));
 	sp.page        = static_cast<int>(number_or(o, "page", 0));
 	sp.wheel_step  = static_cast<int>(number_or(o, "wheel_step", 1));
-	sp.thumb_min   = static_cast<float>(number_or(o, "thumb_min", 16.0));
 	sp.row_steps   = truthy_field(get_field(o, "row_steps"));
-	sp.active_var  = string_or(o, "active_var");
-	if (!sp.active_var.empty() && !_vars->get(sp.active_var))
-		_vars->set_initial(sp.active_var, "0");
-	if (sp.value_var.empty() && sp.offset_var.empty()) {
+	{
+		const std::string tc = string_or(o, "track_click", "page");
+		sp.track_jump = (tc == "jump");
+		if (tc != "page" && tc != "jump")
+			em_logf("elements_modal: atlas_scrollbar \"%s\": unknown track_click "
+			        "\"%s\" (page / jump)", string_or(o, "id").c_str(), tc.c_str());
+	}
+	bool_field(get_field(o, "track_repeat"), sp.track_repeat);
+	sp.repeat_delay_ms = static_cast<int>(number_or(o, "repeat_delay_ms", 400));
+	sp.repeat_rate_ms  = static_cast<int>(number_or(o, "repeat_rate_ms", 60));
+
+	const std::string id        = string_or(o, "id");
+	const std::string value_var = string_or(o, "value_var");
+	if (value_var.empty() && sp.offset_var.empty()) {
 		em_logf("elements_modal: atlas_scrollbar \"%s\": no 'value_var' / "
 		        "'index_offset_var' (つなぎ先が無いと動かせない)",
 		        atlas_name.c_str());
 	}
 
-	auto sb = std::make_shared<atlas_scrollbar_element>(pm, sp, _vars, _cb);
-	element_ptr el = sb;
+	// 溝: 軸方向に伸ばして widget 全域に描く。 省略時は何も描かない板。
+	element_ptr track_img;
+	if (auto* tr = get_array(o, "track"); tr && tr->size() >= 4) {
+		track_img = ce::share(ce::atlas_image(pm, parse_xywh(*tr),
+		                                      /*stretch_h=*/!sp.vertical,
+		                                      /*stretch_v=*/ sp.vertical));
+	} else {
+		track_img = ce::share(ce::element{});
+	}
+	// つまみ: 固定長は実寸、 可変長は置き場所いっぱいに伸ばす
+	std::shared_ptr<em_thumb_state> thumb_state;
+	element_ptr thumb_img = build_thumb_image(pm, o, ts,
+	                                          /*stretch=*/!sp.thumb_fixed,
+	                                          thumb_state);
+
+	auto sl = ce::basic_slider<
+		decltype(ce::hold(thumb_img)), decltype(ce::hold(track_img)),
+		em_scrollbar_base>(ce::hold(thumb_img), ce::hold(track_img), 0.0);
+	sl.sp = sp;
+	sl.vars = _vars;
+	sl.thumb_state = thumb_state;
+	element_ptr shared = ce::share(std::move(sl));
+	auto sb = std::dynamic_pointer_cast<em_scrollbar_base>(shared);
+
+	// 変数 → 初期位置
+	auto index_pos = [](em_scrollbar_base& s) {
+		const int mo = s.max_offset();
+		const int off = std::clamp(s.var_int(s.sp.offset_var, 0), 0, mo);
+		return mo > 0 ? double(off) / mo : 0.0;
+	};
+	if (sb->index_mode()) {
+		sb->value(index_pos(*sb));
+	} else if (!value_var.empty()) {
+		if (auto* cur = _vars->get(value_var)) {
+			try { sb->value(std::clamp(std::stod(*cur), 0.0, 1.0)); } catch (...) {}
+		}
+	}
 
 	// 増減矢印 (任意)。 «両端にボタンのあるスクロールバー» はこれで組む。
-	// 送りの実体は既存の move_by_step() に委ねるので、 矢印・ホイール・溝
-	// クリックが同じ規則で動く。
-	element_ptr part = el;
+	// 送りはホイールと同じ step_by() に委ねるので、 矢印・ホイールが同じ
+	// 規則で動く。
+	element_ptr part = shared;
 	if (ce::atlas_stepper_base::config scfg;
 	    parse_stepper(o, sp.vertical, /*offset_semantics=*/true,
 	                  "atlas_scrollbar", scfg)) {
-		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(el)));
-		std::weak_ptr<atlas_scrollbar_element> w = sb;
+		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(shared)));
+		std::weak_ptr<em_scrollbar_base> w = sb;
 		st->on_step = [w](int dir) {
 			if (auto t = w.lock()) t->step_by(dir);
 		};
 		st->value_of = [w]() {
 			auto t = w.lock();
-			return t ? t->pos() : 0.0;
+			return t ? t->value() : 0.0;
 		};
 		part = st;
 	}
 
-	// ホストや他 widget が変数を書き換えたときに描き直す。 コールバックは
-	// 空でよい (値は draw 時に読む)。 owner を渡すのは部分再描画の
-	// ダーティ範囲を «このスクロールバーの矩形» に絞るため (矢印付きなら
-	// 矢印まで含めた外側を渡す)。
-	if (_vars) {
-		for (const auto* n : { &sp.value_var, &sp.offset_var,
-		                       &sp.count_var, &sp.visible_var }) {
+	// 値 ↔ 変数
+	auto vars = _vars;
+	auto user_cb = _cb;
+	if (sb->index_mode()) {
+		// 値 → 先頭 index (+ onAction に行 index)
+		std::weak_ptr<em_scrollbar_base> w = sb;
+		sb->on_change = [w, vars, user_cb, id](double pos) {
+			auto s = w.lock();
+			if (!s || !vars) return;
+			const int off = static_cast<int>(std::lround(pos * s->max_offset()));
+			if (vars->set(s->sp.offset_var, std::to_string(off)) && user_cb && !id.empty())
+				user_cb(id, /*is_button_click=*/false,
+				        value_t{static_cast<std::int64_t>(off)});
+		};
+		// 先頭 index / 件数の変化 → 位置 (通知のみ)
+		for (const auto* n : { &sp.offset_var, &sp.count_var, &sp.visible_var }) {
 			if (n->empty()) continue;
-			_vars->subscribe(*n, [](const std::string&) {}, part);
+			vars->subscribe(*n, [w, index_pos](const std::string&) {
+				if (auto s = w.lock()) s->value(index_pos(*s));
+			}, part);
+		}
+	} else {
+		if (!id.empty() && user_cb) {
+			sb->on_change = [user_cb, id](double pos) {
+				user_cb(id, /*is_button_click=*/false, value_t{pos});
+			};
+		}
+		wire_slider_vars(vars, sb, part, value_var, std::string{}, value_display{});
+		// 件数が変わるとつまみの長さが変わるので描き直す
+		for (const auto* n : { &sp.count_var, &sp.visible_var }) {
+			if (n->empty()) continue;
+			vars->subscribe(*n, [](const std::string&) {}, part);
 		}
 	}
 
+	// "active_var": つまみを掴んでいる間 "1"、 離したら "0"。
+	// virtual_scroller の "bar_active_var" に渡すと、 掴んでいる間は 1px 単位で
+	// 付いていき、 離したときに行へ揃う。
+	if (std::string av = string_or(o, "active_var"); !av.empty()) {
+		sb->on_active = [vars, av](bool on) { vars->set(av, on ? "1" : "0"); };
+		if (!vars->get(av)) vars->set_initial(av, "0");
+	}
+
 	register_id(o, part);
+	note_initial_focus(o, part);
+	note_focusable(id, sb);
+	note_vars_on_focus(o, id);
+	note_strings_on_focus(o, id);
 	return part;
 }
 
