@@ -5439,6 +5439,49 @@ void apply_slider_snap(const picojson::object& o,
 	if (!sb || !truthy_field(get_field(o, "snap"))) return;
 	sb->snap_step(resolve_slider_step(o, disp));
 }
+
+// "snap_steps_var": 目盛の数を変数で受ける。 値 "N" (1 以上の整数) の間は
+// 1 目盛 = 1/N で snap し、 キー / ホイール / 増減矢印 (arrow_step) の 1 押しで
+// 1 目盛進む。 "N:K" なら 1 押しで K 目盛進む (目盛は細かく、 1 押しは粗く。
+// 止まる位置は常に目盛の上)。 "0" / 空 / 数でない値なら JSON に書いた設定
+// ("snap" / "step") へ戻す。
+// 行ごとに範囲の違う値を同じスライダで出す画面 (パラメータ名の付いた汎用の
+// 行など) で、 離散値の行だけ 1 押しで 1 段進めるためのもの。
+// apply_slider_snap のあと、 変数連動 (wire_slider_vars) より前に呼ぶこと。
+void wire_slider_snap_steps(const std::shared_ptr<VariableStore>& vars,
+                            const picojson::object& o,
+                            const std::shared_ptr<ce::basic_slider_base>& sb,
+                            const std::shared_ptr<double>& arrow_step,
+                            const element_ptr& owner)
+{
+	const std::string var = string_or(o, "snap_steps_var");
+	if (!sb || var.empty()) return;
+	const double base_snap  = sb->snap_step();
+	const double base_arrow = arrow_step ? *arrow_step : 0.0;
+	std::weak_ptr<ce::basic_slider_base> ws = sb;
+	auto apply = [ws, arrow_step, base_snap, base_arrow](const std::string& v) {
+		auto s = ws.lock();
+		if (!s) return;
+		long n = 0, k = 1;
+		try {
+			std::size_t pos = 0;
+			n = std::stol(v, &pos);
+			if (pos < v.size() && v[pos] == ':') k = std::stol(v.substr(pos + 1));
+		} catch (...) { n = 0; }
+		if (k < 1) k = 1;
+		if (n > 0) {
+			s->snap_step(1.0 / double(n));
+			s->key_steps(int(k));
+			if (arrow_step) *arrow_step = double(k) / double(n);
+		} else {
+			s->snap_step(base_snap);
+			s->key_steps(1);
+			if (arrow_step) *arrow_step = base_arrow;
+		}
+	};
+	if (auto* cur = vars->get(var)) apply(*cur);
+	vars->subscribe(var, apply, owner);
+}
 } // anonymous
 
 //---------------------------------------------------------------------------
@@ -7550,6 +7593,12 @@ bool parse_stepper(const picojson::object& o, bool vertical,
 //   { "type": "atlas_slider", ..., "snap": true,
 //     "display": { "min": 50, "max": 0, "step": 5, "suffix": "ms" } }  // 10 段階
 // "snap" は slider / slider_with_range でも同じ意味で使える。
+// 目盛の数を実行時に変えるときは "snap_steps_var" に変数名を書く。 値 N
+// (1 以上の整数) の間は 1 目盛 = 1/N で snap し、 キー / 増減矢印の 1 押しで
+// 1 目盛進む。 "N:K" と書くと 1 押しで K 目盛進む (目盛は細かいまま、 1 押しの
+// 量だけ粗くする)。 "0" / 空なら JSON の "snap" / "step" の設定に戻る。 範囲の違う
+// 値を行ごとに出し分ける汎用のスライダで、 離散値の行だけ 1 押しで 1 段
+// 進めるためのもの。
 //
 // スクロールバー (一覧の位置の表示と操作) には atlas_scrollbar を使う。
 //
@@ -7972,19 +8021,22 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	// フォーカスを取らないので、 フォーカス / キー / パッド / 変数連動はすべて
 	// 内側のスライダのまま (下の登録も sb を見ている)。
 	element_ptr part = shared;
+	// 増減矢印の 1 クリックの増減量 (0..1)。 "snap_steps_var" で差し替わる
+	std::shared_ptr<double> arrow_step;
 	if (ce::atlas_stepper_base::config scfg;
 	    sb && parse_stepper(o, vertical, /*offset_semantics=*/false,
 	                        "atlas_slider", scfg)) {
 		// 1 クリックの増減量 (0..1)。 "step" 明示 → "display" の 1 目盛 →
 		// 5% (arrow_button の make_step_arrows_for_slider と同じ既定)。
-		const double stp = resolve_slider_step(o, parse_value_display(o));
+		arrow_step = std::make_shared<double>(
+			resolve_slider_step(o, parse_value_display(o)));
 
 		auto st = ce::share(ce::atlas_stepper(pm, scfg, ce::hold(shared)));
 		std::weak_ptr<ce::basic_slider_base> w = sb;
-		st->on_step = [w, stp](int dir) {
+		st->on_step = [w, arrow_step](int dir) {
 			auto t = w.lock();
 			if (!t) return;
-			double v = t->value() + dir * stp;
+			double v = t->value() + dir * *arrow_step;
 			if (v < 0.0) v = 0.0;
 			if (v > 1.0) v = 1.0;
 			v = t->snap(v);
@@ -8011,6 +8063,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		note_focusable(id, sb);
 		const auto disp = parse_value_display(o);
 		apply_slider_snap(o, sb, disp);
+		wire_slider_snap_steps(_vars, o, sb, arrow_step, part);
 		if (gauge) gauge->set_value(sb->value());   // 目盛へ丸めた初期値で描く
 		// 変数連動 (双方向 + 表示用の整形変数)。 変数 → スライダ値 (+fill 描画) は
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を

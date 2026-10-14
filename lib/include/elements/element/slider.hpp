@@ -57,6 +57,12 @@ namespace cycfi::elements
       // keys, wheel, pad and accessibility all move in whole steps.
       void                    snap_step(double step);
       double                  snap_step() const { return _snap_step; }
+      // Whole steps moved by one arrow key / wheel notch / accessibility
+      // increment while snapping (default 1). Lets a fine snap grid (every
+      // integer of a wide range) still move by a coarser amount per press,
+      // always landing on the grid.
+      void                    key_steps(int n) { _key_steps = (n >= 1) ? n : 1; }
+      int                     key_steps() const { return _key_steps; }
       double                  snap(double val) const;
 
       // Exposed as 0..100 (percent), stepping like the arrow keys.
@@ -94,6 +100,7 @@ namespace cycfi::elements
       mutable bool            _is_horiz = false;
       bool                    _has_focus = false;
       double                  _snap_step = 0.0;
+      int                     _key_steps = 1;
       double                  _wheel_pending = 0.0;
       double                  _pad_pending = 0.0;
    };

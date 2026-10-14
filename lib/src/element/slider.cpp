@@ -86,8 +86,8 @@ namespace cycfi::elements
       track_scroll(ctx, dir, p);
       if (_snap_step > 0.0)
       {
-         // One wheel notch (1.0) moves one step.
-         if (nudge(_wheel_pending, amount, 1.0))
+         // One wheel notch (1.0) moves key_steps() steps.
+         if (nudge(_wheel_pending, amount * _key_steps, 1.0))
             ctx.view.refresh(ctx);
          return true;
       }
@@ -340,9 +340,11 @@ namespace cycfi::elements
       }
       else if (_snap_step > 0.0)
       {
-         // Arrows move one step; page keys about 10%, at least one step.
+         // Arrows move key_steps() steps; page keys about 10%, at least
+         // as far as an arrow.
          double n = (std::abs(delta) > 0.05)
-            ? std::max(1.0, std::round(0.1 / _snap_step)) : 1.0;
+            ? std::max(double(_key_steps), std::round(0.1 / _snap_step))
+            : double(_key_steps);
          new_value = step_value(delta > 0.0 ? n : -n);
       }
       else
@@ -445,7 +447,7 @@ namespace cycfi::elements
       out.num_value = pct;
       out.num_min = 0.0;
       out.num_max = 100.0;
-      out.num_step = (_snap_step > 0.0) ? _snap_step * 100.0 : 5.0;
+      out.num_step = (_snap_step > 0.0) ? _snap_step * _key_steps * 100.0 : 5.0;
       out.value = std::to_string(int(std::lround(pct))) + "%";
       out.actions = bit(action::focus) | bit(action::increment)
          | bit(action::decrement) | bit(action::set_value);
@@ -458,8 +460,8 @@ namespace cycfi::elements
       switch (act)
       {
          // same step as the arrow keys
-         case action::increment: v = (_snap_step > 0.0) ? step_value(+1) : v + 0.05; break;
-         case action::decrement: v = (_snap_step > 0.0) ? step_value(-1) : v - 0.05; break;
+         case action::increment: v = (_snap_step > 0.0) ? step_value(+_key_steps) : v + 0.05; break;
+         case action::decrement: v = (_snap_step > 0.0) ? step_value(-_key_steps) : v - 0.05; break;
          case action::set_value:
             if (!arg.number)
                return true;
