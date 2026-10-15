@@ -86,9 +86,22 @@ namespace cycfi::elements
 
       canvas_.fill_style(text_c);
       auto const locale = get_text_locale();
+      std::string const& text = get_text();
+
+      // 幅追従が有効なら、 指定サイズで測った最長行が bounds 幅を超えるときだけ
+      // 縮めたサイズで描く (以降の縦位置・行高もこのサイズで計算する)。
+      float font_size = get_font_size();
+      if (_fit && !text.empty())
+      {
+         auto fd_fit = get_font().size(font_size);
+         fd_fit._lang = locale;
+         auto m = measure_label(canvas_, text, fd_fit);
+         font_size = fit_font_size(font_size, m.width, ctx.bounds.width(), _fit_min_scale);
+      }
+
       auto fd_draw = get_font();
       fd_draw._lang = locale;    // 言語連動フォント置換の明示言語 (空=現在言語)
-      canvas_.font(fd_draw, get_font_size());
+      canvas_.font(fd_draw, font_size);
       canvas_.text_locale(locale);
 
       float cx = ctx.bounds.left + (ctx.bounds.width() / 2);
@@ -104,7 +117,6 @@ namespace cycfi::elements
             break;
       }
 
-      std::string const& text = get_text();
       if (text.find('\n') == std::string::npos)
       {
          float cy = ctx.bounds.top + (ctx.bounds.height() / 2);
@@ -127,7 +139,7 @@ namespace cycfi::elements
 
       // 複数行: 行ごとに描く。 バックエンドの fill_text が '\n' をどう扱うかに
       // 依存しないよう、 1 行ずつ明示的に描いて limits と行位置を一致させる。
-      auto fd_measure = get_font().size(get_font_size());
+      auto fd_measure = get_font().size(font_size);
       fd_measure._lang = locale;
       auto m = measure_label(canvas_, text, fd_measure);
       float block_h = m.line_height * static_cast<float>(m.lines.size());

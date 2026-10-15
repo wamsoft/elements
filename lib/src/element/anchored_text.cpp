@@ -185,12 +185,7 @@ namespace cycfi::elements
             start = i + 1;
          }
       }
-      if (widest <= maxw || widest <= 0.0f)
-         return _size;
-
-      float scale = maxw / widest;
-      if (scale < _fit_min_scale) scale = _fit_min_scale;
-      return _size * scale;
+      return fit_font_size(_size, widest, maxw, _fit_min_scale);
    }
 
    view_limits anchored_text::limits(basic_context const& ctx) const

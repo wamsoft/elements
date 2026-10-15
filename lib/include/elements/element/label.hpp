@@ -54,9 +54,23 @@ namespace cycfi::elements
       virtual int             get_text_align() const;
       virtual std::string     get_text_locale() const { return {}; }
 
+      // 幅追従 (auto-shrink)。 有効にすると、 描画時に実測幅が bounds 幅を
+      // 超える場合だけフォントサイズを縮めて収める (anchored_text と同じ意味)。
+      // 縦方向の揃え (top/middle/bottom) は縮めたサイズで計算し直すので、
+      // 中央揃えなら縮んでも中央に残る。 複数行は最も長い行を基準にする。
+      //   min_scale … 縮小の下限倍率。 それでも入らなければ下限サイズで描く。
+      // limits() は自然サイズのまま (縮められることを親には伝えない) なので、
+      // 枠幅が配置側で決まる canvas の at 配置などで使う。
+      void                    set_fit_width(bool on, float min_scale = 0.5f)
+                              { _fit = on; _fit_min_scale = min_scale; }
+      bool                    get_fit_width() const { return _fit; }
+      float                   get_fit_min_scale() const { return _fit_min_scale; }
+
    private:
 
       bool                    _is_enabled = true;
+      bool                    _fit = false;
+      float                   _fit_min_scale = 0.5f;
    };
 
    namespace concepts

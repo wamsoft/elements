@@ -297,6 +297,22 @@ namespace cycfi { namespace elements
    }
 
    ////////////////////////////////////////////////////////////////////////////
+   // 幅追従 (auto-shrink) の描画サイズ。 指定サイズで測った幅 widest が
+   // 枠幅 max_width に収まればそのまま size、 はみ出すなら
+   // (max_width / widest) 倍に縮める。 縮小は min_scale 倍で止める (それでも
+   // 入らなければ下限サイズではみ出す)。 label / anchored_text の共通計算。
+   ////////////////////////////////////////////////////////////////////////////
+   inline float fit_font_size(float size, float widest, float max_width, float min_scale)
+   {
+      if (max_width <= 0.0f || widest <= 0.0f || widest <= max_width)
+         return size;
+      float scale = max_width / widest;
+      if (scale < min_scale)
+         scale = min_scale;
+      return size * scale;
+   }
+
+   ////////////////////////////////////////////////////////////////////////////
    // Helper for converting char8_t[] string literals to char[]
    ////////////////////////////////////////////////////////////////////////////
 

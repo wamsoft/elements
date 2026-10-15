@@ -4088,6 +4088,14 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 	};
 	if (has_font) styled(ce::label(text).font(fdescr));
 	else          styled(ce::label(text));
+	// "fit": true — text_anchor 経路と同じく、 実測幅が at 矩形の幅を超える
+	// ときだけフォントを縮めて収める。 縦の揃え (既定 middle) は縮めたサイズで
+	// 計算されるので、 縮んでも枠の上下中央に残る。 "fit_min_scale" で下限倍率。
+	if (truthy_field(get_field(o, "fit"))) {
+		if (auto* lb = dynamic_cast<ce::default_label_styler*>(out.get()))
+			lb->set_fit_width(true,
+				static_cast<float>(number_or(o, "fit_min_scale", 0.5)));
+	}
 	}   // text_anchor else
 
 	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
