@@ -1415,16 +1415,33 @@
          }
       };
 
+      // A D-Pad press is taken only when it can do something: move the
+      // focus (arrow_focus_navigation) or reach a focused widget (value mode
+      // or a synthesized arrow key). Otherwise it is reported unhandled so an
+      // embedding host can pass it on (e.g. to the game under a non-modal
+      // panel). The release mirrors whether the press was taken.
+      auto dpad = [&](pad_axis ax, int sign) -> bool
+      {
+         if (info.down)
+         {
+            if (mode_for(ax) == pad_axis_mode::disabled
+                || (!_arrow_focus_nav && !focused_element()))
+               return false;
+            feed_dpad_axis(ax, sign, true);
+            return true;
+         }
+         auto const& st = _axis_states[static_cast<int>(ax)];
+         bool const held = st.current * float(sign) > 0.0f;
+         feed_dpad_axis(ax, sign, false);
+         return held;
+      };
+
       switch (info.button)
       {
-         case pad_button::dpad_left:
-            feed_dpad_axis(pad_axis::dpad_x, -1, info.down); return true;
-         case pad_button::dpad_right:
-            feed_dpad_axis(pad_axis::dpad_x, +1, info.down); return true;
-         case pad_button::dpad_up:
-            feed_dpad_axis(pad_axis::dpad_y, -1, info.down); return true;
-         case pad_button::dpad_down:
-            feed_dpad_axis(pad_axis::dpad_y, +1, info.down); return true;
+         case pad_button::dpad_left:  return dpad(pad_axis::dpad_x, -1);
+         case pad_button::dpad_right: return dpad(pad_axis::dpad_x, +1);
+         case pad_button::dpad_up:    return dpad(pad_axis::dpad_y, -1);
+         case pad_button::dpad_down:  return dpad(pad_axis::dpad_y, +1);
          default: break;
       }
 

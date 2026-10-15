@@ -1533,7 +1533,7 @@ sess.on_pad_button(elements_modal::parse_pad_button("dpad_up"), true);
 
 ### 入力転送の戻り値 (handled / pass-through)
 
-`on_key_down` / `on_key_up` / `on_pad_button` は **`bool` (このダイアログが入力を消費したか)** を返す。 `true` = Esc / focus 中 widget が処理 / 既知パッドボタン、 `false` = 未処理。 ホストが**複数 UI を重ねる / ゲームと共存させる**場合、 この戻り値を見て「ダイアログが使わなかったキーはゲーム側へ素通しする」といったキーボードフォーカスの pass-through を実装できる (戻り値を無視すれば従来どおり)。 `on_text_input` / `on_mouse_*` / `on_pad_axis` は `void` のまま。
+`on_key_down` / `on_key_up` / `on_pad_button` は **`bool` (このダイアログが入力を消費したか)** を返す。 `true` = Esc / focus 中 widget が処理 / パッドボタンを割り当て (ショートカット / キー合成) が処理、 `false` = 未処理。 十字は「フォーカスを動かせる (`arrow_focus_nav`) か、 フォーカス中の要素に届く」ときだけ `true` (方向移動が無効でフォーカスも無い画面では `false` = ゲームへ回せる)。 パッドの離しは押下を消費したかどうかに揃う。 `last_input_is_key_nav()` は直近の操作がキー / パッドか (マウス / タッチなら `false`) を返すので、 ホストは `focus_consumes_text()` と組み合わせて「十字で入力欄を通過しただけ」ならオンスクリーンキーボードを決定まで出さない、 といった判断ができる。 ホストが**複数 UI を重ねる / ゲームと共存させる**場合、 この戻り値を見て「ダイアログが使わなかったキーはゲーム側へ素通しする」といったキーボードフォーカスの pass-through を実装できる (戻り値を無視すれば従来どおり)。 `on_text_input` / `on_mouse_*` / `on_pad_axis` は `void` のまま。
 
 ## 登録済みフォントの列挙 (`font_families`)
 

@@ -488,6 +488,13 @@ public:
 	//! 「テキスト欄に focus が入ったら表示 / 外れたら非表示」に駆動する。
 	bool focus_consumes_text() const;
 
+	//! @brief 直近の操作がキー / パッド (方向キー・十字・スティック等) か。
+	//! マウス / タッチなら false、 まだ何も操作していなければ false。
+	//! ホストは focus_consumes_text() と組み合わせて「十字で入力欄を通過した
+	//! だけ」と「入力欄を押した」を見分け、 前者ではオンスクリーンキーボードを
+	//! 決定ボタンまで出さない、 といった判断に使う。
+	bool last_input_is_key_nav() const;
+
 	//! @brief 指定 id の要素に focus を移す。 id が見つからなければ no-op。
 	//! 起動直後 (start() 直後 / initial_focus を上書きしたい場面) や、
 	//! ホスト主導の focus 復元に使う。
@@ -794,7 +801,11 @@ public:
 	//! (a/b/x/y/dpad_*/lb/rb/… )、 down は press=true / release=false。
 	//! unknown は内部で無視される。 native (SDL_GAMEPAD_BUTTON_* 等) からの変換は
 	//! ホストアダプタが行う。
-	//! @return true: 消費 (既知ボタン) / false: 未対応で無視。
+	//! @return true: 消費 / false: 何もしなかった (ホストはゲーム等へ回してよい)。
+	//!   十字は「フォーカスを動かせる (arrow_focus_nav) か、 フォーカス中の
+	//!   要素に届く」ときだけ消費する。 それ以外のボタンは割り当て (ショート
+	//!   カット / キー合成) が処理したときだけ消費する。 離しは押下を消費した
+	//!   かどうかに揃える (押下だけ UI が取って離しがゲームへ漏れる、 を起こさない)。
 	bool on_pad_button(cycfi::elements::pad_button button, bool down);
 
 	//! ゲームパッドのアナログ軸イベント。 axis は cycfi::elements::pad_axis

@@ -28,6 +28,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -517,6 +518,9 @@ struct overlay_session::impl
 	bool cursor_warp_enabled = false;
 	enum class nav_source { none, key, mouse };
 	nav_source last_nav_source = nav_source::none;
+	// on_pad_button で押下を消費したボタン (bit = pad_button の値)。 離しの
+	// 消費判定を押下に揃えるために使う。
+	std::uint32_t pad_taken = 0;
 	bool  warp_pending = false;
 	float warp_sx = 0.0f;
 	float warp_sy = 0.0f;
@@ -1038,6 +1042,11 @@ bool overlay_session::focus_consumes_text() const
 {
 	if (!_impl || !_impl->view) return false;
 	return _impl->view->focus_wants_text_input();
+}
+
+bool overlay_session::last_input_is_key_nav() const
+{
+	return _impl && _impl->last_nav_source == impl::nav_source::key;
 }
 
 bool overlay_session::focus_text_caret(render_rect& out_caret,
@@ -2038,8 +2047,17 @@ bool overlay_session::on_pad_button(ce::pad_button button, bool down)
 	if (button == ce::pad_button::unknown) return false;
 	// 変化は refresh(rect) 経由で届く (on_key_down 参照)。
 	_impl->last_nav_source = impl::nav_source::key;
-	_impl->view->pad_button_event({button, down});
-	return true;   // 既知のパッドボタンは UI が消費 (UI 操作中はゲームへ通さない)
+	bool const handled = _impl->view->pad_button_event({button, down});
+	// 離しは押下を消費したかどうかに揃える (view は合成キーの離しを未処理で返す)。
+	std::uint32_t const bit = 1u << static_cast<int>(button);
+	if (down) {
+		if (handled) _impl->pad_taken |= bit;
+		else         _impl->pad_taken &= ~bit;
+		return handled;
+	}
+	bool const taken = (_impl->pad_taken & bit) != 0;
+	_impl->pad_taken &= ~bit;
+	return taken || handled;
 }
 
 void overlay_session::on_pad_axis(ce::pad_axis axis, float value)
