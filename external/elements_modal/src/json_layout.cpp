@@ -5008,6 +5008,15 @@ element_ptr LayoutBuilder::build_input_box(const picojson::object& o)
 		// フォーカスした場合はクリック位置がキャレットになるので影響しない。
 		pair.second->select_all();
 	}
+	// focus 追跡 (focused_id / focus_link 演出)。 外側は入力欄の飾りを含む
+	// composite なので、 focus の有無は中の編集要素で見る。
+	if (!id.empty()) {
+		std::weak_ptr<typename decltype(pair.second)::element_type> w = pair.second;
+		_focusables.emplace_back(id, [w]() {
+			auto p = w.lock();
+			return p && p->is_focus();
+		});
+	}
 	auto shared = ce::share(std::move(pair.first));
 	register_id(o, shared);
 	note_initial_focus(o, shared);

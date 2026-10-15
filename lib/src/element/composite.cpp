@@ -301,7 +301,14 @@ namespace cycfi::elements
       {
          bool focus_yields = true;
          auto next_focus = _focus;
-         bool reverse = (k.modifiers & mod_shift) ^ reverse_index();
+         bool const backward = (k.modifiers & mod_shift) != 0;
+         // reverse_index() only flips the order the children are walked in
+         // (a layer stacks its children last-on-top). The child being entered
+         // must still be entered from the end matching the Tab direction:
+         // Tab = from_top, Shift+Tab = from_bottom. Using the walk order here
+         // made a plain Tab into a layer land on the last focusable.
+         bool reverse = backward ^ reverse_index();
+         auto const enter = backward ? from_bottom : from_top;
          if (next_focus == -1 && reverse)
             next_focus = size();
 
@@ -309,7 +316,7 @@ namespace cycfi::elements
          {
             while (++next_focus != static_cast<int>(size()))
             {
-               if (try_focus(next_focus, from_top, focus_yields))
+               if (try_focus(next_focus, enter, focus_yields))
                   return true;
                if (!focus_yields) // Return as if key was handled if focus
                   return true;    // does not want to yield
@@ -320,7 +327,7 @@ namespace cycfi::elements
          {
             while (--next_focus >= 0)
             {
-               if (try_focus(next_focus, from_bottom, focus_yields))
+               if (try_focus(next_focus, enter, focus_yields))
                   return true;
                if (!focus_yields) // Return as if key was handled if focus
                   return true;    // does not want to yield
