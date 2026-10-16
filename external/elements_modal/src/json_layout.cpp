@@ -4535,6 +4535,10 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 	cfg.item_cols      = static_cast<int>(number_or(o, "item_cols", 0.0));
 	cfg.item_linear    = string_or(o, "item_nav") == "linear";
 	const std::string item_mask_var = string_or(o, "item_mask_var");
+	// 末端でさらにホイール: 下端に止まっているところで下方向へ回したら、
+	// このアクションをボタンが押されたときと同じ形でホストへ届ける。
+	const std::string end_wheel_action = string_or(o, "end_wheel_action");
+	cfg.end_wheel_guard_ms = static_cast<int>(number_or(o, "end_wheel_guard_ms", 200.0));
 	if (cfg.row_height <= 0.0f)
 		em_logf("elements_modal: virtual_scroller \"%s\" needs 'row_height'", id.c_str());
 	if (cfg.item_linear && cfg.item_cols <= 0)
@@ -4584,6 +4588,12 @@ element_ptr LayoutBuilder::build_virtual_scroller(const picojson::object& o)
 			if (!top_row_var.empty()) vars->set(top_row_var, std::to_string(row));
 			if (cb && !id.empty())
 				cb(id, /*is_button_click=*/false, value_t{static_cast<std::int64_t>(row)});
+		};
+	}
+	if (!end_wheel_action.empty() && _cb) {
+		auto cb = _cb;
+		vs->on_end_wheel = [cb, end_wheel_action]() {
+			cb(end_wheel_action, /*is_button_click=*/true, value_t{});
 		};
 	}
 	// 位置 (双方向)。 自分が書いた値を読み戻して位置を丸め直さないよう、
@@ -8654,6 +8664,11 @@ struct em_scrollbar_base : ce::basic_slider_base
 	std::shared_ptr<VariableStore>  vars;
 	std::shared_ptr<em_thumb_state> thumb_state;
 	std::function<void(bool)>       on_active;   // つまみを掴んでいる間 true
+	// 末端 (値 1 の側) にいるところで、 さらに末尾方向へホイールを回した。
+	// 直前のホイールから end_wheel_guard_ms 以上空いたときだけ呼ぶ
+	std::function<void()>           on_end_wheel;
+	int                             end_wheel_guard_ms = 200;
+	std::uint64_t                   last_wheel_ms = 0;
 
 	// ---- 件数と段 ----
 	int var_int(const std::string& name, int dflt) const
@@ -8896,6 +8911,14 @@ struct em_scrollbar_base : ce::basic_slider_base
 	{
 		const float d = sp.vertical ? dir.y : dir.x;
 		if (d == 0.0f) return false;
+		const std::uint64_t now = em_now_ms();
+		const std::uint64_t prev = last_wheel_ms;
+		last_wheel_ms = now;
+		if (d < 0.0f && on_end_wheel && (max_offset() <= 0 || value() >= 1.0 - 1e-4)) {
+			if (prev == 0 || now - prev >= std::uint64_t(std::max(0, end_wheel_guard_ms)))
+				on_end_wheel();
+			return true;
+		}
 		step_by(d > 0.0f ? -1 : +1);   // ホイール上 = 先頭へ
 		ctx.view.refresh(ctx);
 		return true;
@@ -9142,6 +9165,14 @@ element_ptr LayoutBuilder::build_atlas_scrollbar(const picojson::object& o)
 	if (std::string av = string_or(o, "active_var"); !av.empty()) {
 		sb->on_active = [vars, av](bool on) { vars->set(av, on ? "1" : "0"); };
 		if (!vars->get(av)) vars->set_initial(av, "0");
+	}
+	// 末端でさらにホイール (virtual_scroller の同名キーと同じ)。 一覧と
+	// スクロールバーのどちらの上で回しても同じアクションが届くようにする。
+	if (std::string ea = string_or(o, "end_wheel_action"); !ea.empty() && user_cb) {
+		sb->end_wheel_guard_ms = static_cast<int>(number_or(o, "end_wheel_guard_ms", 200.0));
+		sb->on_end_wheel = [user_cb, ea]() {
+			user_cb(ea, /*is_button_click=*/true, value_t{});
+		};
 	}
 
 	register_id(o, part);

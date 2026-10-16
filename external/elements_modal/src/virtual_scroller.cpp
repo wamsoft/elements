@@ -251,6 +251,18 @@ bool virtual_scroller::scroll(context const& ctx, point dir, point p)
 	if (amt == 0.0 || _cfg.row_height <= 0.0f)
 		return proxy_base::scroll(ctx, dir, p);
 
+	// 下端に止まっているところで下方向へ回したら末端の通知。 回し続けて
+	// 下端に着いた勢いで出ないよう、 直前のホイールから間が空いたときだけ。
+	const std::uint64_t now = em_now_ms();
+	const std::uint64_t prev = _last_wheel_ms;
+	_last_wheel_ms = now;
+	if (amt < 0.0 && on_end_wheel && !_anim.active && _px >= max_px() - 0.5) {
+		_wheel_acc = 0.0;
+		if (prev == 0 || now - prev >= std::uint64_t(std::max(0, _cfg.end_wheel_guard_ms)))
+			on_end_wheel();
+		return true;
+	}
+
 	// 1 ノッチ (1.0) で wheel_rows 行。 端数 (タッチパッド等) はためてから送る。
 	if ((_wheel_acc > 0.0 && amt < 0.0) || (_wheel_acc < 0.0 && amt > 0.0))
 		_wheel_acc = 0.0;

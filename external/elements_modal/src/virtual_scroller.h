@@ -23,6 +23,10 @@
 //                      bar_active(false) で行へ揃える
 //   ドラッグ         … drag_scroll 有効時。 しきい値を超えたらセルの押下を
 //                      取り消して 1:1 で追従し、 離した速度で慣性移動
+//   末端でさらにホイール … on_end_wheel があれば、 下端に止まっているときの
+//                      下方向のホイールで呼ぶ (直前のホイールから
+//                      end_wheel_guard_ms 以上空いたときだけ。 回し続けて
+//                      下端に着いただけでは呼ばない)
 //---------------------------------------------------------------------------
 #ifndef ELEMENTS_MODAL_VIRTUAL_SCROLLER_H
 #define ELEMENTS_MODAL_VIRTUAL_SCROLLER_H
@@ -74,6 +78,7 @@ public:
 		bool   ack_rows        = false;  // ホストの差し替え完了 (row_ready) を待って描く
 		int    item_cols       = 0;      // 1 行の項目数 (項目の順番での移動に使う)
 		bool   item_linear     = false;  // 矢印キーを項目の順番での移動にする
+		int    end_wheel_guard_ms = 200; // 末端ホイールの通知に要る直前のホイールからの間隔
 	};
 
 	virtual_scroller(element_ptr subject, config cfg);
@@ -119,6 +124,8 @@ public:
 	std::function<void(int)>    on_top_row;
 	//! 位置が変わった (0 = 上端 .. 1 = 下端)。 ratio() での外部指定では呼ばない
 	std::function<void(double)> on_ratio;
+	//! 下端に止まっているところで、 さらに下方向へホイールを回した
+	std::function<void()>       on_end_wheel;
 
 	void                 tick(cycfi::elements::view& v, std::uint64_t now_ms) override;
 
@@ -170,6 +177,7 @@ private:
 	int                  _applied = 0;      // セルが今表示している先頭行
 	anim_state           _anim;
 	double               _wheel_acc = 0.0;
+	std::uint64_t        _last_wheel_ms = 0; // 直前のホイールの時刻 (0 = まだ無い)
 	bool                 _dirty = false;    // 次の tick で再描画
 	bool                 _rehover = false;  // 次の tick でカーソル判定をやり直す
 	// いまの送りがポインタ (ホイール / ドラッグ) 由来か。 止まったときの

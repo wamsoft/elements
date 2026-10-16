@@ -18,6 +18,7 @@ namespace tvg { struct Picture; struct SwCanvas; }
 namespace cycfi { namespace elements
 {
    class canvas;
+   struct raw_image;
 
    ////////////////////////////////////////////////////////////////////////////
    // Pixmaps
@@ -57,6 +58,8 @@ namespace cycfi { namespace elements
       void              set_picture(tvg::Picture* pic);
 
       tvg::Picture*     _picture = nullptr;
+      // Host pixels referenced by _picture (see raw_image); empty otherwise.
+      std::shared_ptr<raw_image const> _raw;
       int               _width = 0;
       int               _height = 0;
       float             _scale = 1.0f;
@@ -102,6 +105,7 @@ namespace cycfi { namespace elements
    ////////////////////////////////////////////////////////////////////////////
    inline pixmap::pixmap(pixmap&& rhs)
     : _picture(rhs._picture)
+    , _raw(std::move(rhs._raw))
     , _width(rhs._width)
     , _height(rhs._height)
     , _scale(rhs._scale)
@@ -117,6 +121,7 @@ namespace cycfi { namespace elements
       {
          release_picture();
          _picture = rhs._picture;
+         _raw = std::move(rhs._raw);
          _width = rhs._width;
          _height = rhs._height;
          _scale = rhs._scale;

@@ -14,6 +14,27 @@
 namespace cycfi { namespace elements
 {
    ////////////////////////////////////////////////////////////////////////////
+   // raw_image
+   //
+   // Decoded pixels handed over by a host without going through an image
+   // codec. Pixels are 32-bit 0xAARRGGBB (B,G,R,A in memory on little
+   // endian), top row first, row stride == width. This is the layout of
+   // tvg::ColorSpace::ARGB8888 / ARGB8888S.
+   //
+   // premultiplied == true means color channels are already multiplied by
+   // alpha. Such buffers are referenced by the pixmap without copying (they
+   // are never modified). Straight-alpha buffers are copied, because the
+   // renderer premultiplies its image buffer in place.
+   ////////////////////////////////////////////////////////////////////////////
+   struct raw_image
+   {
+      int                        width = 0;
+      int                        height = 0;
+      bool                       premultiplied = true;
+      std::vector<std::uint32_t> pixels;
+   };
+
+   ////////////////////////////////////////////////////////////////////////////
    // resource_loader
    //
    // Abstract interface for reading resource bytes by logical name. The
@@ -43,6 +64,14 @@ namespace cycfi { namespace elements
       // relative logical names.
       virtual std::vector<std::uint8_t>
                                     read(std::string_view name) = 0;
+
+      // Returns the named resource as decoded pixels, or nullptr when it
+      // is not held in that form (the caller then falls back to read()
+      // and decodes the bytes). pixmap asks this first, so a host can
+      // register images that skip encoding and decoding entirely. The
+      // default implementation holds no raw images.
+      virtual std::shared_ptr<raw_image const>
+                                    read_raw(std::string_view name);
    };
 
    ////////////////////////////////////////////////////////////////////////////

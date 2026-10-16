@@ -129,6 +129,36 @@ namespace cycfi { namespace elements
     : _scale(scale_)
    {
       std::string name = path.string();
+
+      // Pixels registered by the host as-is: build the picture directly,
+      // no codec involved.
+      if (auto raw = get_resource_loader().read_raw(name))
+      {
+         if (raw->width <= 0 || raw->height <= 0 ||
+             raw->pixels.size() < std::size_t(raw->width) * std::size_t(raw->height))
+            throw failed_to_load_pixmap{"Invalid raw image: " + name};
+
+         auto* pic = tvg::Picture::gen();
+         // A premultiplied buffer is never written by the renderer, so it is
+         // referenced (and kept alive by _raw). A straight-alpha buffer gets
+         // premultiplied in place on first draw, so it must be copied.
+         bool const ref = raw->premultiplied;
+         if (!pic || pic->load(raw->pixels.data(), raw->width, raw->height,
+               raw->premultiplied ? tvg::ColorSpace::ARGB8888
+                                  : tvg::ColorSpace::ARGB8888S,
+               /*copy=*/!ref) != tvg::Result::Success)
+         {
+            if (pic) tvg::Paint::rel(pic);
+            throw failed_to_load_pixmap{"Failed to load raw image: " + name};
+         }
+         _width = raw->width;
+         _height = raw->height;
+         _picture = pic;
+         if (ref)
+            _raw = std::move(raw);
+         return;
+      }
+
       auto bytes = get_resource_loader().read(name);
       if (bytes.empty())
          throw failed_to_load_pixmap{"File does not exist: " + name};
@@ -196,6 +226,8 @@ namespace cycfi { namespace elements
          tvg::Paint::rel(_picture);
          _picture = nullptr;
       }
+      // Only after the picture is gone: it may reference these pixels.
+      _raw.reset();
    }
 
    void pixmap::set_picture(tvg::Picture* pic)

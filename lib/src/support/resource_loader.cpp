@@ -19,6 +19,11 @@ namespace cycfi { namespace elements
       return !read(name).empty();
    }
 
+   std::shared_ptr<raw_image const> resource_loader::read_raw(std::string_view)
+   {
+      return {};
+   }
+
    namespace
    {
 #if !defined(ELEMENTS_FILE_IO_SUPPORT)
