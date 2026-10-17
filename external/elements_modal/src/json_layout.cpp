@@ -1823,15 +1823,28 @@ struct hover_link_wire
 	std::shared_ptr<std::string> focused_slot;   // 現在フォーカス中の id
 };
 
+// 値変更 SE の通知 (チェック・スライダー・選択などをユーザーが操作したとき)。
+// スロットが空なら何もしない。 widget 側は «値変化のホスト通知» より先に呼ぶ
+// (ボタンの決定 SE と同じく、 SE → 本来の通知 の順に届けるため)。
+inline void emit_change_se(const std::shared_ptr<change_se_callback>& slot,
+                           const std::string& id)
+{
+	if (slot && *slot && !id.empty()) (*slot)(id);
+}
+
 class LayoutBuilder
 {
 public:
 	explicit LayoutBuilder(event_callback cb,
-	                       std::shared_ptr<drag_callback> drag_slot = {})
-	 : _cb(std::move(cb)), _drag_slot(std::move(drag_slot)) {}
+	                       std::shared_ptr<drag_callback> drag_slot = {},
+	                       std::shared_ptr<change_se_callback> se_slot = {})
+	 : _cb(std::move(cb)), _drag_slot(std::move(drag_slot)),
+	   _se_slot(std::move(se_slot)) {}
 
 	// ドラッグ通知の receiver スロット (中身はホストが後から差し替える)。
 	std::shared_ptr<drag_callback> _drag_slot;
+	// 値変更 SE の receiver スロット (overlay_session が SE 表を引いて鳴らす)。
+	std::shared_ptr<change_se_callback> _se_slot;
 
 	// canvas 子の配置 rect が "at_var" で動いたときの通知スロット
 	// (部分再描画のダーティ範囲用。 詳細は json_layout.h)。
@@ -4909,7 +4922,8 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		cb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+		cb.on_click = [cb_id, user_cb, se = _se_slot, vars, value_var](bool state) {
+			emit_change_se(se, cb_id);
 			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -4942,7 +4956,8 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		tb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+		tb.on_click = [cb_id, user_cb, se = _se_slot, vars, value_var](bool state) {
+			emit_change_se(se, cb_id);
 			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -4974,7 +4989,8 @@ element_ptr LayoutBuilder::build_slide_switch(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		sw.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+		sw.on_click = [cb_id, user_cb, se = _se_slot, vars, value_var](bool state) {
+			emit_change_se(se, cb_id);
 			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -5084,7 +5100,8 @@ element_ptr LayoutBuilder::build_selection_menu(const picojson::object& o)
 
 	auto cb_id = id;
 	auto user_cb = _cb;
-	auto on_select = [cb_id, user_cb](std::string_view text) {
+	auto on_select = [cb_id, user_cb, se = _se_slot](std::string_view text) {
+		emit_change_se(se, cb_id);
 		if (user_cb && !cb_id.empty()) {
 			user_cb(cb_id, /*is_button_click=*/false,
 			        value_t{std::string(text)});
@@ -5242,7 +5259,8 @@ element_ptr LayoutBuilder::build_cycle_picker(const picojson::object& o, int var
 	auto cb_id = id;
 	auto user_cb = _cb;
 	auto vars = _vars;
-	auto on_change = [cb_id, user_cb, vars, index_var](std::size_t i) {
+	auto on_change = [cb_id, user_cb, se = _se_slot, vars, index_var](std::size_t i) {
+		emit_change_se(se, cb_id);
 		if (!index_var.empty()) vars->set(index_var, std::to_string(i));
 		if (user_cb && !cb_id.empty()) {
 			user_cb(cb_id, /*is_button_click=*/false,
@@ -7143,7 +7161,8 @@ element_ptr LayoutBuilder::build_atlas_toggle(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		tb.on_click = [cb_id, user_cb, vars, value_var](bool state) {
+		tb.on_click = [cb_id, user_cb, se = _se_slot, vars, value_var](bool state) {
+			emit_change_se(se, cb_id);
 			if (!value_var.empty()) vars->set(value_var, state ? "1" : "0");
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -7241,8 +7260,10 @@ element_ptr LayoutBuilder::build_atlas_cycle_button(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		sp->on_click = [st, spr, w, cb_id, user_cb, vars, index_var](bool) {
+		auto se = _se_slot;
+		sp->on_click = [st, spr, w, cb_id, user_cb, se, vars, index_var](bool) {
 			if (w.expired()) return;
+			emit_change_se(se, cb_id);
 			st->index = (st->index + 1) % st->sets.size();
 			spr->frames(st->sets[st->index]);
 			if (!index_var.empty())
@@ -7350,7 +7371,8 @@ element_ptr LayoutBuilder::build_atlas_choice(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		ch.on_click = [cb_id, user_cb, vars, sel_var, sel_val](bool state) {
+		ch.on_click = [cb_id, user_cb, se = _se_slot, vars, sel_var, sel_val](bool state) {
+			emit_change_se(se, cb_id);
 			if (state && !sel_var.empty()) vars->set(sel_var, sel_val);
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -7797,6 +7819,14 @@ element_ptr build_thumb_image(const ce::pixmap_ptr& pm, const picojson::object& 
 	return img;
 }
 
+// スライダーの値変更 SE を «ドラッグ中は鳴らさない» ための状態。
+// 押してから動かしたら dragging にし、 離すまで値変更 SE を止める。 動かさずに
+// 離した (溝のクリックでつまみが跳んだ) ときと、 キー / パッドでの変更は鳴らす。
+struct em_slider_drag_state
+{
+	bool dragging = false;
+};
+
 // thumb 形式 atlas_slider の base。 track 画像は widget 全域 (= "at"/#範囲) を
 // そのまま埋める素材 (角丸ボーダー等の枠込み) を前提にしており、 slider_base
 // 既定の「thumb がはみ出さないよう track を thumb 半分だけ内側にインセット」
@@ -7807,18 +7837,22 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 	using cycfi::elements::basic_slider_base::basic_slider_base;
 	// つまみの状態別の絵 ("thumb_hilite" / "thumb_pressed") があるとき
 	std::shared_ptr<em_thumb_state> thumb_state;
+	std::shared_ptr<em_slider_drag_state> drag_state =
+		std::make_shared<em_slider_drag_state>();
 	// 押し下げの絵にするのはつまみを押したとき。 溝を押しただけでは変えず、
 	// そこからドラッグしてつまみが付いてきた時点で押し下げにする。
 	void begin_tracking(cycfi::elements::context const& ctx,
 	                    cycfi::elements::tracker_info& ti) override
 	{
 		const bool on_thumb = thumb_bounds(ctx).includes(ti.current);
+		drag_state->dragging = false;
 		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
 		if (thumb_state && on_thumb) thumb_state->pressed = true;
 	}
 	void keep_tracking(cycfi::elements::context const& ctx,
 	                   cycfi::elements::tracker_info& ti) override
 	{
+		if (ti.current != ti.previous) drag_state->dragging = true;
 		if (thumb_state && !thumb_state->pressed
 		    && ti.current != ti.previous)
 			thumb_state->pressed = true;
@@ -7828,6 +7862,7 @@ struct em_slider_base : cycfi::elements::basic_slider_base
 	                  cycfi::elements::tracker_info& ti) override
 	{
 		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
+		drag_state->dragging = false;
 		if (thumb_state && thumb_state->pressed) {
 			thumb_state->pressed = false;
 			ctx.view.refresh(ctx);
@@ -7862,6 +7897,27 @@ struct em_fill_slider_base : cycfi::elements::basic_slider_base
 	float fx = 0.0f;   // ゲージ左端 (トラック幅比)
 	float fw = 1.0f;   // ゲージ幅 (トラック幅比)
 	bool  fill_vertical = false;
+	std::shared_ptr<em_slider_drag_state> drag_state =
+		std::make_shared<em_slider_drag_state>();
+
+	void begin_tracking(cycfi::elements::context const& ctx,
+	                    cycfi::elements::tracker_info& ti) override
+	{
+		drag_state->dragging = false;
+		cycfi::elements::basic_slider_base::begin_tracking(ctx, ti);
+	}
+	void keep_tracking(cycfi::elements::context const& ctx,
+	                   cycfi::elements::tracker_info& ti) override
+	{
+		if (ti.current != ti.previous) drag_state->dragging = true;
+		cycfi::elements::basic_slider_base::keep_tracking(ctx, ti);
+	}
+	void end_tracking(cycfi::elements::context const& ctx,
+	                  cycfi::elements::tracker_info& ti) override
+	{
+		cycfi::elements::basic_slider_base::end_tracking(ctx, ti);
+		drag_state->dragging = false;
+	}
 
 	cycfi::elements::rect
 	thumb_bounds(cycfi::elements::context const& ctx) const override
@@ -7974,9 +8030,12 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		sl.fill_vertical = vertical;
 		auto cb_id = id;
 		auto user_cb = _cb;
+		auto se = _se_slot;
+		auto ds = sl.drag_state;
 		std::weak_ptr<ce::atlas_progress> wg = gauge;
-		sl.on_change = [cb_id, user_cb, wg](double pos) {
+		sl.on_change = [cb_id, user_cb, se, ds, wg](double pos) {
 			if (auto g = wg.lock()) g->set_value(pos);
+			if (!ds->dragging) emit_change_se(se, cb_id);
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{pos});
 		};
@@ -8035,7 +8094,10 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		if (!id.empty()) {
 			auto cb_id = id;
 			auto user_cb = _cb;
-			sl.on_change = [cb_id, user_cb](double pos) {
+			auto se = _se_slot;
+			auto ds = sl.drag_state;
+			sl.on_change = [cb_id, user_cb, se, ds](double pos) {
+				if (!ds->dragging) emit_change_se(se, cb_id);
 				if (user_cb) user_cb(cb_id, /*is_button_click=*/false,
 				                     value_t{pos});
 			};
@@ -9451,7 +9513,8 @@ element_ptr LayoutBuilder::build_atlas_cycle_picker(const picojson::object& o)
 	auto vars = _vars;
 	auto p = std::make_shared<ce::atlas_cycle_picker>(
 		pm, std::move(opts), initial, left, right, left_at, right_at, text_at);
-	p->on_change = [cb_id, user_cb, vars, index_var](std::size_t i) {
+	p->on_change = [cb_id, user_cb, se = _se_slot, vars, index_var](std::size_t i) {
+		emit_change_se(se, cb_id);
 		if (!index_var.empty()) vars->set(index_var, std::to_string(i));
 		if (user_cb && !cb_id.empty()) {
 			user_cb(cb_id, /*is_button_click=*/false,
@@ -9515,7 +9578,8 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 		auto cb_id = id;
 		auto user_cb = _cb;
 		auto vars = _vars;
-		rb.on_click = [cb_id, user_cb, vars, sel_var, sel_val](bool state) {
+		rb.on_click = [cb_id, user_cb, se = _se_slot, vars, sel_var, sel_val](bool state) {
+			emit_change_se(se, cb_id);
 			if (state && !sel_var.empty()) vars->set(sel_var, sel_val);
 			if (user_cb && !cb_id.empty())
 				user_cb(cb_id, /*is_button_click=*/false, value_t{state});
@@ -10211,7 +10275,8 @@ static void apply_font_languages(const picojson::object& o)
 //---------------------------------------------------------------------------
 parsed_layout build_top_level(const picojson::value& root, event_callback cb,
                               const std::string& resource_base,
-                              std::shared_ptr<drag_callback> drag_slot)
+                              std::shared_ptr<drag_callback> drag_slot,
+                              std::shared_ptr<change_se_callback> se_slot)
 {
 	parsed_layout result;
 	if (!root.is<picojson::object>()) {
@@ -10264,7 +10329,7 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		}
 	}
 
-	LayoutBuilder builder(std::move(cb), std::move(drag_slot));
+	LayoutBuilder builder(std::move(cb), std::move(drag_slot), std::move(se_slot));
 	if (!resource_base.empty()) {
 		builder.set_resource_base(resource_base);
 	}
@@ -10748,7 +10813,8 @@ std::shared_ptr<cycfi::elements::element> parsed_layout::pick_initial_focus() co
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb,
                                 const std::string& resource_base,
-                                std::shared_ptr<drag_callback> drag_slot)
+                                std::shared_ptr<drag_callback> drag_slot,
+                                std::shared_ptr<change_se_callback> se_slot)
 {
 	// JSONC 前処理 (const + cbegin/cend で渡す。 non-const iterator だと
 	// picojson の template instance の都合で parse 結果が破壊されるケースがある)。
@@ -10761,7 +10827,8 @@ parsed_layout parse_from_string(const std::string& json_utf8,
 		em_logf("elements_modal: parse error: %s", err.c_str());
 		return {};
 	}
-	return build_top_level(v, std::move(cb), resource_base, std::move(drag_slot));
+	return build_top_level(v, std::move(cb), resource_base, std::move(drag_slot),
+	                       std::move(se_slot));
 }
 
 //---------------------------------------------------------------------------

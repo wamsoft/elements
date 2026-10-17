@@ -1294,9 +1294,10 @@ view 全体のナビゲーション設定。 全フィールドが任意:
     ],
 
     // action 発火時の SE 名 (ホスト通知のみ、 再生はホスト責務)。
-    // キーはカテゴリ (nav / accept / cancel / page / scroll) または
-    // 個別 action 名・button id (そちらが優先)
-    "se": { "nav": "cursor.ogg", "accept": "ok.ogg", "cancel": "cancel.ogg" },
+    // キーはカテゴリ (nav / accept / change / cancel / page / scroll) または
+    // 個別 action 名・widget id (そちらが優先)。 値を "" にすると無音
+    "se": { "nav": "cursor.ogg", "accept": "ok.ogg", "change": "ok.ogg",
+            "cancel": "cancel.ogg" },
 
     // cursor-warp ナビ: キー/パッドでフォーカスが動いたとき、 ホストが実マウス
     // カーソルをフォーカス先の hot point へ warp する運用を有効化 (既定 false)。
@@ -1353,6 +1354,30 @@ action に再宣言しても登録はスキップされる (キー合成の自�
   差し替え / 無効化で画面ごとに戻る挙動を制御できる。
 - SE はアクション発火時に `event_callback("<se>", false, SE名)` で通知
   (`nav` は focus 変化検出、 `accept` は button click で一元発火)。
+  同じ操作の本来の通知 (button の id 等) より**先に**届く。
+  - `nav`: フォーカスの移動 (キー / パッド / hover_focus によるマウス)。
+    フォーカスが変わらなくても、 マウスポインタがフォーカス中の部品の矩形へ
+    外から入り直したとき (一度外して同じ部品へ戻る) にも鳴る。
+    `"nav.<id>"` で移動先 (入った先) の widget ごとに SE 名を変えられる
+    (例: 画面全体は `"nav": ""` で無音にし、 `"nav.close": "cursor.ogg"` で
+    close だけ鳴らす)。
+    次のときは鳴らない: 画面を開いた直後の初期フォーカス (フォーカス無し →
+    最初の部品も含む)、 ホストの `focus_by_id` によるフォーカス変更、
+    動けない端での `nav_*` / `focus_*` action。 移動先 id の個別指定は無い。
+  - `accept`: button の決定。 button id の個別指定が優先。
+    `end_wheel_action` (一覧の端でさらにホイール) も button の決定と同じ形で
+    通知されるので、 action 名を書かないと `accept` で鳴る。
+  - `change`: チェック・トグル・slide_switch・atlas_toggle・atlas_choice・
+    radio_button・cycle 系 (cycle_picker / atlas_cycle_picker /
+    atlas_cycle_button)・selection_menu・atlas_slider の値をユーザーが変えたとき。
+    widget id の個別指定が優先。 atlas_slider はドラッグ中 (押して動かした後)
+    は鳴らさず、 キー / パッドでの変更と、 動かさずに離した (溝のクリックで
+    つまみが跳んだ) ときだけ鳴らす。 一覧の先頭行・スクロールバーの位置・
+    テキスト入力・初期値の通知・`set_var` による反映では鳴らない。 素の
+    `slider` / `slider_with_range` と list の行選択は対象外。
+  - `cancel` / `page` / `scroll`: 対応する組込 action の発火時。
+  - 画面を開く / 閉じる、 マウスオーバーだけ (フォーカスが動かないもの)、
+    tab_view の見出しクリックでは鳴らない。
 
 #### 名前リファレンス
 

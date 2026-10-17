@@ -267,6 +267,13 @@ struct overlay_session::impl
 	// ので、 start() の前後どちらでも set_drag_callback() で差し替えられる。
 	std::shared_ptr<drag_callback> drag_slot = std::make_shared<drag_callback>();
 
+	// 値変更 SE の receiver スロット。 start() で play_change_se へつなぐ。
+	// 中身は impl を指すので、 impl が先に消えても widget 側が呼ばないよう
+	// デストラクタで空にする (スロット自体は widget と共有している)。
+	std::shared_ptr<change_se_callback> se_change_slot =
+		std::make_shared<change_se_callback>();
+	~impl() { if (se_change_slot) *se_change_slot = nullptr; }
+
 	// focus 変化に追従する「変数 → label set_text」の poll。 毎 render 前と
 	// 主要な入力イベント処理後に呼ぶ。 JSON 側に vars_on_focus / text_var が
 	// 一切ない場合は null。
@@ -347,6 +354,15 @@ struct overlay_session::impl
 	// focused_id_slot の変化として一元的に拾える)。
 	std::string se_last_focused;
 	bool se_focus_seen = false;
+	// ホストが focus_by_id で動かしたフォーカスは nav SE を鳴らさない
+	// (画面を開いた直後に TJS 等がフォーカスを置き直すたびに鳴ってしまうため)。
+	// 次の update で変化を見たら落とす。
+	bool se_quiet_focus = false;
+	// マウスでの再入 SE 用: フォーカス中の部品 (se_ptr_focus_id) の矩形に
+	// ポインタが入っているか。 フォーカスが変わったら update で取り直し、
+	// ポインタが外から入り直したら (フォーカスは変わらなくても) nav を鳴らす。
+	std::string se_ptr_focus_id;
+	bool se_ptr_in_focus = false;
 	// フォーカスが初めて確定したか。 開いた直後の 1 フレーム目は
 	// focused_id_slot がまだ空で、 確定は次フレームに起きる。
 	bool focus_ever_seen = false;
@@ -607,11 +623,59 @@ struct overlay_session::impl
 	// action 名 → SE。 個別 action 名の登録が優先、 無ければカテゴリで引く。
 	// accept はここでは鳴らさない (button click = fire() 側で一元発火。
 	// pad A → enter 合成 → button activate → fire と二重になるため)。
+	// nav カテゴリ (nav_* / focus_*) も鳴らさない。 これらは合成キーで
+	// フォーカスを動かし、 移動はフォーカス変化の検出 (update) で nav として
+	// 鳴るので、 ここでも鳴らすと二重になる (動けない端では鳴らない)。
 	void play_se_for_action(const std::string& action)
 	{
 		if (action == "accept") return;
 		if (se_map.count(action)) { play_se(action); return; }
-		if (const char* cat = action_se_category(action)) play_se(cat);
+		const char* cat = action_se_category(action);
+		if (cat && std::string_view(cat) == "nav") return;
+		if (cat) play_se(cat);
+	}
+
+	// 値変更 SE。 widget id の個別指定が優先、 無ければカテゴリ change。
+	void play_change_se(const std::string& id)
+	{
+		if (se_map.count(id)) play_se(id);
+		else                  play_se("change");
+	}
+
+	// nav SE (フォーカスの移動 / マウスでの再入)。 移動先 widget の個別指定
+	// "nav.<id>" があればそちらを、 無ければカテゴリ nav を引く。
+	void play_nav_se(const std::string& id)
+	{
+		const std::string key = "nav." + id;
+		if (se_map.count(key)) play_se(key);
+		else                   play_se("nav");
+	}
+
+	// ポインタ p が id の要素の矩形に入っているか。
+	bool pointer_in_id(const std::string& id, ce::point p)
+	{
+		if (id.empty() || !view) return false;
+		auto it = id_map.find(id);
+		if (it == id_map.end() || !it->second) return false;
+		ce::rect b{};
+		ce::extent nat{0, 0};
+		if (!view->element_bounds(*it->second, b, nat)) return false;
+		return b.includes(p);
+	}
+
+	// マウスでの再入 SE。 hover_focus はポインタが同じ部品へ戻ってもフォーカスが
+	// 変わらないので、 フォーカス変化の検出だけでは «一度外して戻る» で鳴らない。
+	// フォーカス中の部品の矩形に外から入ったときにここで nav を鳴らす。
+	// フォーカスが変わった直後 (slot と se_ptr_focus_id が食い違う間) は何も
+	// しない (移動の nav は update 側で鳴り、 基準もそこで取り直す)。
+	void check_pointer_reentry(ce::point p)
+	{
+		if (se_map.empty() || !focused_id_slot) return;
+		const std::string& cur = *focused_id_slot;
+		if (cur.empty() || cur != se_ptr_focus_id) return;
+		const bool inside = pointer_in_id(cur, p);
+		if (inside && !se_ptr_in_focus && !hover_gate) play_nav_se(cur);
+		se_ptr_in_focus = inside;
 	}
 
 	// named UI action のディスパッチ本体。 key/pad は view shortcut callback
@@ -826,7 +890,8 @@ bool overlay_session::start(const std::string& json_utf8,
 		[p](std::string_view id, bool is_btn, const value_t& v) {
 			p->fire(id, is_btn, v);
 		},
-		resource_base, p->drag_slot);
+		resource_base, p->drag_slot, p->se_change_slot);
+	*p->se_change_slot = [p](const std::string& id) { p->play_change_se(id); };
 
 	if (!layout.root) {
 		em_logf("overlay_session::start: layout parse failed");
@@ -1079,6 +1144,7 @@ void overlay_session::focus_by_id(const std::string& id)
 	_impl->needs_render_ = true;
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->host_focus_requested_ = true;
+	_impl->se_quiet_focus = true;
 	_impl->view->focus(it->second);
 }
 
@@ -1510,7 +1576,10 @@ bool overlay_session::update()
 			             ? "post" : "skip");
 		if (_impl->se_focus_seen && cur != _impl->se_last_focused
 		    && !cur.empty()) {
-			_impl->play_se("nav");
+			// フォーカス無し → 最初の部品 (画面を開いた直後に初期フォーカスが
+			// 1 フレーム遅れて付くとき等) は移動ではないので鳴らさない
+			if (!_impl->se_quiet_focus && !_impl->se_last_focused.empty())
+				_impl->play_nav_se(cur);
 			// キー/パッド由来の移動のみ warp イベントを積む (hover_focus に
 			// よるマウス由来の移動で warp するとカーソルと喧嘩する)。
 			if (_impl->cursor_warp_enabled
@@ -1522,8 +1591,13 @@ bool overlay_session::update()
 				}
 			}
 		}
+		if (cur != _impl->se_ptr_focus_id) {
+			_impl->se_ptr_focus_id = cur;
+			_impl->se_ptr_in_focus = _impl->pointer_in_id(cur, _impl->last_cursor);
+		}
 		_impl->se_last_focused = cur;
 		_impl->se_focus_seen = true;
+		_impl->se_quiet_focus = false;
 	}
 
 	// focus / hover 変化を演出へ通知 (取得で前進、 喪失で復帰再生)。 poll の後に呼ぶ。
@@ -1955,6 +2029,7 @@ void overlay_session::on_mouse_move(float sx, float sy, int mods)
 		em_navlogf("  ** hover moved focus %s -> %s (synthetic=%d)",
 		           focus_before_.c_str(), _impl->focused_id_slot->c_str(),
 		           synthetic_warp_move ? 1 : 0);
+	if (!_impl->mouse_down) _impl->check_pointer_reentry(p);
 }
 
 void overlay_session::on_mouse_wheel(float dx, float dy,
@@ -1990,6 +2065,7 @@ void overlay_session::on_mouse_leave()
 	_impl->needs_render_ = true;   // hover 解除で hilite が戻る
 	_impl->dirty_full_ = true;   // 範囲不明 (全面)
 	_impl->view->cursor(_impl->last_cursor, ce::cursor_tracking::leaving);
+	_impl->se_ptr_in_focus = false;
 }
 
 bool overlay_session::on_key_down(ce::key_code key, int mods)

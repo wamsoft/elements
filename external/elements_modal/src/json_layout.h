@@ -277,6 +277,9 @@ struct input_defaults_data
 	input_action_config actions;
 };
 
+//! @brief 値変更 SE の通知先。 引数は値が変わった widget の id。
+using change_se_callback = std::function<void(const std::string& id)>;
+
 //! @brief input_defaults.jsonc テキストの解析。 JSONC 可。 失敗時 ok=false。
 input_defaults_data parse_input_defaults(const std::string& json_utf8);
 
@@ -287,10 +290,16 @@ input_defaults_data parse_input_defaults(const std::string& json_utf8);
 //! @param drag_slot ドラッグ通知の receiver スロット。 中身は後から差し替えて
 //!                   よい (overlay_session::set_drag_callback がそうする) ので、
 //!                   build 済みの widget も最新の receiver を見る。
+//! @param se_slot 値変更 SE の receiver スロット。 チェック・トグル・スライダー・
+//!                 選択・cycle 系の widget をユーザーが操作して値が変わったとき、
+//!                 その widget の id を渡して呼ぶ (スライダーのドラッグ中は呼ばない)。
+//!                 一覧の先頭行・スクロールバーの位置・テキスト入力・初期値の通知
+//!                 では呼ばない。
 parsed_layout parse_from_string(const std::string& json_utf8,
                                 event_callback cb,
                                 const std::string& resource_base = {},
-                                std::shared_ptr<drag_callback> drag_slot = {});
+                                std::shared_ptr<drag_callback> drag_slot = {},
+                                std::shared_ptr<change_se_callback> se_slot = {});
 
 // app_manifest / parse_app_manifest() は modal.h (public) に定義済。
 
