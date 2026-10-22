@@ -351,6 +351,23 @@ public:
 - macOS: SDL3 の NSWindow サブクラス名は `SDL3Window` (`src/video/cocoa/SDL_cocoawindow.m`)。SDL を上げてこの名前が変わると、フォーカスの転送が効かなくなる。
 - ssh から AX を検査するには、macOS のアクセシビリティ権限を ssh 側のプロセスに付ける必要がある。Linux は、ログイン中のセッションバス (`DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/<uid>/bus`) を指定すれば、Python の Atspi で外から検査も操作もできる。
 
+### 3.2.3 iOS / Android (2026-10-22)
+
+accesskit-c 0.23.1 の prebuilt に入っている iOS (`lib/ios`、`lib/ios-simulator`) と Android (`lib/android/arm64-v8a`・`x86_64`) を使う。AccessKit のアダプタのソース (`adapters/ios`、`adapters/android`) を読んで、次のように決めた。
+
+| | iOS (VoiceOver) | Android (TalkBack) |
+|---|---|---|
+| アダプタ | `accesskit_ios_subclassing_adapter_new(UIView*)`。`attach_sdl` は `SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER` の UIWindow から `rootViewController.view` を引く | `accesskit_android_adapter_new()` (通常版)。injecting 版は Java クラス `dev.accesskit.android.Delegate` が要るが、prebuilt はその dex を同梱しない (`embedded-dex` なし) |
+| 付く先 | root view controller の view。**SDL は GL / Metal の view を作るときにこの view を差し替える**ので、ホストは `refresh_native_view()` を呼んで付け直す (安いので毎フレームでよい) | ホストの View (SDL なら `SDLSurface` のサブクラス) が `getAccessibilityNodeProvider()` / `onHoverEvent()` を override し、`android_create_node_info` / `android_find_focus` / `android_perform_action` / `android_on_hover` へ渡す。Java の接着は利用側が書く (accesskit-c の `examples/sdl/android` と同じ形) |
+| スレッド | すべてメインスレッド (SDL3 の UIKit もメインスレッドで回る)。activation の場で snapshot を取る (Windows / macOS と同じ) | アダプタは Android の UI スレッド専用。activation は UI スレッドから来るので、Unix と同じく最後に push された snapshot を返す。更新は `flush()` → `android_on_update_request` で渡した関数 → UI スレッドで `android_update()`。アクションも UI スレッドから来る |
+| 座標 | view 内のピクセル = ポイント × `contentScaleFactor` (AccessKit が割ってポイントに戻す)。`native_scale()` は `contentScaleFactor` を返す | View 内のピクセル (AccessKit が `getLocationOnScreen` を足す) |
+| active | VoiceOver の on / off で activation / deactivation が来る | 一度 activation されると、TalkBack を切っても知らせが無い。ホストが `AccessibilityManager` の状態を `android_set_enabled()` で渡す |
+| live region | `UIAccessibilityAnnouncementNotification` で読まれる | `setLiveRegion` (名前を持つノード) |
+| 増減 | `accessibilityIncrement` / `Decrement` (上下スワイプ) | `ACTION_SCROLL_FORWARD` / `BACKWARD` |
+
+- CMake: クロスツールチェーン (Android NDK / iOS) は `find_library` を sysroot に限るので、`accesskit-config.cmake` の static ライブラリ探索が外れることがある。外れたら `${ACCESSKIT_LIBRARIES_DIR}/static/libaccesskit.a` を直接指す。
+- 入力欄: iOS のアダプタ (0.2) はキャレット / 選択を UIKit へ出さない (値の文字列だけ)。Android は選択の取得・設定がある。
+
 ### 3.3 Win32 ホスト (`lib/host/windows/`)
 
 - `view_info` に `std::unique_ptr<a11y::accesskit_host>` を持たせる。`ElementsView` 子 HWND の WndProc に次を足す。
@@ -575,7 +592,7 @@ Mac で確かめる中で、ホストの既存の不具合を 3 つ直した (a1
 - **ゲームの全画面表示**: 排他フルスクリーンでも UIA は動くが、SR の音声とゲーム音声がぶつかる。音量のダッキングはアプリ側の設定に委ねる。
 - **SR を使わない利用者への自前読み上げ (self-voicing)**: 本設計の範囲外。必要になったら、L2 の sink 実装の 1 つとして Prism (MPL-2.0、vcpkg あり) などを差し込める。
 - **ゲーム本体 (Elements 以外) の UI**: ホスト側が独自の source を実装して `add_source` すれば同じツリーに載る (第 2 部)。
-- **モバイル (Android / iOS)**: AccessKit にアダプタはあるが、今回の範囲外。L0〜L2 はそのまま使える。
+- **モバイル (Android / iOS)**: §3.2.3。iOS は `refresh_native_view()` の付け直しが SDL の view の作り方に依存する。Android は Java の接着をホスト側が持つ。
 
 ---
 

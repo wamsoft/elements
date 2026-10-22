@@ -27,8 +27,14 @@
 #endif
 
 #if defined(__APPLE__)
+# include <TargetConditionals.h>
 # include <objc/message.h>
 # include <objc/runtime.h>
+# if TARGET_OS_OSX
+#  define ELEMENTS_A11Y_MACOS 1
+# elif TARGET_OS_IOS
+#  define ELEMENTS_A11Y_IOS 1
+# endif
 #endif
 
 #if (defined(__linux__) || defined(__DragonFly__) || defined(__FreeBSD__) \
@@ -122,9 +128,18 @@ namespace cycfi::elements::a11y
 #if defined(_WIN32)
       HWND                          hwnd = nullptr;
       accesskit_windows_adapter*    adapter = nullptr;
-#elif defined(__APPLE__)
+#elif defined(ELEMENTS_A11Y_MACOS)
       accesskit_macos_subclassing_adapter* adapter = nullptr;
       void*                         nswindow = nullptr;
+#elif defined(ELEMENTS_A11Y_IOS)
+      accesskit_ios_subclassing_adapter* adapter = nullptr;
+      void*                         uiview = nullptr;
+      void*                         uiwindow = nullptr;   // attach_sdl: follow its root view
+#elif defined(__ANDROID__)
+      accesskit_android_adapter*    adapter = nullptr;
+      std::mutex                    adapter_mtx;    // used on the UI thread, freed by the owner
+      std::function<void()>         request_update;
+      std::atomic<bool>             ever_activated{false};
 #elif defined(ELEMENTS_A11Y_UNIX)
       accesskit_unix_adapter*       adapter = nullptr;
 #endif
@@ -367,11 +382,14 @@ namespace cycfi::elements::a11y
       static accesskit_tree_update* on_activate(void* ud)
       {
          auto* self = static_cast<impl*>(ud);
+#if defined(__ANDROID__)
+         self->ever_activated = true;
+#endif
          const bool was = self->active.exchange(true);
          if (!was && self->active_changed)
             self->active_changed(true);
 
-         // On Windows and macOS this runs on the UI thread: ask the sources
+         // On Windows, macOS and iOS this runs on the UI thread: ask the sources
          // for their tree right now, so the first answer is complete.
          if (self->ui_thread_activation)
          {
@@ -562,10 +580,22 @@ namespace cycfi::elements::a11y
          adapter = accesskit_windows_adapter_new(hwnd, GetFocus() == hwnd,
             &impl::on_action, this);
          SetWindowSubclass(hwnd, &impl::subclass_proc, 0xE1A11, reinterpret_cast<DWORD_PTR>(this));
-#elif defined(__APPLE__)
+#elif defined(ELEMENTS_A11Y_MACOS)
          nswindow = native_window;
          adapter = accesskit_macos_subclassing_adapter_for_window(native_window,
             &impl::on_activate, this, &impl::on_action, this);
+#elif defined(ELEMENTS_A11Y_IOS)
+         // A UIView. Everything runs on the main thread here.
+         uiview = native_window;
+         if (uiview)
+            adapter = accesskit_ios_subclassing_adapter_new(uiview,
+               &impl::on_activate, this, &impl::on_action, this, &impl::on_deactivate, this);
+#elif defined(__ANDROID__)
+         (void)native_window;
+         // Every call comes from the Android UI thread (android_*); the tree
+         // is answered from the last snapshots the sources pushed.
+         ui_thread_activation = false;
+         adapter = accesskit_android_adapter_new();
 #elif defined(ELEMENTS_A11Y_UNIX)
          (void)native_window;
          // Every handler runs on another thread here; the tree is answered
@@ -588,15 +618,55 @@ namespace cycfi::elements::a11y
             RemoveWindowSubclass(hwnd, &impl::subclass_proc, 0xE1A11);
             accesskit_windows_adapter_free(adapter);
          }
-#elif defined(__APPLE__)
+#elif defined(ELEMENTS_A11Y_MACOS)
          if (adapter)
             accesskit_macos_subclassing_adapter_free(adapter);
+#elif defined(ELEMENTS_A11Y_IOS)
+         if (adapter)
+            accesskit_ios_subclassing_adapter_free(adapter);
+#elif defined(__ANDROID__)
+         {
+            std::lock_guard lock(adapter_mtx);
+            if (adapter)
+               accesskit_android_adapter_free(adapter);
+            adapter = nullptr;
+         }
 #elif defined(ELEMENTS_A11Y_UNIX)
          if (adapter)
             accesskit_unix_adapter_free(adapter);
 #endif
          adapter = nullptr;
       }
+
+#if defined(ELEMENTS_A11Y_IOS)
+      // [[window rootViewController] view]
+      static void* root_view(void* window)
+      {
+         if (!window)
+            return nullptr;
+         using fn = void* (*)(void*, SEL);
+         auto send = reinterpret_cast<fn>(objc_msgSend);
+         void* vc = send(window, sel_registerName("rootViewController"));
+         return vc ? send(vc, sel_registerName("view")) : nullptr;
+      }
+
+      // SDL replaces the root view controller's view when it creates a GL or
+      // Metal view; the adapter lives on one view instance, so move it.
+      bool follow_root_view()
+      {
+         void* v = root_view(uiwindow);
+         if (!v || v == uiview)
+            return false;
+         if (adapter)
+            accesskit_ios_subclassing_adapter_free(adapter);
+         adapter = nullptr;
+         attach(v);
+         std::lock_guard lock(mtx);
+         pending.clear();
+         need_full = true;
+         return true;
+      }
+#endif
 
       void push()
       {
@@ -607,13 +677,23 @@ namespace cycfi::elements::a11y
          if (adapter)
             if (auto* ev = accesskit_windows_adapter_update_if_active(adapter, &impl::on_update, this))
                accesskit_windows_queued_events_raise(ev);
-#elif defined(__APPLE__)
+#elif defined(ELEMENTS_A11Y_MACOS)
          if (adapter)
             if (auto* ev = accesskit_macos_subclassing_adapter_update_if_active(adapter, &impl::on_update, this))
                accesskit_macos_queued_events_raise(ev);
+#elif defined(ELEMENTS_A11Y_IOS)
+         if (adapter)
+            if (auto* ev = accesskit_ios_subclassing_adapter_update_if_active(adapter, &impl::on_update, this))
+               accesskit_ios_queued_events_raise(ev);
 #elif defined(ELEMENTS_A11Y_UNIX)
          if (adapter)
             accesskit_unix_adapter_update_if_active(adapter, &impl::on_update, this);
+#elif defined(__ANDROID__)
+         // Only the UI thread may touch the adapter: it runs the factory
+         // (android_update), and the not-listening check happens there.
+         if (request_update)
+            request_update();
+         return;
 #endif
          if (!factory_called)
          {
@@ -782,7 +862,7 @@ namespace cycfi::elements::a11y
 
    void accesskit_host::window_focus(bool focused)
    {
-#if defined(__APPLE__)
+#if defined(ELEMENTS_A11Y_MACOS)
       if (_impl->adapter)
          if (auto* ev = accesskit_macos_subclassing_adapter_update_view_focus_state(_impl->adapter, focused))
             accesskit_macos_queued_events_raise(ev);
@@ -790,7 +870,7 @@ namespace cycfi::elements::a11y
       if (_impl->adapter)
          accesskit_unix_adapter_update_window_focus_state(_impl->adapter, focused);
 #else
-      (void)focused;    // Windows: the subclass sees WM_SETFOCUS itself
+      (void)focused;    // Windows: the subclass sees WM_SETFOCUS itself; iOS: always focused
 #endif
    }
 
@@ -819,7 +899,7 @@ namespace cycfi::elements::a11y
 
    float accesskit_host::native_scale() const
    {
-#if defined(__APPLE__)
+#if defined(ELEMENTS_A11Y_MACOS)
       if (_impl->nswindow)
       {
          // [NSWindow backingScaleFactor]
@@ -827,9 +907,137 @@ namespace cycfi::elements::a11y
          return float(reinterpret_cast<fn>(objc_msgSend)(
             _impl->nswindow, sel_registerName("backingScaleFactor")));
       }
+#elif defined(ELEMENTS_A11Y_IOS)
+      if (_impl->uiview)
+      {
+         // [UIView contentScaleFactor]: the adapter divides bounds by it
+         using fn = double (*)(void*, SEL);
+         return float(reinterpret_cast<fn>(objc_msgSend)(
+            _impl->uiview, sel_registerName("contentScaleFactor")));
+      }
 #endif
       return 1.0f;
    }
+
+   bool accesskit_host::refresh_native_view()
+   {
+#if defined(ELEMENTS_A11Y_IOS)
+      return _impl->follow_root_view();
+#else
+      return false;
+#endif
+   }
+
+#if defined(__ANDROID__)
+   jobject accesskit_host::android_create_node_info(JNIEnv* env, jobject host, jint virtual_view_id)
+   {
+      std::lock_guard lock(_impl->adapter_mtx);
+      if (!_impl->adapter)
+         return nullptr;
+      return accesskit_android_adapter_create_accessibility_node_info(_impl->adapter,
+         &impl::on_activate, _impl.get(), env, host, virtual_view_id);
+   }
+
+   jobject accesskit_host::android_find_focus(JNIEnv* env, jobject host, jint focus_type)
+   {
+      std::lock_guard lock(_impl->adapter_mtx);
+      if (!_impl->adapter)
+         return nullptr;
+      return accesskit_android_adapter_find_focus(_impl->adapter,
+         &impl::on_activate, _impl.get(), env, host, focus_type);
+   }
+
+   // Raising the queued events sends AccessibilityEvents, and the framework
+   // answers them by calling straight back into the View's node provider on
+   // this thread. So the events are raised after the adapter is let go.
+
+   bool accesskit_host::android_perform_action(JNIEnv* env, jobject host,
+      jint virtual_view_id, jint action, jobject arguments)
+   {
+      accesskit_android_queued_events* ev = nullptr;
+      {
+         std::lock_guard lock(_impl->adapter_mtx);
+         if (!_impl->adapter)
+            return false;
+         auto* pa = accesskit_android_platform_action_from_java(env, action, arguments);
+         if (!pa)
+            return false;
+         ev = accesskit_android_adapter_perform_action(_impl->adapter,
+            &impl::on_action, _impl.get(), virtual_view_id, pa);
+         accesskit_android_platform_action_free(pa);
+      }
+      if (!ev)
+         return false;
+      accesskit_android_queued_events_raise(ev, env, host);
+      return true;
+   }
+
+   bool accesskit_host::android_on_hover(JNIEnv* env, jobject host, jint action, jfloat x, jfloat y)
+   {
+      accesskit_android_queued_events* ev = nullptr;
+      {
+         std::lock_guard lock(_impl->adapter_mtx);
+         if (!_impl->adapter)
+            return false;
+         ev = accesskit_android_adapter_on_hover_event(_impl->adapter,
+            &impl::on_activate, _impl.get(), action, x, y);
+      }
+      if (!ev)
+         return false;
+      accesskit_android_queued_events_raise(ev, env, host);
+      return true;
+   }
+
+   void accesskit_host::android_on_update_request(std::function<void()> request)
+   {
+      std::lock_guard lock(_impl->mtx);
+      _impl->request_update = std::move(request);
+   }
+
+   void accesskit_host::android_update(JNIEnv* env, jobject host)
+   {
+      accesskit_android_queued_events* ev = nullptr;
+      {
+         std::lock_guard alock(_impl->adapter_mtx);
+         if (!_impl->adapter || !_impl->active)
+            return;
+         {
+            std::lock_guard lock(_impl->mtx);
+            _impl->factory_called = false;
+         }
+         ev = accesskit_android_adapter_update_if_active(_impl->adapter, &impl::on_update, _impl.get());
+         std::lock_guard lock(_impl->mtx);
+         if (!_impl->factory_called)
+         {
+            // Not listening after all: start over with a full tree.
+            _impl->pending.clear();
+            _impl->need_full = true;
+         }
+      }
+      if (ev)
+         accesskit_android_queued_events_raise(ev, env, host);
+   }
+
+   void accesskit_host::android_set_enabled(bool enabled)
+   {
+      // Once activated the adapter keeps its tree and never asks again, so
+      // a screen reader coming back resumes with a full update.
+      if (enabled && !_impl->ever_activated)
+         return;
+      const bool was = _impl->active.exchange(enabled);
+      if (was == enabled)
+         return;
+      {
+         std::lock_guard lock(_impl->mtx);
+         _impl->pending.clear();
+         _impl->need_full = true;
+      }
+      if (_impl->active_changed)
+         _impl->active_changed(enabled);
+      if (enabled)
+         _impl->push();
+   }
+#endif
 
    void accesskit_host::flush()
    {
@@ -889,7 +1097,7 @@ namespace cycfi::elements::a11y
       void* native = nullptr;
 # if defined(_WIN32)
       native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-# elif defined(__APPLE__)
+# elif defined(ELEMENTS_A11Y_MACOS)
       // SDL keeps the keyboard focus on its NSWindow subclass; forward the
       // focused-element query to the content view the adapter lives on.
       // The class is patched for the life of the process, and patching it
@@ -900,9 +1108,16 @@ namespace cycfi::elements::a11y
       }();
       (void)forwarder;
       native = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, nullptr);
+# elif defined(ELEMENTS_A11Y_IOS)
+      // The root view controller's view (see refresh_native_view).
+      void* uiwindow = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_UIKIT_WINDOW_POINTER, nullptr);
+      native = impl::root_view(uiwindow);
 # endif
       (void)props;
       auto h = attach(native);
+# if defined(ELEMENTS_A11Y_IOS)
+      h->_impl->uiwindow = uiwindow;
+# endif
 
       auto watch = std::make_shared<sdl_watch>(sdl_watch{h.get(), SDL_GetWindowID(win), win});
       SDL_AddEventWatch(&sdl_watch::on_event, watch.get());

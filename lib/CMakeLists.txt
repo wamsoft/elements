@@ -397,6 +397,14 @@ if (ELEMENTS_A11Y_ACCESSKIT)
          set(CMAKE_OSX_ARCHITECTURES ${CMAKE_HOST_SYSTEM_PROCESSOR})
       endif()
       include(${accesskit_c_SOURCE_DIR}/accesskit-config.cmake)
+      # Cross toolchains (Android NDK, iOS) restrict find_library to their
+      # sysroot, so the config's lookup of the static library can miss.
+      get_target_property(_ak_loc accesskit-static IMPORTED_LOCATION)
+      if (NOT _ak_loc OR NOT EXISTS "${_ak_loc}")
+         set_property(TARGET accesskit-static PROPERTY IMPORTED_LOCATION
+            "${ACCESSKIT_LIBRARIES_DIR}/static/${CMAKE_STATIC_LIBRARY_PREFIX}accesskit${CMAKE_STATIC_LIBRARY_SUFFIX}")
+      endif()
+      unset(_ak_loc)
    endif()
 
    add_library(elements_a11y_accesskit STATIC
