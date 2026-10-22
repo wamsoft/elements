@@ -140,6 +140,7 @@ namespace cycfi::elements::a11y
       std::mutex                    adapter_mtx;    // used on the UI thread, freed by the owner
       std::function<void()>         request_update;
       std::atomic<bool>             ever_activated{false};
+      accesskit_node_id             last_focus = 0;     // build_delta: the focus last sent
 #elif defined(ELEMENTS_A11Y_UNIX)
       accesskit_unix_adapter*       adapter = nullptr;
 #endif
@@ -246,6 +247,14 @@ namespace cycfi::elements::a11y
                n.bounds.left * xf.sx + xf.tx, n.bounds.top * xf.sy + xf.ty,
                n.bounds.right * xf.sx + xf.tx, n.bounds.bottom * xf.sy + xf.ty});
          }
+#if defined(__ANDROID__)
+         else if (n.live != live::off)
+         {
+            // TalkBack does not speak a live region that has no area on
+            // screen. Give an invisible one a single pixel at the slot origin.
+            accesskit_node_set_bounds(a, accesskit_rect{xf.tx, xf.ty, xf.tx + 1, xf.ty + 1});
+         }
+#endif
          for (auto c : n.children)
             accesskit_node_push_child(a, gid(slot, c));
 
@@ -358,8 +367,29 @@ namespace cycfi::elements::a11y
          if (need_full)
             return build_full();
          auto vis = visible_slots();
+         auto const focus = focus_gid(vis);
+#if defined(__ANDROID__)
+         // TalkBack stops speaking to read a newly focused item. When an
+         // action both moves the focus and fills a live region (a button that
+         // announces), the announcement would be cut off at once: send the
+         // live regions in the next update, after the focus change.
+         std::vector<std::pair<int, node>> later;
+         {
+            bool other = focus != last_focus;
+            for (auto const& [k, n] : pending)
+               other = other || n.live == live::off;
+            if (other)
+            {
+               auto mid = std::stable_partition(pending.begin(), pending.end(),
+                  [](auto const& p) { return p.second.live == live::off; });
+               later.assign(std::make_move_iterator(mid), std::make_move_iterator(pending.end()));
+               pending.erase(mid, pending.end());
+            }
+         }
+         last_focus = focus;
+#endif
          auto* u = accesskit_tree_update_with_capacity_and_focus(
-            pending.size() + 1, focus_gid(vis));
+            pending.size() + 1, focus);
          accesskit_tree_update_push_node(u, root_gid, root_node(vis));
          for (auto const& [k, n] : pending)
          {
@@ -374,6 +404,9 @@ namespace cycfi::elements::a11y
             push_runs(u, n, k, it->second.xf);
          }
          pending.clear();
+#if defined(__ANDROID__)
+         pending = std::move(later);
+#endif
          return u;
       }
 
@@ -997,6 +1030,8 @@ namespace cycfi::elements::a11y
    void accesskit_host::android_update(JNIEnv* env, jobject host)
    {
       accesskit_android_queued_events* ev = nullptr;
+      bool more = false;
+      std::function<void()> request;
       {
          std::lock_guard alock(_impl->adapter_mtx);
          if (!_impl->adapter || !_impl->active)
@@ -1013,9 +1048,13 @@ namespace cycfi::elements::a11y
             _impl->pending.clear();
             _impl->need_full = true;
          }
+         more = !_impl->pending.empty();   // live regions held back by build_delta
+         request = _impl->request_update;
       }
       if (ev)
          accesskit_android_queued_events_raise(ev, env, host);
+      if (more && request)
+         request();
    }
 
    void accesskit_host::android_set_enabled(bool enabled)

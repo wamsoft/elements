@@ -362,7 +362,7 @@ accesskit-c 0.23.1 の prebuilt に入っている iOS (`lib/ios`、`lib/ios-sim
 | スレッド | すべてメインスレッド (SDL3 の UIKit もメインスレッドで回る)。activation の場で snapshot を取る (Windows / macOS と同じ) | アダプタは Android の UI スレッド専用。activation は UI スレッドから来るので、Unix と同じく最後に push された snapshot を返す。更新は `flush()` → `android_on_update_request` で渡した関数 → UI スレッドで `android_update()`。アクションも UI スレッドから来る |
 | 座標 | view 内のピクセル = ポイント × `contentScaleFactor` (AccessKit が割ってポイントに戻す)。`native_scale()` は `contentScaleFactor` を返す | View 内のピクセル (AccessKit が `getLocationOnScreen` を足す) |
 | active | VoiceOver の on / off で activation / deactivation が来る | 一度 activation されると、TalkBack を切っても知らせが無い。ホストが `AccessibilityManager` の状態を `android_set_enabled()` で渡す |
-| live region | `UIAccessibilityAnnouncementNotification` で読まれる | `setLiveRegion` (名前を持つノード) |
+| live region | `UIAccessibilityAnnouncementNotification` で読まれる | `setLiveRegion` (名前を持つノード)。**大きさの無いノードの変化は TalkBack が読まない**ので、矩形の無い live region には slot の原点に 1 ピクセルを与える。また TalkBack はフォーカスの移動で読み上げを打ち切るので、フォーカスの変化と live region の変化が同じ更新に入るとき (押すと announce するボタン) は、live region を次の更新に回す |
 | 増減 | `accessibilityIncrement` / `Decrement` (上下スワイプ) | `ACTION_SCROLL_FORWARD` / `BACKWARD` |
 
 - CMake: クロスツールチェーン (Android NDK / iOS) は `find_library` を sysroot に限るので、`accesskit-config.cmake` の static ライブラリ探索が外れることがある。外れたら `${ACCESSKIT_LIBRARIES_DIR}/static/libaccesskit.a` を直接指す。
