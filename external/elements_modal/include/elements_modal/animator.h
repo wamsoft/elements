@@ -13,7 +13,8 @@
 //              (カーソル移動による選択強調 / 選択・非選択の切替向け)。
 //   - select : 要素が決定 (button click 等) された瞬間に 1 回前進再生。
 //   - exit   : 画面退場時に再生。 ホストが play_animation("exit") で明示発火する
-//              (遷移との協調はホスト責務)。
+//              (遷移との協調はホスト責務)。 "actions" を持つ束縛は、 終了 action
+//              がその中にあるときだけ再生する (fire_exit)。
 // focus/select 束縛は対象要素の id を持ち、 その id への発火だけに反応する。
 //
 // レンダリングや時間取得には依存しない: ホスト (overlay_session) が経過 ms を
@@ -46,6 +47,9 @@ struct anim_binding
 	channel ch = channel::move;
 	trigger trig = trigger::enter;     //!< 発火タイミング。
 	std::string id;                    //!< 対象要素 id (focus/select の照合用)。
+	//! exit 束縛を発火させる終了 action ("actions")。 空なら全 action で発火。
+	//! 「この画面へ進むときだけ退場演出、 それ以外は即終了」の出し分けに使う。
+	std::vector<std::string> actions;
 	//! 再生し直しの要求。 enter 束縛の要素が "visible_var" で隠れた → 出た
 	//! ときに json_layout の購読が true を立て、 次の tick() が頭から再生する
 	//! (出るたびに «滑り込み» 等をやり直すため)。 null なら要求は来ない。
@@ -228,6 +232,28 @@ public:
 		apply_governing();
 	}
 
+	//! @brief 終了 action が action のときの exit 束縛を前進再生する。
+	//!        "actions" を持つ束縛は、 その中に action があるときだけ発火する。
+	void fire_exit(const std::string& action)
+	{
+		for (auto& b : _bindings) {
+			if (b.trig != trigger::exit || !accepts_exit(b, action)) continue;
+			b.reversed = false;
+			b.prog.reset();
+			b.active = true;
+		}
+		apply_governing();
+	}
+
+	//! @brief 終了 action が action のときに再生される exit 束縛の数。
+	std::size_t count_exit(const std::string& action) const
+	{
+		std::size_t n = 0;
+		for (auto& b : _bindings)
+			if (b.trig == trigger::exit && accepts_exit(b, action)) ++n;
+		return n;
+	}
+
 	//! @brief 現在 focus されている id をホストから受け取り、 focus 束縛を駆動する。
 	//!        前回と変化したときだけ、 旧 id を逆再生 (復帰)、 新 id を前進再生する。
 	void notify_focus(const std::string& id) { notify_inout(trigger::focus, _focus_id, id); }
@@ -256,6 +282,13 @@ public:
 	}
 
 private:
+
+	static bool accepts_exit(const anim_binding& b, const std::string& action)
+	{
+		if (b.actions.empty()) return true;
+		for (auto& a : b.actions) if (a == action) return true;
+		return false;
+	}
 
 	// focus/hover の in/out 駆動 (共通)。 last は前回 id を保持するスロット。
 	void notify_inout(trigger t, std::string& last, const std::string& id)

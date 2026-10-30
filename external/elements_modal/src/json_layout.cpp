@@ -3486,6 +3486,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 //   "pivot":    拡縮/回転のピボット [ox,oy] (0..1, 既定中央)。 最初の指定を採用
 //   "on":       発火トリガ "enter"(既定)/"focus"/"select"/"exit"。 focus/select は
 //               要素の "id" と紐付き、 その id への発火だけ反応する (要素に id 必須)。
+//   "actions":  exit のみ。 終了 action (文字列 or 配列) を限定する。 無ければ全 action
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_ptr el)
 {
@@ -3552,6 +3553,15 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		b.trig = trigger_from_string(string_or(s, "on", "enter"));
 		b.id   = owner_id;
 		if (b.trig == anim_binding::trigger::enter) b.restart = restart;
+		// exit を出す終了 action の限定 (「エクストラへ進むときだけ流れて消える」等)
+		if (auto* av2 = get_field(s, "actions")) {
+			if (av2->is<std::string>()) {
+				b.actions.push_back(av2->get<std::string>());
+			} else if (av2->is<picojson::array>()) {
+				for (auto& e : av2->get<picojson::array>())
+					if (e.is<std::string>()) b.actions.push_back(e.get<std::string>());
+			}
+		}
 
 		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
 		float dur_ms;
