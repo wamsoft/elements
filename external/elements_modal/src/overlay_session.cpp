@@ -839,9 +839,10 @@ struct overlay_session::impl
 		accumulated.action = std::move(action);
 		needs_render_ = true;   // exit 演出の初期値適用ぶん (即終了なら未使用で無害)
 		dirty_full_ = true;   // 範囲不明 (全面)
-		if (!anim.empty() && anim.count(anim_binding::trigger::exit) > 0) {
+		// "actions" 付きの exit 束縛は、 この終了 action が対象のときだけ再生する
+		if (!anim.empty() && anim.count_exit(accumulated.action) > 0) {
 			// exit 束縛を再生開始。 完了は update 側で検出して finished_ に。
-			anim.fire(anim_binding::trigger::exit);
+			anim.fire_exit(accumulated.action);
 			exiting_ = true;
 			last_anim_ms = em_now_ms();
 		} else {

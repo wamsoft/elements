@@ -1174,6 +1174,7 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 | `"pivot"` | 拡縮/回転の起点 `[ox,oy]` (0..1, 既定中央 `[0.5,0.5]`)。 左上起点は `[0,0]` |
 | `"delay"` | 発火から再生開始までの待ち (フレーム数。 ms は `"delay_ms"`)。 待機中は `from` で固定。 スタッガー/シーケンスに使う |
 | `"on"` | 発火トリガ `enter`(既定) / `focus` / `select` / `exit` / `hover` / `change`。 下表参照 |
+| `"actions"` | `exit` のみ。 再生する終了 action を限定する (文字列 or 配列)。 下記「exit を action で出し分ける」 |
 
 `"animate"` は配列でも書ける。 各エントリは同じ変換状態を共有するので、 **移動 + 拡縮 + 回転の同時掛け**が自然に合成される (例: スライドしながら拡大)。
 
@@ -1208,6 +1209,14 @@ standalone な最小実例は **`examples/navigator_screens.cpp`** (`-DELEMENTS_
 - `focus` の `"from"` は **静止状態 (= 非選択時の見た目)** と一致させること。 発火前は `from` 側で静止し、 focus 取得で `to` へ、 喪失で `from` へ戻る。 ループ指定 (`loops≠1`) の focus 演出は喪失時に即 `from` へ戻す (逆再生しない)。
 - **exit×遷移の協調**: 終了要求 (`close()` / Esc / `close_on_click` button) があると、 exit 束縛があれば即終了せず exit 演出を再生し、 完了後に `finished()` が true になる (この間は入力を受け付けない)。 これにより退場演出を見せてから画面遷移できる。 **exit 演出は有限長にすること** (無限ループ `loops:-1` は完了しないので終了がハングする)。 exit 束縛が無ければ従来どおり即終了。
 - enter 以外のトリガはホストの自動駆動 (enter = 表示時 / focus = 変化時 / select = button click / exit = 終了要求時) のほか、 `overlay_session::play_animation(trigger, id)` で手動発火もできる。
+- **exit を action で出し分ける**: exit のエントリに `"actions"` (文字列 or 配列) を付けると、 終了 action (`close_on_click` の button なら その id。 Esc / `close()` は空文字) がその中にあるときだけ再生する。 付けないエントリは従来どおり全 action で再生する。 終了 action に当たる exit エントリが 1 つも無ければ即終了する。 例: タイトルの「エクストラ」を押したときだけメニューが流れて消え、 「はじめから」等は動かさずに閉じる:
+
+  ```jsonc
+  "animate": [
+      { "type": "move", "from": [0, 0], "to": [-20, 0], "frames": 20, "on": "exit", "actions": ["extra"] },
+      { "type": "fade", "from": 100, "to": 0,      "frames": 20, "on": "exit", "actions": ["extra"] }
+  ]
+  ```
 
 内部構成 (個別利用も可能):
 

@@ -1843,6 +1843,10 @@ public:
 
 	// ドラッグ通知の receiver スロット (中身はホストが後から差し替える)。
 	std::shared_ptr<drag_callback> _drag_slot;
+	// いま組んでいる要素が enabled_var を basic_button へ直に繋いだか
+	// (wire_button_enabled_var が立てる)。 build() が要素ごとに退避 / 復元する。
+	// apply_enabled_fade はこれを見てボタンを二重にフェードさせない。
+	bool _button_enabled_wired = false;
 	// 値変更 SE の receiver スロット (overlay_session が SE 表を引いて鳴らす)。
 	std::shared_ptr<change_se_callback> _se_slot;
 
@@ -2386,6 +2390,7 @@ private:
 		if (var.empty()) return;
 		auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared);
 		if (!bp) return;
+		_button_enabled_wired = true;
 		auto apply = [](ce::basic_button& b, const std::string& v) {
 			b.enable(v != "0");
 		};
@@ -3071,7 +3076,12 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	const auto& o = v.get<picojson::object>();
 	auto type = string_or(o, "type");
 
+	// 子の build() が上書きしないよう、 この要素のぶんだけ見る
+	const bool outer_wired = _button_enabled_wired;
+	_button_enabled_wired = false;
 	element_ptr el = build_dispatch(o, type);
+	const bool self_fades = _button_enabled_wired;
+	_button_enabled_wired = outer_wired;
 	// 読み上げ用の上書き ("a11y" / "id" / 自動導出)。 いちばん内側に置き、
 	// visible_var などの外側の proxy が隠したときは一緒に消えるようにする。
 	if (el) el = apply_a11y(o, std::move(el));
@@ -3085,7 +3095,7 @@ element_ptr LayoutBuilder::build(const picojson::value& v)
 	if (el) el = apply_drag(o, std::move(el), _vars, _drag_slot);
 	// "enabled_var" 指定がボタン以外に付いていたら、 無効時フェード proxy で包む。
 	// (ボタンは basic_button::enable で自前にフェードするので対象外)
-	if (el) el = apply_enabled_fade(o, std::move(el));
+	if (el && !self_fades) el = apply_enabled_fade(o, std::move(el));
 	// "flatten" 指定があれば、 先に 1 枚へ焼く proxy で包む。
 	// opacity より内側 (先に適用) にすることで、 焼いた 1 枚に対して
 	// opacity が掛かる = 正しいグループ不透明度になる。
@@ -3264,7 +3274,11 @@ element_ptr LayoutBuilder::apply_enabled_fade(const picojson::object& o, element
 	if (!el) return el;
 	std::string var = string_or(o, "enabled_var");
 	if (var.empty()) return el;
-	// ボタンは自前でフェードするので二重掛けしない
+	// ボタンは自前でフェードするので二重掛けしない。
+	// **id があると el は読み上げの proxy (apply_a11y) で包まれていて**
+	// この判定では見抜けない。 build() が wire_button_enabled_var の結果を
+	// 見て、 ボタンならここへ来させない (disabled frame を持たせても
+	// disabled_opacity が重なって薄く出ていた)
 	if (std::dynamic_pointer_cast<ce::basic_button>(el)) return el;
 
 	const float off = ce::get_theme().disabled_opacity;
@@ -3486,6 +3500,7 @@ element_ptr LayoutBuilder::build_dispatch(const picojson::object& in_o,
 //   "pivot":    拡縮/回転のピボット [ox,oy] (0..1, 既定中央)。 最初の指定を採用
 //   "on":       発火トリガ "enter"(既定)/"focus"/"select"/"exit"。 focus/select は
 //               要素の "id" と紐付き、 その id への発火だけ反応する (要素に id 必須)。
+//   "actions":  exit のみ。 終了 action (文字列 or 配列) を限定する。 無ければ全 action
 //---------------------------------------------------------------------------
 element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_ptr el)
 {
@@ -3552,6 +3567,15 @@ element_ptr LayoutBuilder::apply_animation(const picojson::object& o, element_pt
 		b.trig = trigger_from_string(string_or(s, "on", "enter"));
 		b.id   = owner_id;
 		if (b.trig == anim_binding::trigger::enter) b.restart = restart;
+		// exit を出す終了 action の限定 (「エクストラへ進むときだけ流れて消える」等)
+		if (auto* av2 = get_field(s, "actions")) {
+			if (av2->is<std::string>()) {
+				b.actions.push_back(av2->get<std::string>());
+			} else if (av2->is<picojson::array>()) {
+				for (auto& e : av2->get<picojson::array>())
+					if (e.is<std::string>()) b.actions.push_back(e.get<std::string>());
+			}
+		}
 
 		// duration: "frames" 優先 (要望はフレーム数指定が基本)。
 		float dur_ms;
