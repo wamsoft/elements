@@ -203,7 +203,7 @@ int main()
   - `"count_var": "varname"` — **文字送り**。 変数 store の整数値だけ先頭からクラスタ単位で表示する (-1 = 全部)。 ホストが `setVar("sub_count", "12")` するだけで進む。 **折返しは全文で確定してから count を適用する**ので送ってもリフローしない。 静的指定は `"count"`。
   - 幅は親 (`hsize` / `floating` / `canvas` の `at` 等) が決める。 fit-to-content の親に置くと最小幅 200px を要求する点は `text_box` と同じ。 `floating` の絶対座標で置くなら top-level `"size"` を明示しないとダイアログが内容サイズまで縮んで**何も見えなくなる**点に注意。
   - 仕組みとホスト側バックエンドの実装契約は [`docs/block-text.md`](../../docs/block-text.md) を参照。
-- `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。
+- `button` — `"text"` + `"id"` (任意)。 後述の **focusable / interactive 属性** をサポート。 キャプションは `"text_id"` (i18n) / `"text_var"` (変数 store) でも差し替えられる (優先順位 text_id > text_var > 静的 text)。
 - `checkbox` / `check_box` — `"text"` + `"id"` + `"value"` (初期 bool)。
 - `toggle_button` — `"text"` + `"id"` + `"value"`。
 - `slide_switch` — `"id"` + `"value"`。
@@ -218,7 +218,7 @@ int main()
 
 #### console / pad 系 widget
 
-- `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (**px 絶対**) または `"size_scale"` (倍率)。 button と同じく `initial_focus` / `close_on_click` をサポート。
+- `invert_button` — focus すると地色と文字色が反転する momentary button。 `"text"` + `"id"` + `"size"` (**px 絶対**) または `"size_scale"` (倍率)。 button と同じく `initial_focus` / `close_on_click` をサポート。 キャプションは `"text_id"` (i18n) / `"text_var"` (変数 store) でも差し替えられる (優先順位 text_id > text_var > 静的 text。 選択肢のように**文言だけ毎回変わる**画面で使う)。
 - `ring_button` — focus すると外周にリング装飾が出る momentary button。 `"text"` + `"id"` + `"outline": [r,g,b,a]` (default white) + `"size"` (px) / `"size_scale"` (倍率)。 同じく `initial_focus` / `close_on_click` をサポート。
 - `cycle_picker` — `< value >` 形式。 ←→ で循環 (端で wrap)。 `"options": [...]` + `"initial": int` (index、 default 0) + `"id"` + `"initial_focus"` + `"font_size": double` (**px 絶対**、 内部テキスト) または `"font_size_scale"` (倍率)。 値変化で `value_t{int64_t index}` を発火。 picker 系共通の追加フィールド:
   - `"options_id": [...]` — i18n。 各要素を StringStore の textID として現在言語で解決 (`options` より優先)。 言語切替で選択 index を維持したまま表示文字列だけ差し替わる (後述「i18n」節)。
@@ -700,7 +700,7 @@ bool on = elements_modal::focus_ring_enabled();
 
 | フィールド | 対象 widget | 向き | 値の形式 |
 |---|---|---|---|
-| `text_var` | label / text_box / text_area | 読み | 表示文字列 |
+| `text_var` | label / text_box / text_area / button 系 (`button` / `invert_button` / `toggle_button` / `atlas_button`) | 読み | 表示文字列 |
 | `color_var` | label | 読み (文字色) | `"@名前"` / `"#rrggbb"` / `"r,g,b[,a]"` (0-255) |
 | `count_var` | text_area | 読み | 表示クラスタ数 (10 進、 `"-1"` = 全部) |
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |

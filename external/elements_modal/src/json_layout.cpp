@@ -2443,7 +2443,7 @@ private:
 	// i18n: proxy ベースの button (invert/ring/plain) で "text_id" があれば、
 	// styler (= proxy の subject、 text_writer 派生) を StringStore に subscribe
 	// して言語切替で set_text する。 初期値も resolve して同期する。
-	void subscribe_button_text_id(const picojson::object& o, const element_ptr& shared);
+	void subscribe_button_text(const picojson::object& o, const element_ptr& shared);
 	// "index_var" + text_list(_id) を text_writer な widget へ結線する
 	// (label / text_area 共用)。 index 変化と言語切替の両方で set_text する。
 	// index_var 未指定 / リスト空 / text_writer 非派生なら no-op。
@@ -4166,24 +4166,39 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 // cross-cast する。 raw ポインタは shared (proxy 本体) 生存中のみ有効なので、
 // weak_ptr<element> で生存を確認してから set_text する。
 //---------------------------------------------------------------------------
-void LayoutBuilder::subscribe_button_text_id(const picojson::object& o,
+void LayoutBuilder::subscribe_button_text(const picojson::object& o,
                                              const element_ptr& shared)
 {
+	// ボタンのキャプションを外から差し替える口。 label と同じ優先順位で
+	// **"text_id" (i18n) > "text_var" (VariableStore) > 静的 "text"**。
+	//
+	// "text_var" はホストが setVar で丸ごと書き換えるためのもの。 選択肢の
+	// ように「widget は固定・文言だけ毎回変わる」画面で要る。 これが無いと
+	// JSON の静的 text (= 見本の文言) が出たままになる。
 	std::string text_id = string_or(o, "text_id");
-	if (text_id.empty() || !shared) return;
+	std::string text_var = string_or(o, "text_var");
+	if ((text_id.empty() && text_var.empty()) || !shared) return;
 	auto pb = std::dynamic_pointer_cast<ce::proxy_base>(shared);
 	if (!pb) return;
 	auto* tw = dynamic_cast<ce::text_writer*>(&pb->subject());
 	if (!tw) {
-		em_logf("elements_modal: button with text_id=\"%s\" — styler が "
-		        "text_writer 未継承で set_text 仕掛け失敗", text_id.c_str());
+		em_logf("elements_modal: button with text_id=\"%s\" text_var=\"%s\" — "
+		        "styler が text_writer 未継承で set_text 仕掛け失敗",
+		        text_id.c_str(), text_var.c_str());
 		return;
 	}
-	tw->set_text(_strings->resolve(text_id));      // 初期言語へ同期
 	std::weak_ptr<ce::element> wel = shared;
-	_strings->subscribe(text_id, [wel, tw](const std::string& v) {
-		if (auto el = wel.lock()) tw->set_text(v);  // el 生存中は tw も有効
-	});
+	if (!text_id.empty()) {
+		tw->set_text(_strings->resolve(text_id));      // 初期言語へ同期
+		_strings->subscribe(text_id, [wel, tw](const std::string& v) {
+			if (auto el = wel.lock()) tw->set_text(v);  // el 生存中は tw も有効
+		});
+		return;
+	}
+	if (auto* init = _vars->get(text_var)) tw->set_text(*init);
+	_vars->subscribe(text_var, [wel, tw](const std::string& v) {
+		if (auto el = wel.lock()) tw->set_text(v);
+	}, shared);
 }
 
 element_ptr LayoutBuilder::build_button(const picojson::object& o)
@@ -4209,7 +4224,7 @@ element_ptr LayoutBuilder::build_button(const picojson::object& o)
 	wire_button_enabled_var(shared, o);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);    // focus 時に vars を書込む (メニュー説明欄など)
-	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
+	subscribe_button_text(o, shared);  // text_id (i18n) / text_var 連動
 	// "close_on_click": true な button だけホスト側で finish フラグを立てる対象。
 	// デフォルト (省略) は閉じず、 onAction だけ発火する。
 	if (!id.empty()) {
@@ -4934,7 +4949,7 @@ element_ptr LayoutBuilder::build_checkbox(const picojson::object& o)
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);          // focus 追跡 (focused_id / 演出トリガ)
 	wire_toggle_var(_vars, shared, value_var);
-	subscribe_button_text_id(o, shared); // "text_id" で多言語キャプション
+	subscribe_button_text(o, shared); // text_id (i18n) / text_var 連動
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);           // フォーカスでヘルプ変数を書く
 	return apply_row_height(shared);
@@ -4968,7 +4983,7 @@ element_ptr LayoutBuilder::build_toggle_button(const picojson::object& o)
 	note_initial_focus(o, shared);
 	note_focusable(id, shared);
 	wire_toggle_var(_vars, shared, value_var);
-	subscribe_button_text_id(o, shared);
+	subscribe_button_text(o, shared);
 	note_vars_on_focus(o, id);
 	note_strings_on_focus(o, id);
 	return apply_row_height(shared);
@@ -5340,7 +5355,7 @@ element_ptr LayoutBuilder::build_invert_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
+	subscribe_button_text(o, shared);  // text_id (i18n) / text_var 連動
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
@@ -5374,7 +5389,7 @@ element_ptr LayoutBuilder::build_ring_button(const picojson::object& o)
 	auto shared = ce::share(std::move(btn));
 	register_id(o, shared);
 	note_initial_focus(o, shared);
-	subscribe_button_text_id(o, shared);  // i18n: text_id があれば言語連動
+	subscribe_button_text(o, shared);  // text_id (i18n) / text_var 連動
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
 	}
@@ -9587,7 +9602,7 @@ element_ptr LayoutBuilder::build_radio_button(const picojson::object& o)
 	}
 	auto shared = ce::share(std::move(rb));
 	register_id(o, shared);
-	subscribe_button_text_id(o, shared);   // "text_id" で多言語キャプション
+	subscribe_button_text(o, shared);   // text_id (i18n) / text_var 連動
 	note_initial_focus(o, shared);
 	if (auto bp = std::dynamic_pointer_cast<ce::basic_button>(shared)) {
 		note_focusable(id, bp);
