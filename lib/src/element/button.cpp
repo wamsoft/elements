@@ -78,6 +78,13 @@ namespace cycfi::elements
    void basic_button::enable(bool state)
    {
       _state.enabled = state;
+      // A disabled button ignores cursor() (including the leaving event), so
+      // a hover that was live when it got disabled would survive and show
+      // again once re-enabled, even with the pointer long gone. Drop it here;
+      // if the pointer really is still over the button, the next cursor move
+      // re-hilites it.
+      if (!state)
+         hilite(false);
    }
 
    bool basic_button::is_enabled() const
