@@ -10651,6 +10651,10 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 			} else if (kv.second.is<picojson::object>()) {
 				const auto& obj = kv.second.get<picojson::object>();
 				ts.target = string_or(obj, "target");
+				// "target_var": 行き先を変数から引く。 遷移のたびに読むので、
+				// **同じ画面のままホストの状態で行き先だけ変えられる**
+				// (値が空 / 未設定なら "target" へ落ちる)
+				ts.target_var = string_or(obj, "target_var");
 				ts.effect = string_or(obj, "effect");
 				if (auto* d = get_field(obj, "duration");
 				    d && pj_is_num(*d)) {

@@ -108,7 +108,7 @@ int main()
 | `strings` | `{id: {lang: string}}` | i18n 文字列テーブル (StringStore)。 `text_id` / `options_id` の解決元 (後述「i18n」節) |
 | `lang` | `"ja"` 等 | i18n の初期表示言語。 実行中の切替はホストの `set_language()` |
 | `font_languages` | `{lang: {map, fallback}}` | **言語連動フォント置換表** (任意)。 `map` = family (または registerFont の別名) → 置換先 family。 widget の `"font"` 指定と theme 既定チェーンの各 family トークンへ適用され、 `"#tag=val"` 軸サフィックスは温存される (JP/SC/TC の同軸 VF ならウェイトが揃う)。 `fallback` = その言語のときに theme 既定 families チェーンを置き換える並び (任意、 エントリの無い言語では swap 前の並びへ戻る)。 適用言語は widget 明示 `"locale"` > `set_language()` の現在言語。 表はプロセスグローバルに言語単位でマージ登録され、 画面 JSON と `app.jsonc` (マニフェスト) の両方で宣言できる (後読みが言語単位で上書き。 全画面同一表の運用を想定 — 異なる表の画面の同時表示は非対応)。 ⚠ `text_area` はビルド時にフォントを固定するため、 表示中の言語切替には追従しない (開き直しで反映) |
-| `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述) |
+| `transitions` | `{action: target}` | JSON 駆動ランナ向けの画面遷移定義。 マニフェスト駆動の `app.jsonc` と組み合わせて使う (後述)。 行き先は `"target_var"` で変数から引ける |
 | `atlases` | `{name: spec, ...}` | テクスチャアトラス事前ロード。 `atlas_image` / `atlas_button` / `atlas_slider` 等が名前で参照する pixmap_ptr を content build 前に解決 (後述「アトラス共有」節) |
 | `font_scale` | number | 明示 `size` を持たない button / toggle / radio / check_box / label の既定フォント倍率 (既定 1.0 = 従来一致) |
 | `style` | object | 未指定値の既定をまとめて与えるテーマ入口 (下記「style ブロック」)。 いずれも省略で従来一致 |
@@ -1087,7 +1087,7 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 - key = action id (= `id` を持つ button や picker の id)。 空文字 `""` は Esc / B / 右クリック / `close()` 等の空 action を捕まえる。
 - value は **string** か **object**:
   - string: target のみ短縮形 (例 `"command"` / `"<back>"` / `"<exit>"` / `"<replace:foo>"` / `"<stay>"`)
-  - object: `{"target": "...", "effect": "fade", "duration": 220}` — effect / duration を併記
+  - object: `{"target": "...", "effect": "fade", "duration": 220}` — effect / duration を併記。 `"target_var"` で**行き先を変数から引ける** (後述)
 
 target syntax:
 | 値 | 動き |
@@ -1097,6 +1097,25 @@ target syntax:
 | `"<exit>"` | アプリ **終了** |
 | `"<replace:foo>"` | 現画面を `foo` に**すげ替え** (stack 不変) |
 | `"<stay>"` | 現画面を**再 enter** (stack 不変) |
+
+#### 行き先を変数から引く (`target_var`)
+
+object 形式に `"target_var"` を書くと、 **遷移するたびに** その変数を
+VariableStore から読み、 値を target として使う。 値が空 / 未設定なら
+`"target"` へ落ちるので、 既定を書いておける。 値の書きかたは target と同じ。
+
+```jsonc
+"go_title": { "target": "title", "target_var": "title_target", "effect": "fade" }
+```
+```cpp
+sess.set_var("title_target", playing ? "<stay>" : "<back>");
+```
+
+**同じ画面・同じ部品構成のまま、 ホストの状態で行き先だけ変えたい**ときに使う。
+上の例なら「ゲーム中は `<stay>` にして確認ダイアログをホストへ任せ、 タイトルから
+開いたときは `<back>` で戻すだけ」という出し分けが、 画面を 2 枚に割らずに書ける。
+
+`"target_var"` を 1 つも書いていない画面では読みに行かない (素の辞書をそのまま返す)。
 
 未定義 action のフォールバックは `resolve_transition()` / `navigator` (下記「ホスト連携」) が担う。 既定は「空 action: entry なら exit / 子画面なら pop」「非空の未定義 action: entry なら stay / 子画面なら pop」。
 

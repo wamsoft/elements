@@ -289,6 +289,10 @@ struct overlay_session::impl
 	// action と照合して次画面を決める。
 	std::map<std::string, transition_spec> transitions;
 
+	// "target_var" を引いて行き先を埋めた写し (transitions() が返すもの)。
+	// **引くのは遷移のときだけ**なので、 持っているものがあるときしか作らない。
+	std::map<std::string, transition_spec> resolved_transitions;
+
 	// id 解決テーブル (= parsed_layout.id_map のコピー)。 focus_by_id で
 	// element を引くのに使う。
 	std::map<std::string, std::shared_ptr<ce::element>> id_map;
@@ -1094,7 +1098,26 @@ const result& overlay_session::get_result() const
 const std::map<std::string, transition_spec>&
 overlay_session::transitions() const
 {
-	return _impl->transitions;
+	// "target_var" を持つものがあれば、 **そのときの変数の値**で行き先を
+	// 埋めた写しを返す。 1 つも持っていなければ素のものをそのまま返す
+	// (写しを作らない)。
+	bool any = false;
+	for (const auto& kv : _impl->transitions) {
+		if (!kv.second.target_var.empty()) { any = true; break; }
+	}
+	if (!any) {
+		return _impl->transitions;
+	}
+	_impl->resolved_transitions = _impl->transitions;
+	for (auto& kv : _impl->resolved_transitions) {
+		if (kv.second.target_var.empty()) continue;
+		std::string v;
+		// **空や未設定は «指定なし»。** 書いてある target へ落とす
+		if (get_var(kv.second.target_var, v) && !v.empty()) {
+			kv.second.target = std::move(v);
+		}
+	}
+	return _impl->resolved_transitions;
 }
 
 const std::string& overlay_session::focused_id() const

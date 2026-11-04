@@ -91,6 +91,23 @@ struct transition_spec
 	//!   "<stay>"         — 現画面を再 enter (stack 不変)
 	std::string target;
 
+	//! @brief 遷移先を変数から引く (任意)。 空 = 使わない。
+	//!
+	//! 指定すると、 遷移するときに VariableStore からこの名前の値を読み、
+	//! **それを target として使う**。 値が空 / 未設定なら上の `target` へ
+	//! 落ちるので、 既定を書いておける。
+	//!
+	//! 値の書きかたは `target` と同じ ("<back>" / "<stay>" / 画面名 …)。
+	//!
+	//! **同じ画面・同じ部品のまま、 ホストの状態で行き先だけ変えたい**
+	//! ときに使う。 例えば «タイトルへ» を、 ゲーム中なら確認を挟みたいので
+	//! "<stay>" にしてホストへ任せ、 タイトルから開いたときは "<back>" で
+	//! 戻すだけ、 といった出し分け。
+	//!
+	//!     "go_title": { "target": "title", "target_var": "title_target" }
+	//!     host: set_var("title_target", playing ? "<stay>" : "<back>")
+	std::string target_var;
+
 	//! 遷移エフェクト。 空文字 = なし (即切替)、 "fade" = クロスフェード、
 	//! "universal" = rule 画像によるユニバーサルトランジション。
 	//! 未対応エフェクトはホスト側で警告 + 即切替フォールバック。
