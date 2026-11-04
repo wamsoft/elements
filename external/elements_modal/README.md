@@ -700,7 +700,7 @@ bool on = elements_modal::focus_ring_enabled();
 
 | フィールド | 対象 widget | 向き | 値の形式 |
 |---|---|---|---|
-| `text_var` | label / text_box / text_area / button 系 (`button` / `invert_button` / `toggle_button` / `atlas_button`) | 読み | 表示文字列 |
+| `text_var` | label / text_box / text_area / atlas_number / キャプションを持つ button 系 (`button` / `invert_button` / `toggle_button` / `checkbox` / `radio_button` / `ring_button`。 **`atlas_button` は文字を持たないので対象外**) | 読み | 表示文字列 |
 | `color_var` | label | 読み (文字色) | `"@名前"` / `"#rrggbb"` / `"r,g,b[,a]"` (0-255) |
 | `count_var` | text_area | 読み | 表示クラスタ数 (10 進、 `"-1"` = 全部) |
 | `vars_on_focus` | focusable 全般 / choice_nav グループ | 書き (focus 時) | 任意 string |
