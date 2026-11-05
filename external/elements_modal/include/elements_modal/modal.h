@@ -151,6 +151,13 @@ app_manifest parse_app_manifest(const std::string& json_utf8);
 //! 解析失敗で false (詳細はログ)。
 bool apply_font_languages_json(const std::string& json_utf8);
 
+//! @brief ホストの既定言語 (プロセス共通、 既定は空)。
+//! 空でなければ、 画面を組み立てるときの初期言語になる (画面 JSON の "lang" より優先)。
+//! 組み立てた後で overlay_session::set_language() するのと違い、 locale_variant の
+//! id (focus_by_id / focus_nav の行き先) もその言語の子を指す。
+void set_default_language(const std::string& lang);
+const std::string& default_language();
+
 //---------------------------------------------------------------------------
 // テーマ (見た目の一括差し替え) — 仕様は docs/theming.md
 //---------------------------------------------------------------------------

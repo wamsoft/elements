@@ -4363,11 +4363,22 @@ element_ptr LayoutBuilder::build_locale_variant(const picojson::object& o)
 	// deck の select() を切り替える。 全 child は deck の同一 box を占める。
 	auto deck = std::make_shared<ce::deck_composite>();
 	auto langs = std::make_shared<std::vector<std::string>>();
+	// 子ごとに登録された id (言語違いの同じ部品は同じ id を持つ)。 id 表は後勝ちなので、
+	// 選ばれた子の部品を指すように最後に付け直す (focus_by_id / focus_nav が
+	// 見えていない方の子へ行かないように)
+	std::vector<std::map<std::string, element_ptr>> child_ids;
 	if (auto* arr = get_array(o, "children")) {
 		for (const auto& cv : *arr) {
 			if (!cv.is<picojson::object>()) continue;
+			auto before = _id_to_element;
 			auto child = build(cv);
 			if (!child) continue;
+			std::map<std::string, element_ptr> mine;
+			for (const auto& kv : _id_to_element) {
+				auto it = before.find(kv.first);
+				if (it == before.end() || it->second != kv.second) mine.emplace(kv);
+			}
+			child_ids.push_back(std::move(mine));
 			deck->push_back(child);
 			langs->push_back(string_or(cv.get<picojson::object>(), "lang"));
 		}
@@ -4385,7 +4396,11 @@ element_ptr LayoutBuilder::build_locale_variant(const picojson::object& o)
 				if ((*langs)[i] == def) return i;
 		return 0;
 	};
-	deck->select(pick(_strings->language()));
+	auto sel = pick(_strings->language());
+	deck->select(sel);
+	// id 表は組み立て時の言語の子を指す (表示中に言語を切り替えたときは付け直さない。
+	// id で引く操作を正しく当てたいなら画面を開き直す)
+	for (const auto& kv : child_ids[sel]) _id_to_element[kv.first] = kv.second;
 
 	// 言語変更で表示子を切替 (host が毎フレーム再描画するので refresh 不要)。
 	std::weak_ptr<ce::deck_composite> wdeck = deck;
@@ -10511,6 +10526,9 @@ parsed_layout build_top_level(const picojson::value& root, event_callback cb,
 		builder.strings()->set_language(v->get<std::string>());
 		result.lang = v->get<std::string>();
 	}
+	// ホストの既定言語があれば、 その言語で組み立てる (locale_variant の id 解決のため)
+	if (!default_language().empty())
+		builder.strings()->set_language(default_language());
 
 	// "atlases" ブロック (任意): name → { path, scale }。 atlas_image /
 	// atlas_button / atlas_slider が参照する pixmap_ptr を名前で共有可能に
@@ -10973,6 +10991,17 @@ std::string get_ui_theme()
 //---------------------------------------------------------------------------
 // 言語連動フォント置換表のホスト直登録口 (modal.h 参照)。
 //---------------------------------------------------------------------------
+namespace {
+std::string& default_language_slot()
+{
+	static std::string s;
+	return s;
+}
+} // namespace
+
+void set_default_language(const std::string& lang) { default_language_slot() = lang; }
+const std::string& default_language() { return default_language_slot(); }
+
 bool apply_font_languages_json(const std::string& json_utf8)
 {
 	const std::string pre = preprocess_jsonc(json_utf8);

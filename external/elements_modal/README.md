@@ -1039,6 +1039,7 @@ textID → 言語別文字列の対応表 (StringStore) による実行時多言
 - label / text_area の `"text_list_id": ["help.save", ...]` (+ `index_var`) — 指定番号表示の textID 版 (`text_list` より優先)。 言語切替時は**表示中の index を維持**したまま引き直す。 メニューの説明文のように「focus 連動 + 多言語」な 1 本のラベルはこれで賄える。
 - 未知 id は id 文字列をそのまま表示。 現在言語にエントリが無ければ先頭言語へフォールバック。
 - 実行中の言語切替はホスト API (`overlay_session::set_language(lang)` / navigator 経由)。 subscribe 済みの全 label / picker が再解決される。
+- ホストが言語を決めているなら `elements_modal::set_default_language(lang)` (プロセス共通) も呼ぶ。 以後に組み立てる画面はその言語で組み立てる (画面 JSON の `"lang"` より優先)。 `locale_variant` の子どうしが同じ id を持つとき、 id 表 (`focus_by_id` / `focus_nav` の行き先) は組み立て時の言語の子を指すので、 組み立てた後の `set_language` だけだと見えていない方の子を指したままになる。
 - その画面が**どの言語を出せるか**は `overlay_session::languages()` (`strings` の lang キーの和集合)。 ホストが言語切替 UI を組むのに使う。
 - **widget 丸ごとの言語別出し分けは `locale_variant`** — 現在言語に一致する子だけを表示するデッキ:
   ```jsonc
