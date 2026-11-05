@@ -4,6 +4,7 @@
    Distributed under the MIT License [ https://opensource.org/licenses/MIT ]
 =============================================================================*/
 #include <elements/element/label.hpp>
+#include <cmath>
 #include <elements/support/text_utils.hpp>
 
 #include <algorithm>
@@ -133,7 +134,7 @@ namespace cycfi::elements
          }
 
          canvas_.text_align(align);
-         canvas_.fill_text(text.c_str(), point{cx, cy});
+         draw_text_line(canvas_, text.c_str(), point{cx, cy});
          return;
       }
 
@@ -160,9 +161,35 @@ namespace cycfi::elements
       canvas_.text_align((align & 0x3) | canvas::top);
       for (auto line : m.lines)
       {
-         canvas_.fill_text(std::string(line).c_str(), point{cx, y});
+         draw_text_line(canvas_, std::string(line).c_str(), point{cx, y});
          y += m.line_height;
       }
+   }
+
+   // 1 行を描く。 縁取りがあれば、 縁の色で同じ文字を周囲 16 方向へずらして塗ってから
+   // 本体を塗る。 輪郭線 (stroke_text) は文字揃え (text_align) を見ないので、 本体と同じ
+   // fill_text で重ねて位置を揃える (fill_text のラン画像キャッシュに乗るので軽い)。
+   void default_label_styler::draw_text_line(canvas& cnv, char const* text, point p) const
+   {
+      if (_outline_width > 0.0f)
+      {
+         auto body = cnv.get_state().fill_style_data;
+         auto c = _outline_color;
+         // 無効表示などで本体の色が薄くなるときは、 縁も同じだけ薄くする
+         if (auto* fc = std::get_if<color>(&body))
+            c.alpha *= fc->alpha;
+         cnv.fill_style(c);
+         constexpr int steps = 16;
+         for (int i = 0; i < steps; ++i)
+         {
+            float a = 2.0f * 3.14159265f * i / steps;
+            cnv.fill_text(text, point{p.x + _outline_width * std::cos(a),
+                                      p.y + _outline_width * std::sin(a)});
+         }
+         if (auto* fc = std::get_if<color>(&body))
+            cnv.fill_style(*fc);
+      }
+      cnv.fill_text(text, p);
    }
 
    void default_label_styler::enable(bool state)

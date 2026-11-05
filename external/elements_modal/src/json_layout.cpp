@@ -3963,6 +3963,22 @@ void LayoutBuilder::bind_text_list(const picojson::object& o,
 	apply();
 }
 
+namespace
+{
+	// 縁取り: "<prefix>outline_width": px (0 / 無指定で無し)、 "<prefix>outline_color": [r,g,b,a]
+	// (既定 黒)。 label は prefix なし、 atlas 系の文字重ねは "text_" を付けて書く。
+	void apply_label_outline(const picojson::object& o, const element_ptr& e,
+	                         const std::string& prefix)
+	{
+		float w = static_cast<float>(number_or(o, (prefix + "outline_width").c_str(), 0.0));
+		if (w <= 0.0f) return;
+		ce::color c = ce::colors::black;
+		parse_color_field(o, (prefix + "outline_color").c_str(), c);
+		if (auto* lb = dynamic_cast<ce::default_label_styler*>(e.get()))
+			lb->set_outline(c, w);
+	}
+}
+
 element_ptr LayoutBuilder::build_label(const picojson::object& o)
 {
 	// "text_id": "id" (i18n) と "text_var": "varname" の動的 text 解決。
@@ -4133,6 +4149,7 @@ element_ptr LayoutBuilder::build_label(const picojson::object& o)
 			lb->set_fit_width(true,
 				static_cast<float>(number_or(o, "fit_min_scale", 0.5)));
 	}
+	apply_label_outline(o, out, "");
 	}   // text_anchor else
 
 	// text_id / text_var 指定があれば、 StringStore / VariableStore の更新で
@@ -6989,24 +7006,34 @@ namespace
 			return at_elem;
 		}
 
-		auto base = ce::label(text);
-		element_ptr lab;
-		if (has_color && sz > 0.0f) {
-			auto e = base.font_color(col).font_size(sz);
-			if (locale.empty()) lab = ce::share(std::move(e));
-			else                lab = ce::share(e.locale(std::move(locale)));
-		} else if (has_color) {
-			auto e = base.font_color(col);
-			if (locale.empty()) lab = ce::share(std::move(e));
-			else                lab = ce::share(e.locale(std::move(locale)));
-		} else if (sz > 0.0f) {
-			auto e = base.font_size(sz);
-			if (locale.empty()) lab = ce::share(std::move(e));
-			else                lab = ce::share(e.locale(std::move(locale)));
-		} else {
-			if (locale.empty()) lab = ce::share(std::move(base));
-			else                lab = ce::share(base.locale(std::move(locale)));
-		}
+		// "font" / "weight" (build_label と同じ書式)。 指定があれば label の型が変わる
+		// (.font() がラッパを足す) ので、 色・サイズ・locale の組み立てはラムダで共通にする。
+		ce::font_descr fdescr = ce::get_theme().label_font;
+		bool has_font = apply_widget_font(o, fdescr);
+		auto make = [&](auto base) -> element_ptr {
+			element_ptr lab;
+			if (has_color && sz > 0.0f) {
+				auto e = base.font_color(col).font_size(sz);
+				if (locale.empty()) lab = ce::share(std::move(e));
+				else                lab = ce::share(e.locale(std::move(locale)));
+			} else if (has_color) {
+				auto e = base.font_color(col);
+				if (locale.empty()) lab = ce::share(std::move(e));
+				else                lab = ce::share(e.locale(std::move(locale)));
+			} else if (sz > 0.0f) {
+				auto e = base.font_size(sz);
+				if (locale.empty()) lab = ce::share(std::move(e));
+				else                lab = ce::share(e.locale(std::move(locale)));
+			} else {
+				if (locale.empty()) lab = ce::share(std::move(base));
+				else                lab = ce::share(base.locale(std::move(locale)));
+			}
+
+			return lab;
+		};
+		element_ptr lab = has_font ? make(ce::label(text).font(fdescr)) : make(ce::label(text));
+
+		apply_label_outline(o, lab, "text_");
 
 		// text_id 指定があれば言語切替で set_text する subscriber を仕掛ける
 		// (build_label と同じ仕組み)。 wrap 前の素の label (text_writer) を狙う。

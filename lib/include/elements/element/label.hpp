@@ -66,11 +66,22 @@ namespace cycfi::elements
       bool                    get_fit_width() const { return _fit; }
       float                   get_fit_min_scale() const { return _fit_min_scale; }
 
+      // 縁取り。 width > 0 なら、 文字の輪郭を color で width px 外側へ太らせて描いてから
+      // 本体を塗る (画像に焼き込まれた «白文字に黒縁» を文字描画で出す用)。 0 で無し。
+      void                    set_outline(color c, float width)
+                              { _outline_color = c; _outline_width = width; }
+      float                   get_outline_width() const { return _outline_width; }
+      color                   get_outline_color() const { return _outline_color; }
+
    private:
+
+      void                    draw_text_line(canvas& cnv, char const* text, point p) const;
 
       bool                    _is_enabled = true;
       bool                    _fit = false;
       float                   _fit_min_scale = 0.5f;
+      float                   _outline_width = 0.0f;
+      color                   _outline_color = colors::black;
    };
 
    namespace concepts
