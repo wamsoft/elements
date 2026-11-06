@@ -251,6 +251,7 @@ int main()
 
 - 値が変わるたびに `display_var` へ整形済み文字列が書かれ、 `text_var` で読んでいる label が自動で更新される (`text` / `text_area` も同じ)。
 - 整形は `pos` (0..1) → `min + pos * (max - min)` → `step` があればその倍数へ丸め → `digits` 桁の 10 進 → `pad` で整数部を 0 埋め → `prefix` / `suffix` を連結。 `display` 自体を省略すると `0..100` の整数 (`slider_with_range` はその `min`..`max`)。
+- 単位を言語で変えるときは `"prefix_id"` / `"suffix_id"` に画面の `"strings"` の id を書く (例 `"suffix": "秒", "suffix_id": "ui.秒"`)。 現在の言語の文字を前後に付け、 言語が変わると `display_var` を書き直す (`atlas_slider` の `fixed_value` の表示も同じ)。 表に無い id なら `prefix` / `suffix` を使う。 言語の切り替えに追従するのは `slider` / `slider_with_range` / `atlas_slider` の `display_var`。
 - 初期値は build 時に両変数へ書かれるので、 最初のフレームから正しい数値が出る。
 - ホストが `set_var(value_var, "0.8")` で外から動かした場合も `display_var` は追従する。
 - 生値が要るとき (保存など) は `value_var` を読む。 従来の `event_callback` も変わらず発火する。

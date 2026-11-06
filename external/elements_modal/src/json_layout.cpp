@@ -415,7 +415,15 @@ void warn_retired_key(const picojson::object& o, const char* type,
 // 10 進文字列にして prefix/suffix を付ける。 pad>0 なら整数部を 0 埋め (音量 "05"
 // のような固定桁表示用)。 "display" 自体が無ければ既定 (0..100 / 整数 / 装飾なし)
 // で、 表示変数を指定したときだけ使われる。
+//
+// "prefix_id" / "suffix_id" を書くと、 前後の文字を画面の "strings" から現在の
+// 言語で引く ("秒" → "sec" のような単位の多言語化)。 表に無い id なら
+// "prefix" / "suffix" を使う。 言語が変わると表示変数を書き直す (wire_slider_vars)。
 //---------------------------------------------------------------------------
+class StringStore;
+std::string resolve_string_or(const std::shared_ptr<StringStore>& strings,
+                              const std::string& id, const std::string& fallback);
+
 struct value_display
 {
 	double min = 0.0;
@@ -425,6 +433,12 @@ struct value_display
 	int pad = 0;
 	std::string prefix;
 	std::string suffix;
+	std::string prefix_id;
+	std::string suffix_id;
+	std::shared_ptr<StringStore> strings;   // prefix_id / suffix_id を引く表
+
+	// 言語で表示が変わるか (prefix_id / suffix_id があるか)
+	bool localized() const { return !prefix_id.empty() || !suffix_id.empty(); }
 
 	std::string format(double pos) const
 	{
@@ -458,11 +472,17 @@ struct value_display
 			}
 			body = sign + body;
 		}
-		return prefix + body + suffix;
+		const std::string pre = prefix_id.empty() ? prefix
+			: resolve_string_or(strings, prefix_id, prefix);
+		const std::string suf = suffix_id.empty() ? suffix
+			: resolve_string_or(strings, suffix_id, suffix);
+		return pre + body + suf;
 	}
 };
 
-value_display parse_value_display(const picojson::object& o)
+// strings: "prefix_id" / "suffix_id" を引く画面の文字列表 (無ければ id は使わない)
+value_display parse_value_display(const picojson::object& o,
+                                  const std::shared_ptr<StringStore>& strings = {})
 {
 	value_display d;
 	auto* v = get_field(o, "display");
@@ -475,6 +495,11 @@ value_display parse_value_display(const picojson::object& o)
 	d.pad    = static_cast<int>(number_or(d_o, "pad", d.pad));
 	d.prefix = string_or(d_o, "prefix");
 	d.suffix = string_or(d_o, "suffix");
+	if (strings) {
+		d.prefix_id = string_or(d_o, "prefix_id");
+		d.suffix_id = string_or(d_o, "suffix_id");
+		if (d.localized()) d.strings = strings;
+	}
 	return d;
 }
 
@@ -1733,6 +1758,14 @@ private:
 	std::vector<std::function<void(const std::string&)>> _lang_subs;
 	layout_revision _rev;
 };
+
+// 文字列表の id を現在の言語で引く。 表が無い・id が無いときは fallback。
+std::string resolve_string_or(const std::shared_ptr<StringStore>& strings,
+                              const std::string& id, const std::string& fallback)
+{
+	if (!strings || id.empty() || !strings->has(id)) return fallback;
+	return strings->resolve(id);
+}
 
 //---------------------------------------------------------------------------
 // 指定番号表示テキスト ("text_list" / "text_list_id" + "index_var") — label と
@@ -4504,7 +4537,7 @@ element_ptr LayoutBuilder::build_scroller(const picojson::object& o)
 	std::string fraction_var = string_or(o, "fraction_var");
 	std::string display_var  = string_or(o, "display_var");
 	if (!pos_var.empty() || !fraction_var.empty() || !display_var.empty()) {
-		auto disp = parse_value_display(o);
+		auto disp = parse_value_display(o, _strings);
 		auto vars = _vars;
 		std::weak_ptr<ce::scroller_base> w = sp;
 		// 位置と «表示量» の両方を、 スクロール時と内容量が変わった時の
@@ -5490,14 +5523,26 @@ void wire_slider_vars(const std::shared_ptr<VariableStore>& vars,
                       const value_display& disp,
                       const std::shared_ptr<ce::atlas_progress>& gauge = {},
                       const std::shared_ptr<bool>& fixed = {},
-                      const std::string& fixed_text = {})
+                      const std::function<std::string()>& fixed_text = {})
 {
 	if (!vars || !sb) return;
 	if (value_var.empty() && display_var.empty()) return;
 
 	auto text_of = [disp, fixed, fixed_text](double pos) {
-		return (fixed && *fixed) ? fixed_text : disp.format(pos);
+		if (fixed && *fixed) return fixed_text ? fixed_text() : std::string();
+		return disp.format(pos);
 	};
+
+	// 単位を言語で引く表示 (prefix_id / suffix_id) は、 言語が変わったら書き直す
+	if (!display_var.empty() && disp.localized() && disp.strings) {
+		std::weak_ptr<ce::basic_slider_base> ws = sb;
+		std::weak_ptr<VariableStore> wv = vars;
+		disp.strings->subscribe_language([ws, wv, display_var, text_of](const std::string&) {
+			auto s = ws.lock();
+			auto v = wv.lock();
+			if (s && v) v->set(display_var, text_of(s->value()));
+		});
+	}
 
 	// widget → var
 	auto prev = sb->on_change;
@@ -5652,7 +5697,7 @@ element_ptr LayoutBuilder::build_slider(const picojson::object& o)
 	note_initial_focus(o, shared);
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(shared)) {
 		note_focusable(id, sb);
-		const auto disp = parse_value_display(o);
+		const auto disp = parse_value_display(o, _strings);
 		apply_slider_snap(o, sb, disp);
 		wire_slider_vars(_vars, sb, shared, string_or(o, "value_var"),
 		                 string_or(o, "display_var"), disp);
@@ -5705,7 +5750,7 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	if (auto sb = std::dynamic_pointer_cast<ce::basic_slider_base>(rs.focus)) {
 		note_focusable(id, sb);
 		// 表示整形の既定はこの widget の min/max スケール ("display" で上書き可)。
-		value_display disp = parse_value_display(o);
+		value_display disp = parse_value_display(o, _strings);
 		if (!get_field(o, "display")) {
 			disp.min = static_cast<double>(min_v);
 			disp.max = static_cast<double>(max_v);
@@ -8231,7 +8276,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 	note_initial_focus(o, part);
 	if (sb) {
 		note_focusable(id, sb);
-		const auto disp = parse_value_display(o);
+		const auto disp = parse_value_display(o, _strings);
 		apply_slider_snap(o, sb, disp);
 		wire_slider_snap_steps(_vars, o, sb, arrow_step, part);
 		if (gauge) gauge->set_value(sb->value());   // 目盛へ丸めた初期値で描く
@@ -8239,9 +8284,18 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 		// 通知のみで on_change を発火せず、 ユーザ操作側は value_var/display_var を
 		// 書く。 数値表示は label の "text_var": display_var で受ける。
 		const std::string display_var = string_or(o, "display_var");
-		std::string fixed_text = string_or(o, "fixed_text");
-		if (fixed_text.empty() && get_field(o, "fixed_value"))
-			fixed_text = disp.format_value(number_or(o, "fixed_value", 0.0));
+		// 固定中の表示。 "fixed_value" から作る文字は単位が言語で変わることが
+		// あるので (suffix_id)、 使うたびに整形する
+		std::function<std::string()> fixed_text;
+		{
+			std::string text = string_or(o, "fixed_text");
+			if (text.empty() && get_field(o, "fixed_value")) {
+				double fv = number_or(o, "fixed_value", 0.0);
+				fixed_text = [disp, fv]() { return disp.format_value(fv); };
+			} else {
+				fixed_text = [text]() { return text; };
+			}
+		}
 		wire_slider_vars(_vars, sb, part, value_var, display_var, disp, gauge,
 		                 fixed, fixed_text);
 		if (fixed) {
@@ -8254,7 +8308,7 @@ element_ptr LayoutBuilder::build_atlas_slider(const picojson::object& o)
 					*fixed = !(v == "0" || v == "false" || v.empty());
 					*thumb_shown = !*fixed;
 					if (display_var.empty()) return;
-					if (*fixed) vars->set(display_var, fixed_text);
+					if (*fixed) vars->set(display_var, fixed_text());
 					else if (auto s = ws.lock()) vars->set(display_var, disp.format(s->value()));
 				}, part);
 		}
@@ -9484,7 +9538,7 @@ element_ptr LayoutBuilder::build_atlas_number(const picojson::object& o)
 	num->space_width(static_cast<float>(number_or(o, "space_width", 0.0)));
 
 	// 初期テキスト: text > (value_var の現在値を display 整形) > 空。
-	value_display disp = parse_value_display(o);
+	value_display disp = parse_value_display(o, _strings);
 	std::string value_var = string_or(o, "value_var");
 	std::string text_var  = string_or(o, "text_var");
 	std::string init = string_or(o, "text");
