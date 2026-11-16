@@ -169,10 +169,18 @@ namespace cycfi::elements::a11y::detail
 
             if (i.is_override)
             {
-               info merged = pending.props ? *pending.props : info{};
+               bool mine_has_control = has_control(ctx, e);
+               // A wrapper of our own does not get to pocket an override that
+               // is waiting for a control, unless the control is in here. The
+               // min/max numbers a slider_with_range names for itself sit in
+               // front of the slider; without this they would take the row's
+               // override and leave the slider unnamed.
+               bool take = pending.props
+                  && (!pending.controls_only || mine_has_control);
+               info merged = take ? *pending.props : info{};
                apply(merged, i);
                merged.is_override = true;
-               pending_override mine{&merged, has_control(ctx, e)};
+               pending_override mine{&merged, mine_has_control};
                bool consumed = visit_children(ctx, e, parent, seed, mine, here);
                if (!consumed && !_done && (merged.role != role::none || !merged.name.empty()))
                {
@@ -185,7 +193,8 @@ namespace cycfi::elements::a11y::detail
                   make_node(ctx, e, self, parent, seed, here);
                   consumed = true;
                }
-               return consumed;
+               // We report on the CALLER's override, not on our own.
+               return take && consumed;
             }
 
             if (i.role != role::none)

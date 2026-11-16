@@ -5,6 +5,7 @@
 #if !defined(ELEMENTS_FOCUS_ROW_JUNE_12_2026)
 #define ELEMENTS_FOCUS_ROW_JUNE_12_2026
 
+#include <elements/element/accessible.hpp>
 #include <elements/element/align.hpp>
 #include <elements/element/element.hpp>
 #include <elements/element/indirect.hpp>
@@ -119,6 +120,11 @@ namespace cycfi::elements
    //   slider (focusable). Use the `focus` element as the click-to-focus
    //   target when handing to the labeled_row overload that takes a
    //   separate focus target.
+   //
+   //   The two end numbers are decorations the widget makes itself, so the
+   //   caller cannot name them from the outside. Pass `min_id` / `max_id`
+   //   to give them stable a11y ids (anything that walks the tree by name —
+   //   dumps, tests, per-part export — otherwise sees "#<hex>" for them).
    ////////////////////////////////////////////////////////////////////////////
    struct ranged_slider
    {
@@ -127,25 +133,41 @@ namespace cycfi::elements
    };
 
    inline ranged_slider slider_with_range(
-      int min_v, int max_v, double initial = 0.5, float font_size = 1.0f)
+      int min_v, int max_v, double initial = 0.5, float font_size = 1.0f,
+      std::string min_id = {}, std::string max_id = {})
    {
       auto sl = share(slider(
          basic_thumb<16>(colors::white),
          basic_track<6, false>(colors::white.opacity(0.4f)),
          initial
       ));
+
+      auto end_label = [](int v, float sz)
+      {
+         return label(std::to_string(v))
+            .font_color(colors::white)
+            .relative_font_size(sz)
+            ;
+      };
+
+      element_ptr min_el, max_el;
+      if (min_id.empty())
+         min_el = share(hsize(40 * font_size,
+            align_right(end_label(min_v, font_size))));
+      else
+         min_el = share(hsize(40 * font_size,
+            align_right(a11y_id(std::move(min_id), end_label(min_v, font_size)))));
+      if (max_id.empty())
+         max_el = share(hsize(40 * font_size,
+            align_left(end_label(max_v, font_size))));
+      else
+         max_el = share(hsize(40 * font_size,
+            align_left(a11y_id(std::move(max_id), end_label(max_v, font_size)))));
+
       auto row = share(htile(
-         hsize(40 * font_size, align_right(
-            label(std::to_string(min_v))
-               .font_color(colors::white)
-               .relative_font_size(font_size)
-         )),
+         hold(min_el),
          hmargin({8, 8}, hold(sl)),
-         hsize(40 * font_size, align_left(
-            label(std::to_string(max_v))
-               .font_color(colors::white)
-               .relative_font_size(font_size)
-         ))
+         hold(max_el)
       ));
       return {row, sl};
    }

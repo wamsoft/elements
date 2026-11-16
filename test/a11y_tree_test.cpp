@@ -351,6 +351,35 @@ int run()
          "speech_lines: value change of the focused control");
    }
 
+   {
+      // slider_with_range: the two end numbers are decorations the widget
+      // names for itself. The row's own override is waiting for a CONTROL,
+      // so it must pass over the "0" in front and land on the slider — the
+      // end labels keep the ids the widget gave them.
+      std::printf("[slider_with_range]\n");
+      view v3(extent{300, 80});
+      auto rs = slider_with_range(0, 100, 0.25, 1.0f, "rate_min", "rate_max");
+      v3.content(
+         margin({10, 10, 10, 10}, a11y_label("Rate", hold(rs.widget))),
+         box(colors::black)
+      );
+      v3.begin_focus();
+      std::vector<std::uint32_t> b3(300 * 80);
+      canvas c3{b3.data(), 300, 80, 1.0f};
+      v3.draw(c3);
+      settle(v3);
+      auto s3 = v3.a11y_snapshot();
+      dump(s3);
+      auto* n_rate = by_name(s3, "Rate");
+      check(n_rate && n_rate->role == a11y::role::slider,
+         "slider_with_range: the row's name lands on the slider, not on the 0");
+      auto* n_lo = by_name(s3, "0");
+      auto* n_hi = by_name(s3, "100");
+      check(n_lo && a11y::id_string(*n_lo) == "rate_min"
+         && n_hi && a11y::id_string(*n_hi) == "rate_max",
+         "slider_with_range: the end numbers carry the ids the widget gave them");
+   }
+
    std::printf("[json]\n");
    auto json = a11y::to_json(v.a11y_snapshot());
    std::printf("    %.200s...\n", json.c_str());

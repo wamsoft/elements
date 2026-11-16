@@ -5729,7 +5729,13 @@ element_ptr LayoutBuilder::build_slider_with_range(const picojson::object& o)
 	// slider_with_range の font_size は内部 label.relative_font_size 用なので
 	// scale で渡す。
 	float fs = resolve_font_scale(o, "font_size", "font_size_scale");
-	auto rs = ce::slider_with_range(min_v, max_v, pos, fs);
+	// **両端の数字は widget が自分で出す**ので、 JSON からは名前を付けられない。
+	// id があるときは `<id>_min` / `<id>_max` を widget に作らせる (無いと
+	// 木の上で `#<ハッシュ>` になり、 部品ごとの書き出しで «並び順の連番» に
+	// 落ちる)。
+	auto rs = ce::slider_with_range(min_v, max_v, pos, fs,
+	                                id.empty() ? std::string{} : id + "_min",
+	                                id.empty() ? std::string{} : id + "_max");
 	// rs.focus は shared_ptr<element>。 on_change を仕込むには basic_slider_base
 	// に dynamic_cast する必要あり。 lib の slider() factory は
 	// basic_slider<Thumb,Track,basic_slider_base> を返すので継承関係 OK。
