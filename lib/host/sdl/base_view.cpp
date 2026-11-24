@@ -720,6 +720,9 @@ namespace cycfi::elements
 
    void set_cursor(cursor_type type)
    {
+      if (auto hook = get_cursor_hook(); hook && hook(type))
+         return;
+
       SDL_SystemCursor id = SDL_SYSTEM_CURSOR_DEFAULT;
       switch (type)
       {

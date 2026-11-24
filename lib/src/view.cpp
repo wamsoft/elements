@@ -23,6 +23,20 @@
 
  namespace cycfi::elements
  {
+   // set_cursor() のホスト側フック (base_view.hpp)。 host/*/base_view.cpp の
+   // set_cursor() が先頭で問い合わせる。
+   static cursor_hook s_cursor_hook = nullptr;
+
+   void set_cursor_hook(cursor_hook hook)
+   {
+      s_cursor_hook = hook;
+   }
+
+   cursor_hook get_cursor_hook()
+   {
+      return s_cursor_hook;
+   }
+
    // Populate the default gamepad → key bindings on a freshly
    // constructed view. D-Pad buttons are intentionally *not* bound here;
    // they feed the axis-mode machinery instead so dpad_mode() applies

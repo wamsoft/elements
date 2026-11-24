@@ -734,6 +734,9 @@ namespace cycfi::elements
 
    void set_cursor(cursor_type type)
    {
+      if (auto hook = get_cursor_hook(); hook && hook(type))
+         return;
+
       struct cursors
       {
          cursors()

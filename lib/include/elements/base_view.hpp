@@ -441,6 +441,14 @@ namespace cycfi::elements
 
    void set_cursor(cursor_type type);
 
+   // ホスト (埋め込み先) がカーソルの変更を引き取るためのフック。
+   // set_cursor() は OS のカーソルを直接差し替えるので、 ゲームなどの描画面に
+   // 重ねて使う (オーバーレイ) ときは、 ホストが決めたカーソルを上書きしてしまう。
+   // フックが true を返すと set_cursor() は OS に触らない。 nullptr で解除。
+   using cursor_hook = bool (*)(cursor_type type);
+   void set_cursor_hook(cursor_hook hook);
+   cursor_hook get_cursor_hook();
+
    ////////////////////////////////////////////////////////////////////////////
    // Scroll direction
    point scroll_direction();
